@@ -1,6 +1,10 @@
 import { app, BrowserWindow, screen, session, shell } from 'electron';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import path from 'node:path';
+import * as fs from 'node:fs';
+import { spawn } from 'node:child_process';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import log from 'electron-log/main';
 import { registerIpc } from './ipc';
 import { ptyManager } from './pty-manager';
@@ -272,6 +276,87 @@ async function setupAutoUpdater(): Promise<void> {
     return false;
   }
 
+  /** Path du dernier installer téléchargé manuellement, prêt à être lancé. */
+  let pendingManualInstaller: string | null = null;
+
+  /** Télécharge l'installer NSIS dans le dossier temp avec progress. Renvoie
+   *  le path local. Aucun browser ouvert, tout reste dans l'app. */
+  async function manualDownloadAndPrepare(
+    installerUrl: string,
+    version: string
+  ): Promise<string> {
+    const tmpDir = path.join(app.getPath('temp'), 'vmux-updater');
+    await fs.promises.mkdir(tmpDir, { recursive: true });
+    const tmpPath = path.join(tmpDir, `vMux-Setup-${version}.exe`);
+
+    log.info(`[updater] manual download from ${installerUrl} → ${tmpPath}`);
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10 * 60 * 1000); // 10 min max
+    try {
+      const res = await fetch(installerUrl, {
+        signal: ctrl.signal,
+        redirect: 'follow',
+        headers: { 'User-Agent': 'vMux-updater' }
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      if (!res.body) throw new Error('Empty response body');
+
+      const total = Number(res.headers.get('content-length') ?? 0);
+      let transferred = 0;
+      let lastSentTs = 0;
+      const startTs = Date.now();
+
+      const nodeStream = Readable.fromWeb(res.body as never);
+      nodeStream.on('data', (chunk: Buffer) => {
+        transferred += chunk.length;
+        const now = Date.now();
+        if (now - lastSentTs > 200) {
+          const elapsed = (now - startTs) / 1000;
+          sendStatus({
+            kind: 'downloading',
+            percent: total > 0 ? (transferred / total) * 100 : 0,
+            bytesPerSecond: elapsed > 0 ? transferred / elapsed : 0,
+            transferred,
+            total
+          });
+          lastSentTs = now;
+        }
+      });
+
+      await pipeline(nodeStream, fs.createWriteStream(tmpPath));
+      log.info(`[updater] download complete: ${tmpPath} (${transferred} bytes)`);
+      return tmpPath;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** Lance l'installer NSIS en silencieux et quitte l'app pour libérer les
+   *  file locks. NSIS replace les fichiers et relance vMux à la fin
+   *  (runAfterFinish: true configuré dans package.json). */
+  function runInstallerAndQuit(installerPath: string): void {
+    log.info(`[updater] spawning installer ${installerPath} /S --force-run`);
+    try {
+      const child = spawn(installerPath, ['/S', '--force-run'], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
+    } catch (err) {
+      log.error('[updater] failed to spawn installer', err);
+      sendStatus({
+        kind: 'error',
+        code: 'install-no-download',
+        message: `Failed to start installer: ${(err as Error).message}`
+      });
+      return;
+    }
+    // Petit délai pour laisser le child démarrer avant qu'on libère les locks.
+    setTimeout(() => app.exit(0), 800);
+  }
+
   /** Check primaire : API GitHub. Aucun hang possible (timeout 8s strict).
    *  Envoie 'checking' immédiatement, puis 'available' / 'not-available' / 'error'. */
   async function checkUpdates(): Promise<void> {
@@ -308,22 +393,37 @@ async function setupAutoUpdater(): Promise<void> {
   // Handler check : toujours dispo (dev + prod).
   ipcMain.handle(IPC.updateCheck, () => checkUpdates());
 
-  // Mode dev : pas d'electron-updater (pas d'app-update.yml). Download =
-  // ouvre l'installer dans le browser. Install = no-op explicite.
+  // Mode dev : pas d'electron-updater (pas d'app-update.yml). Install = no-op
+  // car en dev on ne peut pas remplacer le binaire current.
   if (is.dev) {
-    log.info('[updater] dev mode — no electron-updater, browser download fallback');
+    log.info('[updater] dev mode — manual download only, no install');
     ipcMain.handle(IPC.updateDownload, async () => {
       try {
         const latest = await ghFetchLatest();
-        if (latest.installerUrl) {
-          await shell.openExternal(latest.installerUrl);
-        } else {
+        if (!latest.installerUrl) {
           sendStatus({
             kind: 'error',
             code: 'no-installer-url',
             message: 'Installer URL not found in latest release.'
           });
+          return;
         }
+        sendStatus({
+          kind: 'downloading',
+          percent: 0,
+          bytesPerSecond: 0,
+          transferred: 0,
+          total: 0
+        });
+        pendingManualInstaller = await manualDownloadAndPrepare(
+          latest.installerUrl,
+          latest.version
+        );
+        sendStatus({
+          kind: 'downloaded',
+          version: latest.version,
+          releaseNotes: latest.notes
+        });
       } catch (err) {
         sendStatus({
           kind: 'error',
@@ -373,8 +473,6 @@ async function setupAutoUpdater(): Promise<void> {
     ipcMain.handle(IPC.updateDownload, async () => {
       try {
         log.info('[updater] electron-updater downloadUpdate()');
-        // checkForUpdates est nécessaire avant downloadUpdate sinon le metadata
-        // n'est pas chargé. On l'enrobe d'un timeout court.
         const checkPromise = autoUpdater.checkForUpdates();
         await Promise.race([
           checkPromise,
@@ -383,19 +481,37 @@ async function setupAutoUpdater(): Promise<void> {
           )
         ]);
         await autoUpdater.downloadUpdate();
+        // electron-updater émet 'update-downloaded' → handler global envoie le statut.
+        // pendingManualInstaller reste null donc Install utilisera quitAndInstall.
       } catch (err) {
-        log.warn('[updater] downloadUpdate failed, falling back to browser', err);
+        log.warn('[updater] electron-updater download failed, manual fallback', err);
+        // Fallback : download manuel intégré dans l'app, pas de browser.
         try {
           const latest = await ghFetchLatest();
-          if (latest.installerUrl) {
-            await shell.openExternal(latest.installerUrl);
-          } else {
+          if (!latest.installerUrl) {
             sendStatus({
               kind: 'error',
               code: 'no-installer-url',
               message: 'Installer URL not found in latest release.'
             });
+            return;
           }
+          sendStatus({
+            kind: 'downloading',
+            percent: 0,
+            bytesPerSecond: 0,
+            transferred: 0,
+            total: 0
+          });
+          pendingManualInstaller = await manualDownloadAndPrepare(
+            latest.installerUrl,
+            latest.version
+          );
+          sendStatus({
+            kind: 'downloaded',
+            version: latest.version,
+            releaseNotes: latest.notes
+          });
         } catch (err2) {
           sendStatus({
             kind: 'error',
@@ -407,16 +523,23 @@ async function setupAutoUpdater(): Promise<void> {
     });
 
     ipcMain.handle(IPC.updateInstall, () => {
-      if (lastSentStatus !== 'downloaded') {
-        sendStatus({
-          kind: 'error',
-          code: 'install-no-download',
-          message:
-            'Download not completed through electron-updater — re-run download or install manually.'
-        });
+      // Cas 1 : download manuel via fallback → spawn /S + quit.
+      if (pendingManualInstaller) {
+        runInstallerAndQuit(pendingManualInstaller);
         return;
       }
-      autoUpdater.quitAndInstall(true, true);
+      // Cas 2 : download via electron-updater → quitAndInstall.
+      if (lastSentStatus === 'downloaded') {
+        log.info('[updater] electron-updater quitAndInstall');
+        autoUpdater.quitAndInstall(true, true);
+        return;
+      }
+      sendStatus({
+        kind: 'error',
+        code: 'install-no-download',
+        message:
+          'Download not completed — re-run download first.'
+      });
     });
 
     // Premier check 3s après boot (laisse le first paint respirer).
@@ -425,12 +548,34 @@ async function setupAutoUpdater(): Promise<void> {
     // Re-check toutes les 4 heures.
     setInterval(() => void checkUpdates(), 4 * 60 * 60 * 1000);
   } catch (err) {
-    log.warn('[updater] electron-updater unavailable', err);
-    // Fallback complet : download = browser, install = error explicite.
+    log.warn('[updater] electron-updater unavailable, manual download only', err);
     ipcMain.handle(IPC.updateDownload, async () => {
       try {
         const latest = await ghFetchLatest();
-        if (latest.installerUrl) await shell.openExternal(latest.installerUrl);
+        if (!latest.installerUrl) {
+          sendStatus({
+            kind: 'error',
+            code: 'no-installer-url',
+            message: 'Installer URL not found in latest release.'
+          });
+          return;
+        }
+        sendStatus({
+          kind: 'downloading',
+          percent: 0,
+          bytesPerSecond: 0,
+          transferred: 0,
+          total: 0
+        });
+        pendingManualInstaller = await manualDownloadAndPrepare(
+          latest.installerUrl,
+          latest.version
+        );
+        sendStatus({
+          kind: 'downloaded',
+          version: latest.version,
+          releaseNotes: latest.notes
+        });
       } catch (err2) {
         sendStatus({
           kind: 'error',
@@ -440,10 +585,14 @@ async function setupAutoUpdater(): Promise<void> {
       }
     });
     ipcMain.handle(IPC.updateInstall, () => {
+      if (pendingManualInstaller) {
+        runInstallerAndQuit(pendingManualInstaller);
+        return;
+      }
       sendStatus({
         kind: 'error',
         code: 'install-no-download',
-        message: 'electron-updater unavailable — install manually.'
+        message: 'No installer downloaded — re-run download first.'
       });
     });
     setTimeout(() => void checkUpdates(), 3000);

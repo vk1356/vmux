@@ -25,7 +25,6 @@ export function TitleBar(): JSX.Element {
         </span>
         <span className="titlebar-brand-name">vMux</span>
       </div>
-      <span className="titlebar-title">orchestrateur multi-agents IA</span>
       <div className="titlebar-spacer" />
       <div className="titlebar-actions">
         <button
