@@ -3,12 +3,14 @@ import { Activity, Folder, GitBranch, Cpu, Bell, AlertCircle } from 'lucide-reac
 import { useSessionStore } from '../store/sessions';
 import { allPaneIds } from '@shared/tree';
 import type { TerminalPane } from '@shared/types';
+import { useT } from '../i18n';
 
 interface Props {
   onOpenNotifications: () => void;
 }
 
 export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
+  const t = useT();
   const { sessions, activeSessionId, eventHistory, paneActivity, setActiveSession } =
     useSessionStore();
 
@@ -48,7 +50,7 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
   return (
     <div className="statusbar">
       <span className="statusbar-section">
-        <Activity size={11} /> {runningPanes} actif{runningPanes > 1 ? 's' : ''} / {totalPanes}
+        <Activity size={11} /> {runningPanes} {t('statusActive')} / {totalPanes}
       </span>
       {active && (
         <>

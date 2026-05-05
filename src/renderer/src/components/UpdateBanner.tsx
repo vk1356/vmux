@@ -1,10 +1,12 @@
 import { useEffect, useState, type JSX } from 'react';
 import { Download, RefreshCw, X, CheckCircle2, AlertTriangle } from 'lucide-react';
 import type { UpdateStatus } from '@shared/types';
+import { useT } from '../i18n';
 
 /** Bannière de mise à jour. Affichée dès qu'electron-updater détecte une nouvelle
  *  release GitHub. L'user peut télécharger puis installer (redémarrage auto). */
 export function UpdateBanner(): JSX.Element | null {
+  const t = useT();
   const [status, setStatus] = useState<UpdateStatus>({ kind: 'idle' });
   const [dismissed, setDismissed] = useState(false);
 
@@ -33,17 +35,17 @@ export function UpdateBanner(): JSX.Element | null {
       <div className="update-banner update-banner-available">
         <Download size={14} />
         <div className="update-banner-text">
-          <strong>Mise à jour disponible</strong>
-          <span>Version {status.version} prête à être téléchargée.</span>
+          <strong>{t('bannerAvailable')}</strong>
+          <span>{t('bannerAvailableBody', { version: status.version })}</span>
         </div>
         <button className="btn btn-primary update-banner-action" onClick={onDownload}>
-          Télécharger
+          {t('bannerDownloadBtn')}
         </button>
         <button
           className="btn-icon update-banner-close"
           onClick={() => setDismissed(true)}
-          title="Plus tard"
-          aria-label="Plus tard"
+          title={t('bannerLater')}
+          aria-label={t('bannerLater')}
         >
           <X size={12} />
         </button>
@@ -58,7 +60,7 @@ export function UpdateBanner(): JSX.Element | null {
       <div className="update-banner update-banner-downloading">
         <RefreshCw size={14} className="spin" />
         <div className="update-banner-text">
-          <strong>Téléchargement en cours… {pct}%</strong>
+          <strong>{t('bannerDownloading', { pct })}</strong>
           <span>{mbs} MB/s</span>
         </div>
         <div className="update-banner-progress">
@@ -73,17 +75,17 @@ export function UpdateBanner(): JSX.Element | null {
       <div className="update-banner update-banner-ready">
         <CheckCircle2 size={14} />
         <div className="update-banner-text">
-          <strong>Mise à jour prête</strong>
-          <span>Version {status.version} — redémarre pour installer.</span>
+          <strong>{t('bannerReady')}</strong>
+          <span>{t('bannerReadyBody', { version: status.version })}</span>
         </div>
         <button className="btn btn-primary update-banner-action" onClick={onInstall}>
-          Installer et redémarrer
+          {t('bannerInstallBtn')}
         </button>
         <button
           className="btn-icon update-banner-close"
           onClick={() => setDismissed(true)}
-          title="Plus tard"
-          aria-label="Plus tard"
+          title={t('bannerLater')}
+          aria-label={t('bannerLater')}
         >
           <X size={12} />
         </button>
@@ -96,14 +98,14 @@ export function UpdateBanner(): JSX.Element | null {
       <div className="update-banner update-banner-error">
         <AlertTriangle size={14} />
         <div className="update-banner-text">
-          <strong>Échec de la mise à jour</strong>
+          <strong>{t('bannerError')}</strong>
           <span>{status.message}</span>
         </div>
         <button
           className="btn-icon update-banner-close"
           onClick={() => setDismissed(true)}
-          title="Fermer"
-          aria-label="Fermer"
+          title={t('bannerLater')}
+          aria-label={t('bannerLater')}
         >
           <X size={12} />
         </button>

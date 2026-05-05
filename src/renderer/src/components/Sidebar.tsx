@@ -30,6 +30,7 @@ import { useSessionStore } from '../store/sessions';
 import type { Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { pathBasename } from '@shared/utils';
+import { useT } from '../i18n';
 
 interface Props {
   onNewSession: () => void;
@@ -37,6 +38,7 @@ interface Props {
 }
 
 function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
+  const t = useT();
   const {
     sessions,
     agents,
@@ -124,7 +126,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
     <aside className="sidebar">
       <div className="sidebar-header">
         <div className="sidebar-header-row">
-          <span className="sidebar-title">Sessions</span>
+          <span className="sidebar-title">{t('sidebarTitle')}</span>
           {sessions.length > 0 && (
             <span className="sidebar-count">
               <span className="sidebar-count-dot running" />
@@ -156,7 +158,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
         <div className="sidebar-search">
           <Search size={12} />
           <input
-            placeholder="Filtrer…"
+            placeholder={t('sidebarFilter')}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             spellCheck={false}
@@ -167,12 +169,12 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
       <div className="session-list">
         {sessions.length === 0 ? (
           <div className="sidebar-empty">
-            <div>Aucune session.</div>
-            <span>Crée-en une pour lancer un agent IA dans son propre worktree.</span>
+            <div>{t('sidebarEmptyTitle')}</div>
+            <span>{t('sidebarEmptyBody')}</span>
           </div>
         ) : filtered.length === 0 ? (
           <div className="sidebar-empty">
-            <div>Aucun résultat.</div>
+            <div>{t('sidebarNoResults')}</div>
           </div>
         ) : (
           filtered.map((s) => {

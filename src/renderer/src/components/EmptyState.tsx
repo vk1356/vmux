@@ -1,6 +1,6 @@
 import { useEffect, useState, type JSX } from 'react';
 import {
-  Sparkles,
+  Rocket,
   Layers,
   Globe,
   GitBranch,
@@ -9,6 +9,7 @@ import {
   Bell,
   ArrowRight
 } from 'lucide-react';
+import { useT, type TKey } from '../i18n';
 
 interface Props {
   onNewSession: () => void;
@@ -16,44 +17,45 @@ interface Props {
 
 interface Feature {
   icon: JSX.Element;
-  title: string;
-  body: string;
+  titleKey: TKey;
+  bodyKey: TKey;
 }
 
 const FEATURES: Feature[] = [
   {
     icon: <Layers size={16} />,
-    title: 'Splits tmux-like',
-    body: 'Découpe horizontalement, verticalement, ou auto-tile en grille 2D — un raccourci.'
+    titleKey: 'heroFeatureSplitsTitle',
+    bodyKey: 'heroFeatureSplitsBody'
   },
   {
     icon: <Globe size={16} />,
-    title: 'Preview localhost',
-    body: 'URL détectée → preview embarqué dans la fenêtre, sans quitter ton flow.'
+    titleKey: 'heroFeaturePreviewTitle',
+    bodyKey: 'heroFeaturePreviewBody'
   },
   {
     icon: <GitBranch size={16} />,
-    title: 'Worktrees git',
-    body: 'Chaque agent dans son propre worktree — branches isolées, zéro collision.'
+    titleKey: 'heroFeatureWorktreesTitle',
+    bodyKey: 'heroFeatureWorktreesBody'
   },
   {
     icon: <Bot size={16} />,
-    title: 'Multi-agents',
-    body: 'Claude Code, Codex, Aider, Cursor, Gemini — tous gérés depuis la même fenêtre.'
+    titleKey: 'heroFeatureMultiAgentTitle',
+    bodyKey: 'heroFeatureMultiAgentBody'
   },
   {
     icon: <Bell size={16} />,
-    title: 'Notifications natives',
-    body: "Push Windows + flash taskbar quand l'agent demande une action en background."
+    titleKey: 'heroFeatureNotifsTitle',
+    bodyKey: 'heroFeatureNotifsBody'
   },
   {
     icon: <Zap size={16} />,
-    title: 'PTY natif ConPTY',
-    body: 'Terminal Windows natif via node-pty — performances et compatibilité shell.'
+    titleKey: 'heroFeaturePtyTitle',
+    bodyKey: 'heroFeaturePtyBody'
   }
 ];
 
 export function EmptyState({ onNewSession }: Props): JSX.Element {
+  const t = useT();
   const [version, setVersion] = useState<string>('');
   useEffect(() => {
     void window.cmux.app?.version().then(setVersion);
@@ -80,49 +82,46 @@ export function EmptyState({ onNewSession }: Props): JSX.Element {
         </div>
 
         <div className="hero-eyebrow">
-          <span className="hero-dot" /> orchestrateur multi-agents IA
+          <span className="hero-dot" /> {t('appTagline')}
         </div>
 
         <h1 className="hero-title">
-          Plusieurs agents IA, <span className="hero-title-accent">une seule fenêtre.</span>
+          {t('heroTitleA')}{' '}
+          <span className="hero-title-accent">{t('heroTitleB')}</span>
         </h1>
-        <p className="hero-lead">
-          vMux orchestre Claude Code, Codex, Aider et bien d'autres en parallèle — chacun
-          dans son propre worktree git. Aucune collision de branche, juste des agents qui
-          bossent en silence.
-        </p>
+        <p className="hero-lead">{t('heroLead')}</p>
 
         <div className="hero-cta">
           <button className="btn primary hero-cta-primary" onClick={onNewSession}>
-            <Sparkles size={14} />
-            Nouvelle session
+            <Rocket size={14} />
+            {t('heroCta')}
             <ArrowRight size={14} />
           </button>
           <span className="hero-cta-hint">
-            ou tape <span className="kbd-inline">Ctrl+N</span>
+            {t('heroCtaHint')} <span className="kbd-inline">Ctrl+N</span>
           </span>
         </div>
 
         <div className="hero-features">
           {FEATURES.map((f) => (
-            <div key={f.title} className="hero-feature-card">
+            <div key={f.titleKey} className="hero-feature-card">
               <div className="hero-feature-icon">{f.icon}</div>
-              <div className="hero-feature-title">{f.title}</div>
-              <div className="hero-feature-body">{f.body}</div>
+              <div className="hero-feature-title">{t(f.titleKey)}</div>
+              <div className="hero-feature-body">{t(f.bodyKey)}</div>
             </div>
           ))}
         </div>
 
         <div className="hero-shortcuts">
-          <ShortcutHint k="Ctrl+N" label="Nouvelle session" />
+          <ShortcutHint k="Ctrl+N" label={t('shortcutNewSession')} />
           <span className="hero-sep" />
-          <ShortcutHint k="Ctrl+Shift+D" label="Ajouter un pane" />
+          <ShortcutHint k="Ctrl+Shift+D" label={t('shortcutAddPane')} />
           <span className="hero-sep" />
-          <ShortcutHint k="Ctrl+G" label="Re-tile" />
+          <ShortcutHint k="Ctrl+G" label={t('shortcutRetile')} />
           <span className="hero-sep" />
-          <ShortcutHint k="Ctrl+P" label="Palette" />
+          <ShortcutHint k="Ctrl+P" label={t('shortcutPalette')} />
           <span className="hero-sep" />
-          <ShortcutHint k="Ctrl+,"  label="Paramètres" />
+          <ShortcutHint k="Ctrl+,"  label={t('shortcutSettings')} />
         </div>
 
         <div className="hero-meta">

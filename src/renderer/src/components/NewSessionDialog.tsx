@@ -1,5 +1,5 @@
 import { useEffect, useState, type JSX } from 'react';
-import { FolderOpen, X, GitBranch, Sparkles, AlertCircle, ExternalLink } from 'lucide-react';
+import { FolderOpen, X, GitBranch, MessageSquare, AlertCircle, ExternalLink } from 'lucide-react';
 import type { AgentPreset, GitRepoInfo } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
 
@@ -260,7 +260,7 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
 
           <div className="field">
             <label className="field-label">
-              <Sparkles size={11} style={{ verticalAlign: '-1px' }} /> Prompt initial (optionnel)
+              <MessageSquare size={11} style={{ verticalAlign: '-1px' }} /> Prompt initial (optionnel)
             </label>
             <input
               className="input"

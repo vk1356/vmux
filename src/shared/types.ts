@@ -154,8 +154,11 @@ export interface Snippet {
   createdAt: number;
 }
 
+export type Lang = 'en' | 'fr' | 'de' | 'es' | 'zh' | 'ja' | 'tr';
+
 export interface AppSettings {
   theme: 'dark' | 'light' | 'system';
+  language: Lang;
   fontFamily: string;
   fontSize: number;
   defaultShell: string;

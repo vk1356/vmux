@@ -10,10 +10,12 @@ import {
   Download,
   RefreshCw,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Languages
 } from 'lucide-react';
-import type { AgentId, AppSettings, UpdateStatus } from '@shared/types';
+import type { AgentId, AppSettings, Lang, UpdateStatus } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
+import { LANG_LABELS, useT } from '../i18n';
 
 interface Props {
   open: boolean;
@@ -41,6 +43,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
   const { settings, agents, agentAvailability, patchSettings } = useSessionStore();
   const [tab, setTab] = useState<Tab>('apparence');
   const [saving, setSaving] = useState(false);
+  const t = useT();
 
   if (!open || !settings) return null;
 
@@ -73,8 +76,8 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="dialog-header">
-          <div className="dialog-title">Paramètres</div>
-          <button className="btn-icon" onClick={onClose} aria-label="Fermer">
+          <div className="dialog-title">{t('settingsTitle')}</div>
+          <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
             <X size={14} />
           </button>
         </div>
@@ -92,37 +95,37 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
             }}
           >
             <SettingsTabButton
-              label="Apparence"
+              label={t('tabAppearance')}
               icon={<Palette size={14} />}
               active={tab === 'apparence'}
               onClick={() => setTab('apparence')}
             />
             <SettingsTabButton
-              label="Terminal"
+              label={t('tabTerminal')}
               icon={<Sliders size={14} />}
               active={tab === 'terminal'}
               onClick={() => setTab('terminal')}
             />
             <SettingsTabButton
-              label="Notifications"
+              label={t('tabNotifications')}
               icon={<Bell size={14} />}
               active={tab === 'notifs'}
               onClick={() => setTab('notifs')}
             />
             <SettingsTabButton
-              label="Agents"
+              label={t('tabAgents')}
               icon={<Bot size={14} />}
               active={tab === 'agents'}
               onClick={() => setTab('agents')}
             />
             <SettingsTabButton
-              label="Mises à jour"
+              label={t('tabUpdates')}
               icon={<Download size={14} />}
               active={tab === 'updates'}
               onClick={() => setTab('updates')}
             />
             <SettingsTabButton
-              label="Avancé"
+              label={t('tabAdvanced')}
               icon={<Sliders size={14} />}
               active={tab === 'avance'}
               onClick={() => setTab('avance')}
@@ -134,7 +137,29 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
             {tab === 'apparence' && (
               <>
                 <div className="field">
-                  <label className="field-label">Thème</label>
+                  <label className="field-label">
+                    <Languages
+                      size={11}
+                      style={{ verticalAlign: '-1px', marginRight: 4 }}
+                    />
+                    {t('fieldLanguage')}
+                  </label>
+                  <select
+                    className="select"
+                    value={settings.language}
+                    onChange={(e) =>
+                      void apply({ language: e.target.value as Lang })
+                    }
+                  >
+                    {(Object.keys(LANG_LABELS) as Lang[]).map((l) => (
+                      <option key={l} value={l}>
+                        {LANG_LABELS[l]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label className="field-label">{t('fieldTheme')}</label>
                   <select
                     className="select"
                     value={settings.theme}
@@ -142,14 +167,14 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                       void apply({ theme: e.target.value as AppSettings['theme'] })
                     }
                   >
-                    <option value="dark">Sombre</option>
-                    <option value="light">Clair (à venir)</option>
-                    <option value="system">Système</option>
+                    <option value="dark">{t('themeDark')}</option>
+                    <option value="light">{t('themeLight')}</option>
+                    <option value="system">{t('themeSystem')}</option>
                   </select>
-                  <div className="hint">Le mode clair n'est pas encore stylé — reste sur sombre.</div>
+                  <div className="hint">{t('themeLightHint')}</div>
                 </div>
                 <div className="field">
-                  <label className="field-label">Police</label>
+                  <label className="field-label">{t('fieldFont')}</label>
                   <select
                     className="select"
                     value={settings.fontFamily}
@@ -163,7 +188,9 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                   </select>
                 </div>
                 <div className="field">
-                  <label className="field-label">Taille de police ({settings.fontSize}px)</label>
+                  <label className="field-label">
+                    {t('fieldFontSize')} ({settings.fontSize}px)
+                  </label>
                   <input
                     type="range"
                     min={10}
@@ -179,7 +206,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     checked={settings.cursorBlink}
                     onChange={(e) => void apply({ cursorBlink: e.target.checked })}
                   />
-                  Curseur clignotant
+                  {t('fieldCursorBlink')}
                 </label>
               </>
             )}
@@ -406,10 +433,10 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
 
         <div className="dialog-footer">
           <span className="hint" style={{ flex: 1 }}>
-            {saving ? 'Sauvegarde…' : 'Modifications appliquées en live.'}
+            {saving ? t('settingsSavingHint') : t('settingsLiveHint')}
           </span>
           <button className="btn primary" onClick={onClose}>
-            Fermer
+            {t('settingsClose')}
           </button>
         </div>
       </div>
@@ -450,6 +477,7 @@ function SettingsTabButton({ label, icon, active, onClick }: TabBtnProps): JSX.E
 
 /** Onglet Mises à jour : version actuelle, check manuel, statut live. */
 function UpdatesTab(): JSX.Element {
+  const t = useT();
   const [version, setVersion] = useState<string>('');
   const [status, setStatus] = useState<UpdateStatus>({ kind: 'idle' });
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
@@ -466,14 +494,12 @@ function UpdatesTab(): JSX.Element {
     setStatus({ kind: 'checking' });
     setCheckedAt(Date.now());
     void window.cmux.updater.check();
-    // Watchdog UI : si après 25s on est toujours sur 'checking', on affiche
-    // une erreur. Le main a aussi son watchdog 20s, ceci est un filet de sécurité.
     setTimeout(() => {
       setStatus((cur) =>
         cur.kind === 'checking'
           ? {
               kind: 'error',
-              message: 'Pas de réponse — vérifie que tu utilises la version installée.'
+              message: 'No response — make sure you are using the installed version.'
             }
           : cur
       );
@@ -489,14 +515,14 @@ function UpdatesTab(): JSX.Element {
   return (
     <>
       <div className="field">
-        <label className="field-label">Version installée</label>
+        <label className="field-label">{t('fieldInstalledVersion')}</label>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <code style={{ fontSize: 13, color: 'var(--text)' }}>vMux {version || '…'}</code>
         </div>
       </div>
 
       <div className="field">
-        <label className="field-label">Statut</label>
+        <label className="field-label">{t('fieldStatus')}</label>
         <UpdateStatusLine status={status} checkedAt={checkedAt} />
       </div>
 
@@ -510,24 +536,21 @@ function UpdatesTab(): JSX.Element {
             size={12}
             className={status.kind === 'checking' ? 'spin' : undefined}
           />
-          Vérifier maintenant
+          {t('updateCheck')}
         </button>
         {status.kind === 'available' && (
           <button className="btn primary" onClick={onDownload}>
-            <Download size={12} /> Télécharger v{status.version}
+            <Download size={12} /> {t('updateDownload')}{status.version}
           </button>
         )}
         {status.kind === 'downloaded' && (
           <button className="btn primary" onClick={onInstall}>
-            <CheckCircle2 size={12} /> Installer et redémarrer
+            <CheckCircle2 size={12} /> {t('updateInstall')}
           </button>
         )}
       </div>
 
-      <div className="hint">
-        vMux vérifie automatiquement les nouvelles versions au démarrage et toutes les 4 heures.
-        Les mises à jour sont publiées sur GitHub Releases.
-      </div>
+      <div className="hint">{t('updateAutoHint')}</div>
 
       <div className="field" style={{ marginTop: 12 }}>
         <button
@@ -536,7 +559,7 @@ function UpdatesTab(): JSX.Element {
             window.cmux.dialog.openExternal('https://github.com/vk1356/vmux/releases')
           }
         >
-          Voir toutes les versions <ExternalLink size={11} />
+          {t('updateSeeAll')} <ExternalLink size={11} />
         </button>
       </div>
     </>
@@ -549,13 +572,14 @@ interface StatusLineProps {
 }
 
 function UpdateStatusLine({ status, checkedAt }: StatusLineProps): JSX.Element {
+  const t = useT();
   switch (status.kind) {
     case 'idle':
-      return <span style={{ color: 'var(--text-muted)' }}>Aucune vérification récente.</span>;
+      return <span style={{ color: 'var(--text-muted)' }}>{t('updateNoCheck')}</span>;
     case 'checking':
       return (
         <span style={{ color: 'var(--info)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <RefreshCw size={11} className="spin" /> Vérification en cours…
+          <RefreshCw size={11} className="spin" /> {t('updateChecking')}
         </span>
       );
     case 'not-available':
@@ -563,14 +587,14 @@ function UpdateStatusLine({ status, checkedAt }: StatusLineProps): JSX.Element {
         <span
           style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 6 }}
         >
-          <CheckCircle2 size={11} /> À jour (v{status.currentVersion})
-          {checkedAt && ` — il y a ${secondsAgo(checkedAt)}`}
+          <CheckCircle2 size={11} /> {t('updateUpToDate')} (v{status.currentVersion})
+          {checkedAt && ` — ${secondsAgo(checkedAt)}`}
         </span>
       );
     case 'available':
       return (
         <span style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Download size={11} /> Nouvelle version v{status.version} disponible
+          <Download size={11} /> {t('updateAvailable')} (v{status.version})
         </span>
       );
     case 'downloading': {
@@ -578,7 +602,7 @@ function UpdateStatusLine({ status, checkedAt }: StatusLineProps): JSX.Element {
       const mbs = (status.bytesPerSecond / 1024 / 1024).toFixed(1);
       return (
         <span style={{ color: 'var(--info)' }}>
-          Téléchargement {pct}% — {mbs} MB/s
+          {t('updateDownloading')} {pct}% — {mbs} MB/s
         </span>
       );
     }
@@ -587,13 +611,13 @@ function UpdateStatusLine({ status, checkedAt }: StatusLineProps): JSX.Element {
         <span
           style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 6 }}
         >
-          <CheckCircle2 size={11} /> Mise à jour v{status.version} prête à être installée
+          <CheckCircle2 size={11} /> {t('updateReady')} (v{status.version})
         </span>
       );
     case 'error':
       return (
         <span style={{ color: 'var(--error)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <AlertTriangle size={11} /> Erreur : {status.message}
+          <AlertTriangle size={11} /> {t('updateError')}: {status.message}
         </span>
       );
   }

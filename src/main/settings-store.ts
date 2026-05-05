@@ -14,6 +14,7 @@ interface Schema {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
+  language: 'en',
   fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
   fontSize: 13,
   defaultShell: 'pwsh',
