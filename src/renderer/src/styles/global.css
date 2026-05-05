@@ -2457,3 +2457,183 @@ input[type='range'] {
 @media (prefers-reduced-motion: reduce) {
   .pane-attention-banner { animation: none; }
 }
+
+/* ============================================================
+   Preview pane — console DevTools intégrée
+   ============================================================ */
+.preview-console-toggle {
+  position: relative;
+}
+.preview-console-toggle.active {
+  background: var(--bg-elev-2);
+  color: var(--accent);
+}
+.preview-console-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 700;
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.preview-console {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border);
+  height: 220px;
+  min-height: 120px;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+.preview-console-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-1);
+  font-family: var(--font-sans, inherit);
+}
+.preview-console-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+  margin-right: 4px;
+}
+.preview-console-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.preview-console-filter:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.preview-console-filter.active {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.preview-console-filter.active.error { color: var(--error); }
+.preview-console-filter.active.warn { color: var(--warn); }
+.preview-console-filter-count {
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 999px;
+}
+.preview-console-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.preview-console-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-sans, inherit);
+}
+.preview-console-entry {
+  display: flex;
+  gap: 8px;
+  padding: 3px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  align-items: flex-start;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.preview-console-entry:hover {
+  background: rgba(255, 255, 255, 0.015);
+}
+.preview-console-entry-time {
+  color: var(--text-muted);
+  font-size: 10px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+.preview-console-entry-level {
+  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+}
+.preview-console-entry-msg {
+  flex: 1;
+  color: var(--text);
+}
+.preview-console-entry-src {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  font-style: italic;
+}
+.preview-console-entry.level-error {
+  background: rgba(239, 68, 68, 0.06);
+}
+.preview-console-entry.level-error .preview-console-entry-level {
+  background: rgba(239, 68, 68, 0.18);
+  color: var(--error);
+}
+.preview-console-entry.level-error .preview-console-entry-msg {
+  color: #fca5a5;
+}
+.preview-console-entry.level-warn {
+  background: rgba(251, 146, 60, 0.04);
+}
+.preview-console-entry.level-warn .preview-console-entry-level {
+  background: rgba(251, 146, 60, 0.18);
+  color: var(--warn);
+}
+.preview-console-entry.level-info .preview-console-entry-level {
+  background: rgba(59, 130, 246, 0.18);
+  color: var(--info);
+}
+.preview-console-entry.level-debug .preview-console-entry-level {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+}
+.preview-console-peek {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev-1);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  flex-shrink: 0;
+}
+.preview-console-peek:hover {
+  background: var(--bg-elev-2);
+}

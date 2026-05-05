@@ -5,7 +5,11 @@ import {
   RotateCw,
   ExternalLink,
   AlertCircle,
-  Loader2
+  Loader2,
+  Terminal,
+  Trash2,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import type { PreviewPane as PreviewPaneT, TerminalPane } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
@@ -14,6 +18,16 @@ interface Props {
   sessionId: string;
   pane: PreviewPaneT;
   active: boolean;
+}
+
+type ConsoleLevel = 'log' | 'info' | 'warn' | 'error' | 'debug';
+interface ConsoleLog {
+  id: string;
+  level: ConsoleLevel;
+  message: string;
+  source?: string;
+  line?: number;
+  ts: number;
 }
 
 // Le type DOM React de <webview> est legacy (allowpopups: boolean) mais
@@ -37,7 +51,17 @@ interface WebviewElement extends HTMLElement {
   reload(): void;
   loadURL(url: string): Promise<void>;
   getURL(): string;
+  openDevTools(): void;
 }
+
+const LEVEL_FROM_CODE: Record<number, ConsoleLevel> = {
+  0: 'log',
+  1: 'warn',
+  2: 'error',
+  3: 'info'
+};
+
+const MAX_LOGS = 500;
 
 function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
   const ref = useRef<WebviewElement | null>(null);
@@ -46,6 +70,10 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
   const [failed, setFailed] = useState(false);
   const [canBack, setCanBack] = useState(false);
   const [canForward, setCanForward] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [logs, setLogs] = useState<ConsoleLog[]>([]);
+  const [filter, setFilter] = useState<ConsoleLevel | 'all'>('all');
+  const logsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const dismissPreview = useSessionStore((s) => s.dismissPreview);
 
@@ -90,6 +118,12 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
       if (ev.errorCode === -3) return;
       setLoading(false);
       setFailed(true);
+      // Affiche aussi l'erreur dans la console intégrée.
+      pushLog({
+        level: 'error',
+        message: `Failed to load: ${ev.errorDescription ?? 'unknown error'} (code ${ev.errorCode})`,
+        source: 'webview'
+      });
     };
     const onNav = (): void => {
       try {
@@ -100,19 +134,61 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
         /* webview pas encore initialisée */
       }
     };
+    // Intercept console.* depuis la webview.
+    type ConsoleMsgEvent = Event & {
+      level: number;
+      message: string;
+      line: number;
+      sourceId: string;
+    };
+    const onConsole = (e: Event): void => {
+      const ev = e as ConsoleMsgEvent;
+      pushLog({
+        level: LEVEL_FROM_CODE[ev.level] ?? 'log',
+        message: ev.message,
+        source: ev.sourceId,
+        line: ev.line
+      });
+    };
+
     el.addEventListener('did-start-loading', onStart);
     el.addEventListener('did-stop-loading', onStop);
     el.addEventListener('did-fail-load', onFail as EventListener);
     el.addEventListener('did-navigate', onNav);
     el.addEventListener('did-navigate-in-page', onNav);
+    el.addEventListener('console-message', onConsole as EventListener);
     return () => {
       el.removeEventListener('did-start-loading', onStart);
       el.removeEventListener('did-stop-loading', onStop);
       el.removeEventListener('did-fail-load', onFail as EventListener);
       el.removeEventListener('did-navigate', onNav);
       el.removeEventListener('did-navigate-in-page', onNav);
+      el.removeEventListener('console-message', onConsole as EventListener);
     };
   }, []);
+
+  // Helper qui push un log et cap la taille à MAX_LOGS (FIFO).
+  const pushLog = useCallback((entry: Omit<ConsoleLog, 'id' | 'ts'>): void => {
+    setLogs((cur) => {
+      const next = [
+        ...cur,
+        {
+          ...entry,
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          ts: Date.now()
+        }
+      ];
+      if (next.length > MAX_LOGS) next.splice(0, next.length - MAX_LOGS);
+      return next;
+    });
+  }, []);
+
+  // Auto-scroll en bas quand un nouveau log arrive et que la console est visible.
+  useEffect(() => {
+    if (!consoleOpen) return;
+    const el = logsScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logs.length, consoleOpen]);
 
   const onAddrSubmit = useCallback(
     (e: React.FormEvent) => {
@@ -137,6 +213,10 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
     () => void window.cmux.dialog.openExternal(addr),
     [addr]
   );
+
+  const filteredLogs = filter === 'all' ? logs : logs.filter((l) => l.level === filter);
+  const errorCount = logs.filter((l) => l.level === 'error').length;
+  const warnCount = logs.filter((l) => l.level === 'warn').length;
 
   return (
     <div
@@ -174,6 +254,26 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
           />
         </form>
         <button
+          className={`btn-icon preview-console-toggle ${consoleOpen ? 'active' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setConsoleOpen((v) => !v);
+          }}
+          title={consoleOpen ? 'Masquer la console' : 'Afficher la console'}
+          aria-label="Console"
+        >
+          <Terminal size={14} />
+          {(errorCount > 0 || warnCount > 0) && !consoleOpen && (
+            <span
+              className="preview-console-badge"
+              style={{ background: errorCount > 0 ? 'var(--error)' : 'var(--warn)' }}
+              aria-hidden
+            >
+              {errorCount > 0 ? errorCount : warnCount}
+            </span>
+          )}
+        </button>
+        <button
           className="btn-icon"
           onClick={openExternal}
           title="Ouvrir dans le navigateur"
@@ -184,8 +284,6 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
         <button
           className="btn-icon"
           onClick={() => {
-            // Marque la session comme "preview dismissé" → pas d'auto-open
-            // jusqu'à ce que le user en relance un manuellement.
             dismissPreview(sessionId);
             void window.cmux.panes.close(sessionId, pane.id);
           }}
@@ -195,6 +293,7 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
           ×
         </button>
       </div>
+
       <div className="preview-host">
         {/* eslint-disable-next-line react/no-unknown-property */}
         {React.createElement<WebviewProps>('webview', {
@@ -220,8 +319,135 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
           </div>
         )}
       </div>
+
+      {consoleOpen && (
+        <div className="preview-console" onClick={(e) => e.stopPropagation()}>
+          <div className="preview-console-header">
+            <span className="preview-console-title">
+              <Terminal size={11} /> Console
+            </span>
+            <ConsoleFilterBtn
+              label="All"
+              count={logs.length}
+              active={filter === 'all'}
+              onClick={() => setFilter('all')}
+            />
+            <ConsoleFilterBtn
+              label="Errors"
+              count={errorCount}
+              active={filter === 'error'}
+              onClick={() => setFilter('error')}
+              tone="error"
+            />
+            <ConsoleFilterBtn
+              label="Warnings"
+              count={warnCount}
+              active={filter === 'warn'}
+              onClick={() => setFilter('warn')}
+              tone="warn"
+            />
+            <ConsoleFilterBtn
+              label="Logs"
+              count={logs.filter((l) => l.level === 'log' || l.level === 'info').length}
+              active={filter === 'log'}
+              onClick={() => setFilter('log')}
+            />
+            <span style={{ flex: 1 }} />
+            <button
+              className="btn-icon"
+              onClick={() => setLogs([])}
+              title="Vider la console"
+              aria-label="Vider"
+            >
+              <Trash2 size={11} />
+            </button>
+            <button
+              className="btn-icon"
+              onClick={() => setConsoleOpen(false)}
+              title="Masquer"
+              aria-label="Masquer"
+            >
+              <ChevronDown size={11} />
+            </button>
+          </div>
+          <div className="preview-console-body" ref={logsScrollRef}>
+            {filteredLogs.length === 0 ? (
+              <div className="preview-console-empty">
+                {logs.length === 0
+                  ? 'Aucun message console pour le moment. Charge la page pour voir les logs.'
+                  : 'Aucun message dans ce filtre.'}
+              </div>
+            ) : (
+              filteredLogs.map((l) => <ConsoleEntry key={l.id} entry={l} />)
+            )}
+          </div>
+        </div>
+      )}
+      {!consoleOpen && (errorCount > 0 || warnCount > 0) && (
+        <button
+          className="preview-console-peek"
+          onClick={(e) => {
+            e.stopPropagation();
+            setConsoleOpen(true);
+          }}
+          title="Cliquer pour ouvrir la console"
+        >
+          <ChevronUp size={11} />
+          {errorCount > 0 && (
+            <span style={{ color: 'var(--error)' }}>{errorCount} error{errorCount > 1 ? 's' : ''}</span>
+          )}
+          {warnCount > 0 && (
+            <span style={{ color: 'var(--warn)' }}>{warnCount} warning{warnCount > 1 ? 's' : ''}</span>
+          )}
+        </button>
+      )}
     </div>
   );
+}
+
+interface FilterBtnProps {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+  tone?: 'error' | 'warn';
+}
+
+function ConsoleFilterBtn({ label, count, active, onClick, tone }: FilterBtnProps): JSX.Element {
+  return (
+    <button
+      className={`preview-console-filter ${active ? 'active' : ''} ${tone ?? ''}`}
+      onClick={onClick}
+    >
+      {label}
+      <span className="preview-console-filter-count">{count}</span>
+    </button>
+  );
+}
+
+function ConsoleEntry({ entry }: { entry: ConsoleLog }): JSX.Element {
+  const time = new Date(entry.ts).toLocaleTimeString('en-US', { hour12: false });
+  return (
+    <div className={`preview-console-entry level-${entry.level}`}>
+      <span className="preview-console-entry-time">{time}</span>
+      <span className="preview-console-entry-level">{entry.level}</span>
+      <span className="preview-console-entry-msg">{entry.message}</span>
+      {entry.source && entry.line !== undefined && (
+        <span className="preview-console-entry-src">
+          {shortSource(entry.source)}:{entry.line}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function shortSource(src: string): string {
+  try {
+    const u = new URL(src);
+    return u.pathname.split('/').pop() || u.host;
+  } catch {
+    return src.split('/').pop() || src;
+  }
 }
 
 export const PreviewPane = memo(PreviewPaneImpl);

@@ -1,7 +1,7 @@
 {
   "name": "vmux-windows",
   "private": true,
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "vMux — orchestrateur multi-agents IA pour Windows. Splits, preview localhost, détection d'événements.",
   "main": "./out/main/index.js",
   "author": {
@@ -96,6 +96,12 @@
         "to": "icon.ico"
       }
     ],
+    "extraFiles": [
+      {
+        "from": "build/vmux.cmd",
+        "to": "vmux.cmd"
+      }
+    ],
     "win": {
       "target": [
         {
@@ -125,6 +131,7 @@
       "installerHeaderIcon": "build/icon.ico",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true,
+      "include": "build/installer.nsh",
       "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
     },
     "portable": {

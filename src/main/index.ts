@@ -16,6 +16,7 @@ import {
   setGracefulShutdown
 } from './settings-store';
 import { cleanupPasteTempFiles } from './temp-cleanup';
+import { parseCliArgs, CLI_HELP, type CliCommand } from './cli-args';
 
 log.initialize();
 log.transports.file.level = 'info';
@@ -25,16 +26,66 @@ let mainWindow: BrowserWindow | null = null;
 
 // Single-instance lock : si une autre instance tourne déjà, on focus la
 // première et on quit pour éviter de corrompre l'electron-store partagé.
-const gotLock = app.requestSingleInstanceLock();
+// On passe argv via additionalData pour que l'instance principale puisse
+// traiter les commandes CLI envoyées par les exe lancés ensuite.
+const gotLock = app.requestSingleInstanceLock({ argv: process.argv });
 if (!gotLock) {
   app.quit();
 }
-app.on('second-instance', () => {
+app.on('second-instance', (_event, _argv, _wd, additionalData) => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   }
+  // Récupère argv passé par l'instance secondaire et exécute la commande.
+  const data = additionalData as { argv?: string[] } | undefined;
+  if (data?.argv) {
+    const cmd = parseCliArgs(data.argv);
+    void executeCliCommand(cmd);
+  }
 });
+
+/** Argv de l'instance courante — peut contenir une commande à exécuter au boot
+ *  (ex: si l'user lance vMux.exe new --agent claude depuis un terminal et
+ *  qu'aucune instance n'est encore active). */
+const initialCliCommand: CliCommand = parseCliArgs(process.argv);
+if (initialCliCommand.kind === 'help') {
+  // Print l'aide sur stdout et quitte. NB : sur une app GUI Windows, stdout
+  // n'est visible que si lancée depuis un cmd avec `vMux.exe help`.
+  process.stdout.write(CLI_HELP);
+  app.quit();
+}
+
+/** Exécute une commande CLI une fois l'app prête. Crée une session via
+ *  ptyManager si kind='new'. Idempotent : focus la window dans tous les cas. */
+async function executeCliCommand(cmd: CliCommand): Promise<void> {
+  if (cmd.kind === 'none' || cmd.kind === 'help') return;
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+  if (cmd.kind === 'focus') return;
+
+  const cwd = cmd.cwd ?? process.cwd();
+  const name = cmd.name ?? (path.basename(cwd) || 'session');
+  log.info(`[cli] new session: agent=${cmd.agentId} cwd=${cwd} name=${name}`);
+  try {
+    const session = await ptyManager.createSession({
+      name,
+      agentId: cmd.agentId,
+      cwd,
+      initialInput: cmd.prompt
+    });
+    // Notifie le renderer que la session existe pour qu'il l'active.
+    const w = mainWindow;
+    if (w && !w.isDestroyed() && !w.webContents.isDestroyed()) {
+      w.webContents.send(IPC.sessionUpdate, session);
+    }
+  } catch (err) {
+    log.error('[cli] failed to create session', err);
+  }
+}
 
 /** Vérifie que les bounds sauvegardés sont toujours sur un écran connecté. */
 function clampToScreens(state: WindowState): WindowState {
@@ -159,6 +210,12 @@ app.whenReady().then(() => {
   // Auto-update — IPC handlers toujours enregistrés pour que l'UI ne reste
   // jamais bloquée sur "Checking…".
   void setupAutoUpdater();
+
+  // Exécute la commande CLI initiale si fournie (`vMux.exe new --agent ...`).
+  // Délai pour laisser le ready-to-show de la window se déclencher.
+  if (initialCliCommand.kind === 'new' || initialCliCommand.kind === 'focus') {
+    setTimeout(() => void executeCliCommand(initialCliCommand), 800);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
