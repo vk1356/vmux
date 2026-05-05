@@ -105,6 +105,12 @@ const EN = {
   updateDownloading: 'Downloading',
   updateReady: 'Update ready to install',
   updateError: 'Error',
+  errInstallNoDownload:
+    'Download not completed yet — re-run download or install manually from the website.',
+  errNoInstallerUrl: 'Installer URL not found in the latest release.',
+  errGithubApiFailed: 'GitHub API call failed. Check your connection.',
+  errNoResponse: 'No response from update server. Check your internet connection.',
+  errDevMode: 'Available only in the installed app, not in dev mode.',
 
   // Settings → Advanced
   fieldDiagnostic: 'Diagnostic',
@@ -224,6 +230,12 @@ const FR: Partial<Record<TKey, string>> = {
   updateDownloading: 'Téléchargement',
   updateReady: 'Mise à jour prête à être installée',
   updateError: 'Erreur',
+  errInstallNoDownload:
+    "Téléchargement non terminé — relance le download ou installe manuellement depuis le site.",
+  errNoInstallerUrl: "URL de l'installateur introuvable dans la dernière release.",
+  errGithubApiFailed: "L'appel à l'API GitHub a échoué. Vérifie ta connexion.",
+  errNoResponse: 'Pas de réponse du serveur de mise à jour. Vérifie ta connexion internet.',
+  errDevMode: "Disponible uniquement dans l'app installée, pas en mode dev.",
   fieldDiagnostic: 'Diagnostic',
   diagnosticBtn: 'Exporter le diagnostic (.json)',
   diagnosticHint:
@@ -306,7 +318,13 @@ const DE: Partial<Record<TKey, string>> = {
   bannerInstallBtn: 'Installieren und neu starten',
   bannerLater: 'Später',
   sidebarTitle: 'Sitzungen',
-  sidebarFilter: 'Filtern…'
+  sidebarFilter: 'Filtern…',
+  errInstallNoDownload:
+    'Download nicht abgeschlossen — erneut herunterladen oder manuell installieren.',
+  errNoInstallerUrl: 'Installer-URL im neuesten Release nicht gefunden.',
+  errGithubApiFailed: 'GitHub-API-Aufruf fehlgeschlagen. Verbindung prüfen.',
+  errNoResponse: 'Keine Antwort vom Update-Server. Internetverbindung prüfen.',
+  errDevMode: 'Nur in der installierten App verfügbar, nicht im Dev-Modus.'
 };
 
 const ES: Partial<Record<TKey, string>> = {
@@ -365,7 +383,13 @@ const ES: Partial<Record<TKey, string>> = {
   bannerInstallBtn: 'Instalar y reiniciar',
   bannerLater: 'Más tarde',
   sidebarTitle: 'Sesiones',
-  sidebarFilter: 'Filtrar…'
+  sidebarFilter: 'Filtrar…',
+  errInstallNoDownload:
+    'Descarga no completada — vuelve a descargar o instala manualmente.',
+  errNoInstallerUrl: 'URL del instalador no encontrada en la última versión.',
+  errGithubApiFailed: 'Llamada a la API de GitHub fallida. Comprueba tu conexión.',
+  errNoResponse: 'Sin respuesta del servidor de actualizaciones. Comprueba tu conexión.',
+  errDevMode: 'Disponible solo en la app instalada, no en modo dev.'
 };
 
 const ZH: Partial<Record<TKey, string>> = {
@@ -417,7 +441,12 @@ const ZH: Partial<Record<TKey, string>> = {
   bannerInstallBtn: '安装并重启',
   bannerLater: '稍后',
   sidebarTitle: '会话',
-  sidebarFilter: '筛选…'
+  sidebarFilter: '筛选…',
+  errInstallNoDownload: '下载未完成 — 请重新下载或手动安装。',
+  errNoInstallerUrl: '在最新版本中未找到安装程序 URL。',
+  errGithubApiFailed: 'GitHub API 调用失败。请检查网络连接。',
+  errNoResponse: '更新服务器无响应。请检查网络连接。',
+  errDevMode: '仅在已安装的应用中可用,开发模式下不可用。'
 };
 
 const JA: Partial<Record<TKey, string>> = {
@@ -474,7 +503,13 @@ const JA: Partial<Record<TKey, string>> = {
   bannerInstallBtn: 'インストールして再起動',
   bannerLater: '後で',
   sidebarTitle: 'セッション',
-  sidebarFilter: 'フィルタ…'
+  sidebarFilter: 'フィルタ…',
+  errInstallNoDownload:
+    'ダウンロードが完了していません — 再ダウンロードするか手動でインストールしてください。',
+  errNoInstallerUrl: '最新リリースにインストーラーURLが見つかりません。',
+  errGithubApiFailed: 'GitHub API 呼び出しに失敗しました。接続を確認してください。',
+  errNoResponse: '更新サーバーから応答がありません。インターネット接続を確認してください。',
+  errDevMode: 'インストールされたアプリでのみ利用可能、開発モードでは不可。'
 };
 
 const TR: Partial<Record<TKey, string>> = {
@@ -531,7 +566,13 @@ const TR: Partial<Record<TKey, string>> = {
   bannerInstallBtn: 'Yükle ve yeniden başlat',
   bannerLater: 'Daha sonra',
   sidebarTitle: 'Oturumlar',
-  sidebarFilter: 'Filtrele…'
+  sidebarFilter: 'Filtrele…',
+  errInstallNoDownload:
+    'İndirme tamamlanmadı — yeniden indir veya manuel olarak yükle.',
+  errNoInstallerUrl: 'En son sürümde yükleyici URL bulunamadı.',
+  errGithubApiFailed: 'GitHub API çağrısı başarısız. Bağlantını kontrol et.',
+  errNoResponse: 'Güncelleme sunucusundan yanıt yok. İnternet bağlantını kontrol et.',
+  errDevMode: 'Yalnızca yüklü uygulamada kullanılabilir, dev modunda değil.'
 };
 
 const CATALOG: Record<Lang, Partial<Record<TKey, string>>> = {

@@ -499,11 +499,12 @@ function UpdatesTab(): JSX.Element {
         cur.kind === 'checking'
           ? {
               kind: 'error',
-              message: 'No response — make sure you are using the installed version.'
+              code: 'no-response',
+              message: 'No response from update server. Check your internet connection.'
             }
           : cur
       );
-    }, 25000);
+    }, 60000);
   };
   const onDownload = (): void => {
     void window.cmux.updater.download();
@@ -617,9 +618,31 @@ function UpdateStatusLine({ status, checkedAt }: StatusLineProps): JSX.Element {
     case 'error':
       return (
         <span style={{ color: 'var(--error)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <AlertTriangle size={11} /> {t('updateError')}: {status.message}
+          <AlertTriangle size={11} /> {t('updateError')}: {translateUpdateError(t, status)}
         </span>
       );
+  }
+}
+
+/** Traduit un message d'erreur d'update si on a un `code` connu, sinon affiche
+ *  le message brut renvoyé par le main. */
+function translateUpdateError(
+  t: (k: import('../i18n').TKey) => string,
+  status: Extract<UpdateStatus, { kind: 'error' }>
+): string {
+  switch (status.code) {
+    case 'install-no-download':
+      return t('errInstallNoDownload');
+    case 'no-installer-url':
+      return t('errNoInstallerUrl');
+    case 'github-api-failed':
+      return t('errGithubApiFailed');
+    case 'no-response':
+      return t('errNoResponse');
+    case 'dev-mode':
+      return t('errDevMode');
+    default:
+      return status.message;
   }
 }
 

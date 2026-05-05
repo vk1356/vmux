@@ -300,6 +300,15 @@ export const IPC = {
 // Auto-update
 // ============================================================
 
+/** Codes d'erreur traduisibles côté renderer. Si présent, l'UI ignore `message`
+ *  et utilise la traduction de la clé. */
+export type UpdateErrorCode =
+  | 'install-no-download'
+  | 'no-installer-url'
+  | 'github-api-failed'
+  | 'no-response'
+  | 'dev-mode';
+
 export type UpdateStatus =
   | { kind: 'idle' }
   | { kind: 'checking' }
@@ -307,6 +316,6 @@ export type UpdateStatus =
   | { kind: 'not-available'; currentVersion: string }
   | { kind: 'downloading'; percent: number; bytesPerSecond: number; transferred: number; total: number }
   | { kind: 'downloaded'; version: string; releaseNotes?: string }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; message: string; code?: UpdateErrorCode };
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC];

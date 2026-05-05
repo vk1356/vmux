@@ -199,21 +199,93 @@ async function setupAutoUpdater(): Promise<void> {
     w.webContents.send(IPC.updateStatus, status);
   };
 
-  // En dev : enregistre des stubs IPC qui répondent immédiatement, sinon
-  // l'UI reste bloquée sur "Vérification en cours…" car aucun event n'arrive.
-  if (is.dev) {
-    log.info('[updater] dev mode — stub handlers (no network check)');
-    ipcMain.handle(IPC.updateCheck, () => {
-      send({
-        kind: 'error',
-        message: "Mode développement — l'auto-update n'est actif que sur l'app installée."
-      });
+  // ---- Fallback maison : check direct via l'API GitHub Releases. ----
+  // Marche même en dev et même si electron-updater ne répond pas. Renvoie
+  // la version + l'URL de l'installer si une release plus récente existe.
+  const REPO = 'vk1356/vmux';
+  type GhRelease = {
+    tag_name: string;
+    name?: string;
+    body?: string;
+    assets?: { name: string; browser_download_url: string }[];
+  };
+
+  async function ghFetchLatest(): Promise<{
+    version: string;
+    notes?: string;
+    installerUrl?: string;
+  } | null> {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'vMux-updater'
+      }
     });
-    ipcMain.handle(IPC.updateDownload, () => {
-      send({ kind: 'error', message: 'Indisponible en mode dev.' });
+    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
+    const data = (await res.json()) as GhRelease;
+    const version = (data.tag_name || '').replace(/^v/, '');
+    if (!version) return null;
+    const installer = data.assets?.find(
+      (a) => /Setup.*\.exe$/i.test(a.name) && !a.name.endsWith('.blockmap')
+    );
+    return { version, notes: data.body, installerUrl: installer?.browser_download_url };
+  }
+
+  function isNewer(remote: string, local: string): boolean {
+    const parse = (v: string): number[] =>
+      v.split('.').map((n) => parseInt(n, 10) || 0);
+    const r = parse(remote);
+    const l = parse(local);
+    for (let i = 0; i < Math.max(r.length, l.length); i++) {
+      const a = r[i] ?? 0;
+      const b = l[i] ?? 0;
+      if (a > b) return true;
+      if (a < b) return false;
+    }
+    return false;
+  }
+
+  // En dev : pas d'electron-updater (pas d'app-update.yml), mais on garde
+  // le check via API GitHub pour que l'UI Settings → Updates marche quand même.
+  if (is.dev) {
+    log.info('[updater] dev mode — using GitHub API fallback only');
+    ipcMain.handle(IPC.updateCheck, async () => {
+      send({ kind: 'checking' });
+      try {
+        const latest = await ghFetchLatest();
+        const local = app.getVersion();
+        if (!latest) {
+          send({ kind: 'not-available', currentVersion: local });
+          return;
+        }
+        if (isNewer(latest.version, local)) {
+          send({ kind: 'available', version: latest.version, releaseNotes: latest.notes });
+        } else {
+          send({ kind: 'not-available', currentVersion: local });
+        }
+      } catch (err) {
+        send({ kind: 'error', message: (err as Error).message });
+      }
+    });
+    ipcMain.handle(IPC.updateDownload, async () => {
+      try {
+        const latest = await ghFetchLatest();
+        if (latest?.installerUrl) {
+          const { shell } = await import('electron');
+          await shell.openExternal(latest.installerUrl);
+        } else {
+          send({ kind: 'error', message: 'Installer URL not found.' });
+        }
+      } catch (err) {
+        send({ kind: 'error', message: (err as Error).message });
+      }
     });
     ipcMain.handle(IPC.updateInstall, () => {
-      send({ kind: 'error', message: 'Indisponible en mode dev.' });
+      send({
+        kind: 'error',
+        code: 'dev-mode',
+        message: 'Available only in the installed app, not in dev mode.'
+      });
     });
     return;
   }
@@ -221,23 +293,28 @@ async function setupAutoUpdater(): Promise<void> {
   try {
     const { autoUpdater } = await import('electron-updater');
     autoUpdater.logger = log;
-    autoUpdater.autoDownload = true;
-    // On préfère installer manuellement via le bouton "Installer et redémarrer".
+    autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
 
-    autoUpdater.on('checking-for-update', () => send({ kind: 'checking' }));
+    let lastSentStatus: import('@shared/types').UpdateStatus['kind'] = 'idle';
+    const sendStatus = (s: import('@shared/types').UpdateStatus): void => {
+      lastSentStatus = s.kind;
+      send(s);
+    };
+
+    autoUpdater.on('checking-for-update', () => sendStatus({ kind: 'checking' }));
     autoUpdater.on('update-available', (info) =>
-      send({
+      sendStatus({
         kind: 'available',
         version: info.version,
         releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined
       })
     );
     autoUpdater.on('update-not-available', (info) =>
-      send({ kind: 'not-available', currentVersion: info.version })
+      sendStatus({ kind: 'not-available', currentVersion: info.version })
     );
     autoUpdater.on('download-progress', (p) =>
-      send({
+      sendStatus({
         kind: 'downloading',
         percent: p.percent,
         bytesPerSecond: p.bytesPerSecond,
@@ -246,84 +323,121 @@ async function setupAutoUpdater(): Promise<void> {
       })
     );
     autoUpdater.on('update-downloaded', (info) =>
-      send({
+      sendStatus({
         kind: 'downloaded',
         version: info.version,
         releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined
       })
     );
-    autoUpdater.on('error', (err) => send({ kind: 'error', message: err.message }));
+    autoUpdater.on('error', (err) => {
+      log.warn('[updater] event error', err.message);
+      sendStatus({ kind: 'error', message: err.message });
+    });
 
-    // IPC handlers : déclenche check/download/install depuis le renderer.
-    ipcMain.handle(IPC.updateCheck, async () => {
-      // Watchdog : si après 20s aucun event final n'a été émis, on bascule
-      // explicitement en error pour ne pas laisser l'UI sur "Vérification en cours…".
-      let settled = false;
-      const onFinal = (): void => {
-        settled = true;
-      };
-      autoUpdater.once('update-available', onFinal);
-      autoUpdater.once('update-not-available', onFinal);
-      autoUpdater.once('error', onFinal);
+    /** Check via electron-updater avec timeout 15s, fallback API GitHub. */
+    async function checkUpdates(): Promise<void> {
+      sendStatus({ kind: 'checking' });
 
-      const watchdog = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        send({
-          kind: 'error',
-          message:
-            "Vérification interrompue (pas de réponse de GitHub Releases). Vérifie ta connexion."
+      const electronUpdaterPromise = new Promise<'done' | 'timeout' | 'error'>((resolve) => {
+        const t = setTimeout(() => resolve('timeout'), 15000);
+        const cleanup = (): void => clearTimeout(t);
+
+        autoUpdater.once('update-available', () => {
+          cleanup();
+          resolve('done');
         });
-      }, 20000);
+        autoUpdater.once('update-not-available', () => {
+          cleanup();
+          resolve('done');
+        });
+        autoUpdater.once('error', () => {
+          cleanup();
+          resolve('error');
+        });
 
+        autoUpdater.checkForUpdates().catch(() => {
+          cleanup();
+          resolve('error');
+        });
+      });
+
+      const result = await electronUpdaterPromise;
+      if (result === 'done') return;
+
+      // electron-updater a timeout/échoué → fallback API GitHub.
+      log.info(`[updater] electron-updater ${result}, falling back to GitHub API`);
       try {
-        const result = await autoUpdater.checkForUpdates();
-        // Cas dégénéré : checkForUpdates renvoie null/undefined sans émettre
-        // d'event (ex. app non packagée). On force un statut.
-        if (!settled && !result) {
-          settled = true;
-          clearTimeout(watchdog);
-          send({
-            kind: 'error',
-            message:
-              "Auto-update indisponible (app-update.yml introuvable — utilise l'installateur officiel)."
+        const latest = await ghFetchLatest();
+        const local = app.getVersion();
+        if (!latest) {
+          sendStatus({ kind: 'not-available', currentVersion: local });
+          return;
+        }
+        if (isNewer(latest.version, local)) {
+          sendStatus({
+            kind: 'available',
+            version: latest.version,
+            releaseNotes: latest.notes
           });
+        } else {
+          sendStatus({ kind: 'not-available', currentVersion: local });
         }
       } catch (err) {
-        if (!settled) {
-          settled = true;
-          clearTimeout(watchdog);
-          send({ kind: 'error', message: (err as Error).message });
-        }
-        log.warn('[updater] manual check failed', err);
+        sendStatus({ kind: 'error', message: (err as Error).message });
       }
-    });
+    }
+
+    ipcMain.handle(IPC.updateCheck, () => checkUpdates());
+
     ipcMain.handle(IPC.updateDownload, async () => {
       try {
+        // Tente d'abord via electron-updater (download différentiel via blockmap).
         await autoUpdater.downloadUpdate();
       } catch (err) {
-        log.warn('[updater] download failed', err);
-        send({ kind: 'error', message: (err as Error).message });
+        log.warn('[updater] downloadUpdate failed, falling back to browser', err);
+        // Fallback : ouvre le navigateur sur l'installer.
+        try {
+          const latest = await ghFetchLatest();
+          if (latest?.installerUrl) {
+            const { shell } = await import('electron');
+            await shell.openExternal(latest.installerUrl);
+          } else {
+            sendStatus({
+            kind: 'error',
+            code: 'no-installer-url',
+            message: 'Installer URL not found in latest release.'
+          });
+          }
+        } catch (err2) {
+          sendStatus({ kind: 'error', message: (err2 as Error).message });
+        }
       }
     });
+
     ipcMain.handle(IPC.updateInstall, () => {
-      // quitAndInstall(true, true) : silencieux + redémarre l'app après install.
+      // Si l'update n'a pas été téléchargée par electron-updater (fallback API),
+      // quitAndInstall plante. On laisse le user installer manuellement.
+      if (lastSentStatus !== 'downloaded') {
+        sendStatus({
+          kind: 'error',
+          code: 'install-no-download',
+          message:
+            'Download not completed through electron-updater — re-run download or install manually.'
+        });
+        return;
+      }
       autoUpdater.quitAndInstall(true, true);
     });
 
-    // Check 5s après boot pour ne pas bloquer le first paint.
+    // Check 5s après boot.
     setTimeout(() => {
-      autoUpdater.checkForUpdates().catch((err) => {
-        log.info('[updater] check failed (probably no app-update.yml in dev/portable)', err.message);
-      });
+      void checkUpdates();
     }, 5000);
 
-    // Re-check toutes les 4 heures.
+    // Re-check toutes les 4 heures (via la même logique avec fallback).
     setInterval(
       () => {
-        autoUpdater.checkForUpdates().catch((err) => {
-          log.debug('[updater] periodic check failed', err.message);
-        });
+        void checkUpdates();
       },
       4 * 60 * 60 * 1000
     );
