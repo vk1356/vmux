@@ -1,4 +1,4 @@
-import type { JSX } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 import { Activity, Folder, GitBranch, Cpu, Bell, AlertCircle } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import { allPaneIds } from '@shared/tree';
@@ -13,6 +13,10 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
   const t = useT();
   const { sessions, activeSessionId, eventHistory, paneActivity, setActiveSession } =
     useSessionStore();
+  const [version, setVersion] = useState<string>('');
+  useEffect(() => {
+    void window.cmux.app?.version().then(setVersion);
+  }, []);
 
   let runningPanes = 0;
   let totalPanes = 0;
@@ -103,7 +107,7 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
         {unreadCount > 0 && <span className="statusbar-bell-badge">{unreadCount}</span>}
       </button>
       <span className="statusbar-section" style={{ opacity: 0.6 }}>
-        vMux v0.1.0
+        vMux {version ? `v${version}` : ''}
       </span>
     </div>
   );
