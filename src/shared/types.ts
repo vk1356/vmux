@@ -1,0 +1,306 @@
+// Types partagés entre main, preload et renderer.
+// Toute structure qui traverse l'IPC doit être déclarée ici.
+
+export type AgentId =
+  | 'claude-code'
+  | 'codex'
+  | 'aider'
+  | 'cursor-agent'
+  | 'gemini'
+  | 'shell';
+
+export interface AgentPreset {
+  id: AgentId;
+  label: string;
+  description: string;
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  color: string;
+  installUrl?: string;
+}
+
+export interface AgentAvailability {
+  id: AgentId;
+  found: boolean;
+  resolvedPath?: string;
+}
+
+// ============================================================
+// Panes (tmux-style)
+// ============================================================
+
+export type PaneId = string;
+
+export type PaneStatus = 'starting' | 'running' | 'idle' | 'exited' | 'error';
+
+export interface TerminalPane {
+  id: PaneId;
+  kind: 'terminal';
+  agentId: AgentId;
+  status: PaneStatus;
+  cwd: string;
+  pid?: number;
+  exitCode?: number;
+  initialInput?: string;
+  /** Label utilisateur (renommage manuel). */
+  label?: string;
+  /** URLs localhost détectées récemment (max 10, plus récentes en dernier). */
+  recentUrls?: string[];
+  createdAt: number;
+  lastStartedAt?: number;
+  /** Timestamp du dernier output PTY (heartbeat, sert au stale detection). */
+  lastOutputAt?: number;
+}
+
+export interface PreviewPane {
+  id: PaneId;
+  kind: 'preview';
+  url: string;
+  /** Label utilisateur. */
+  label?: string;
+  /** Si défini : ce preview suit l'URL active du terminal pane référencé. */
+  followsPaneId?: PaneId;
+}
+
+export type Pane = TerminalPane | PreviewPane;
+
+export type SplitDirection = 'horizontal' | 'vertical';
+
+export type PaneTree =
+  | { kind: 'leaf'; paneId: PaneId }
+  | {
+      kind: 'split';
+      direction: SplitDirection;
+      /** Pourcentages 0..100, somme = 100. Longueur = children.length. */
+      sizes: number[];
+      /** Au moins 2 enfants. Permet flatten quand on split dans la même direction. */
+      children: PaneTree[];
+    };
+
+// ============================================================
+// Sessions
+// ============================================================
+
+export interface Session {
+  id: string;
+  name: string;
+  cwd: string;
+  branch?: string;
+  ephemeralWorktree?: boolean;
+  sourceRepo?: string;
+  panes: Record<PaneId, Pane>;
+  tree: PaneTree;
+  activePaneId?: PaneId;
+  createdAt: number;
+  /** Épinglée : remonte en haut de la sidebar. */
+  pinned?: boolean;
+  /** Override la couleur de l'agent pour cette session (hex). */
+  colorOverride?: string;
+}
+
+export interface CreateSessionInput {
+  name: string;
+  agentId: AgentId;
+  cwd: string;
+  newWorktree?: {
+    branch: string;
+    base?: string;
+    parentDir?: string;
+  };
+  initialInput?: string;
+}
+
+export interface SplitPaneInput {
+  sessionId: string;
+  paneId: PaneId;
+  direction: SplitDirection;
+  /** Si fourni, crée un terminal pane avec cet agent. Sinon : pane preview. */
+  agentId?: AgentId;
+  cwd?: string;
+  /** Pour un preview pane. */
+  url?: string;
+  /** Suivre l'URL active de ce terminal. */
+  followsPaneId?: PaneId;
+}
+
+export interface PtySize {
+  cols: number;
+  rows: number;
+}
+
+export interface GitRepoInfo {
+  isRepo: boolean;
+  path: string;
+  currentBranch?: string;
+  branches: string[];
+  hasUncommitted: boolean;
+}
+
+export interface WindowState {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+  isMaximized: boolean;
+}
+
+export interface Snippet {
+  id: string;
+  name: string;
+  content: string;
+  /** Tags pour filtrage. */
+  tags?: string[];
+  createdAt: number;
+}
+
+export interface AppSettings {
+  theme: 'dark' | 'light' | 'system';
+  fontFamily: string;
+  fontSize: number;
+  defaultShell: string;
+  scrollback: number;
+  cursorBlink: boolean;
+  copyOnSelection: boolean;
+  pasteOnRightClick: boolean;
+  webglRenderer: boolean;
+  sidebarWidth: number;
+  /** Toast quand une URL localhost est détectée. */
+  previewToastEnabled: boolean;
+  /** Ouvrir automatiquement le preview embarqué dès qu'une URL est détectée. */
+  previewAutoOpen: boolean;
+  /** Notif système quand fenêtre en arrière-plan + event détecté. */
+  notificationsEnabled: boolean;
+  /** Pourcentage du split quand on ouvre un preview (terminal | preview). */
+  previewDefaultSplit: number;
+  agentOverrides: Partial<Record<AgentId, Partial<Pick<AgentPreset, 'command' | 'args' | 'env'>>>>;
+}
+
+// ============================================================
+// Events détectés dans la sortie d'un PTY
+// ============================================================
+
+export type DetectedEventKind =
+  | 'server-ready'
+  | 'build-success'
+  | 'build-error'
+  | 'test-results'
+  | 'agent-done';
+
+/** Niveau d'attention requis sur un pane non-actif (style tmux monitor-activity). */
+export type PaneAttention = 'idle' | 'activity' | 'alert' | 'needs-input';
+
+export interface DetectedEvent {
+  paneId: PaneId;
+  kind: DetectedEventKind;
+  message: string;
+  url?: string;
+  timestamp: number;
+}
+
+export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/** Résultat d'un `clipboard:read-rich` — texte simple ou image sauvegardée. */
+export type ClipboardRichResult =
+  | { kind: 'text'; text: string }
+  | { kind: 'image'; path: string };
+
+// ============================================================
+// Canaux IPC
+// ============================================================
+
+export const IPC = {
+  // Window
+  windowMinimize: 'window:minimize',
+  windowMaximize: 'window:maximize',
+  windowClose: 'window:close',
+  windowIsMaximized: 'window:is-maximized',
+  windowMaximizedChanged: 'window:maximized-changed',
+
+  // Sessions
+  sessionList: 'session:list',
+  sessionCreate: 'session:create',
+  sessionRemove: 'session:remove',
+  sessionUpdate: 'session:update',
+
+  // Panes
+  paneSplit: 'pane:split',
+  paneClose: 'pane:close',
+  paneFocus: 'pane:focus',
+  paneRestart: 'pane:restart',
+  paneResizeSplit: 'pane:resize-split',
+  paneOpenPreview: 'pane:open-preview',
+  paneSetUrl: 'pane:set-url',
+  paneRelayout: 'pane:relayout',
+  paneRename: 'pane:rename',
+  paneRemoveUrl: 'pane:remove-url',
+  sessionRename: 'session:rename',
+  sessionRestartAll: 'session:restart-all',
+  sessionTogglePin: 'session:toggle-pin',
+  sessionSetColor: 'session:set-color',
+  sessionExport: 'session:export',
+  paneWrite: 'pane:write',
+  paneResize: 'pane:resize',
+  paneData: 'pane:data',
+  paneStatus: 'pane:status',
+
+  // URLs détectées
+  urlsDetected: 'urls:detected',
+
+  // Events détectés
+  eventDetected: 'event:detected',
+
+  // Attention détectée (bell, needs-input, etc.)
+  paneAttention: 'pane:attention',
+
+  // Agents
+  agentsList: 'agents:list',
+  agentsCheck: 'agents:check',
+
+  // Git
+  gitInspect: 'git:inspect',
+  gitListWorktrees: 'git:list-worktrees',
+
+  // Dialog / shell
+  dialogPickDirectory: 'dialog:pick-directory',
+  dialogPickRepo: 'dialog:pick-repo',
+  dialogOpenExternal: 'dialog:open-external',
+
+  // Clipboard
+  clipboardRead: 'clipboard:read',
+  clipboardWrite: 'clipboard:write',
+  clipboardReadRich: 'clipboard:read-rich',
+
+  // Settings
+  settingsGet: 'settings:get',
+  settingsSet: 'settings:set',
+
+  // Snippets
+  snippetsList: 'snippets:list',
+  snippetsSave: 'snippets:save',
+  snippetsDelete: 'snippets:delete',
+
+  // Diagnostic
+  diagnosticExport: 'diagnostic:export',
+
+  // Auto-update (electron-updater)
+  updateStatus: 'update:status',
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install'
+} as const;
+
+// ============================================================
+// Auto-update
+// ============================================================
+
+export type UpdateStatus =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'available'; version: string; releaseNotes?: string }
+  | { kind: 'not-available'; currentVersion: string }
+  | { kind: 'downloading'; percent: number; bytesPerSecond: number; transferred: number; total: number }
+  | { kind: 'downloaded'; version: string; releaseNotes?: string }
+  | { kind: 'error'; message: string };
+
+export type IpcChannel = (typeof IPC)[keyof typeof IPC];
