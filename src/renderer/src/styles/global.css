@@ -142,8 +142,8 @@ a:hover {
    ============================================================ */
 
 .app {
-  display: grid;
-  grid-template-rows: var(--titlebar-h) 1fr var(--statusbar-h);
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   background: var(--bg);
 }
@@ -152,6 +152,7 @@ a:hover {
   display: grid;
   grid-template-columns: 280px 1px 1fr;
   min-height: 0;
+  flex: 1;
   overflow: hidden;
 }
 
@@ -177,6 +178,7 @@ a:hover {
    ============================================================ */
 
 .titlebar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   background: var(--bg-elev);
@@ -1598,6 +1600,8 @@ body.split-dragging .pane-split-handle {
 .statusbar {
   display: flex;
   align-items: center;
+  height: var(--statusbar-h);
+  flex-shrink: 0;
   background: var(--bg-elev);
   border-top: 1px solid var(--border);
   padding: 0 12px;
@@ -2343,6 +2347,7 @@ input[type='range'] {
   background: var(--bg-elev-1);
   position: relative;
   z-index: 5;
+  flex-shrink: 0;
 }
 .update-banner-text {
   display: flex;
