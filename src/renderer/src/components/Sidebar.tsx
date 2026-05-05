@@ -18,7 +18,7 @@ import {
   ChevronRight,
   Activity,
   Moon,
-  Sparkles
+  Bot
 } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import type { Session, TerminalPane } from '@shared/types';
@@ -456,7 +456,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
         {sessions.length === 0 ? (
           <div className="sidebar-empty">
             <div className="sidebar-empty-icon">
-              <Sparkles size={20} />
+              <Bot size={20} />
             </div>
             <div className="sidebar-empty-title">{t('sidebarEmptyTitle')}</div>
             <span className="sidebar-empty-body">{t('sidebarEmptyBody')}</span>
