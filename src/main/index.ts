@@ -152,9 +152,8 @@ app.whenReady().then(() => {
   }
   setGracefulShutdown(false);
 
-  // Auto-update (electron-updater) — IPC handlers toujours enregistrés pour
-  // que l'UI Settings → Mises à jour ne reste pas bloquée sur "Vérification…".
-  // En dev, les handlers renvoient un statut explicite sans appeler le réseau.
+  // Auto-update — IPC handlers toujours enregistrés pour que l'UI ne reste
+  // jamais bloquée sur "Checking…".
   void setupAutoUpdater();
 
   app.on('activate', () => {
@@ -187,9 +186,15 @@ app.on('before-quit', async (event) => {
   }
 });
 
-/** Configure electron-updater. Tolérant aux erreurs : ne crash jamais l'app.
- *  Pousse l'état (checking/available/downloading/downloaded/error) au renderer
- *  via IPC.updateStatus pour qu'il affiche une bannière. */
+/**
+ * Stratégie auto-update :
+ * - Check primaire = API GitHub direct (rapide, fiable, fonctionne en dev).
+ *   Timeout dur 8s via AbortController. Compare app.getVersion() vs tag_name.
+ * - electron-updater n'est utilisé QUE pour le download différentiel via
+ *   blockmap quand l'user clique "Download".
+ * - Tous les paths d'erreur envoient un statut UpdateStatus avec un `code`
+ *   traduisible côté renderer.
+ */
 async function setupAutoUpdater(): Promise<void> {
   const { ipcMain } = await import('electron');
 
@@ -199,9 +204,12 @@ async function setupAutoUpdater(): Promise<void> {
     w.webContents.send(IPC.updateStatus, status);
   };
 
-  // ---- Fallback maison : check direct via l'API GitHub Releases. ----
-  // Marche même en dev et même si electron-updater ne répond pas. Renvoie
-  // la version + l'URL de l'installer si une release plus récente existe.
+  let lastSentStatus: import('@shared/types').UpdateStatus['kind'] = 'idle';
+  const sendStatus = (s: import('@shared/types').UpdateStatus): void => {
+    lastSentStatus = s.kind;
+    send(s);
+  };
+
   const REPO = 'vk1356/vmux';
   type GhRelease = {
     tag_name: string;
@@ -210,30 +218,49 @@ async function setupAutoUpdater(): Promise<void> {
     assets?: { name: string; browser_download_url: string }[];
   };
 
-  async function ghFetchLatest(): Promise<{
+  /** Fetch JSON avec timeout dur via AbortController. Throw en cas d'erreur. */
+  async function ghFetchLatest(timeoutMs = 8000): Promise<{
     version: string;
     notes?: string;
     installerUrl?: string;
-  } | null> {
-    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'vMux-updater'
+  }> {
+    log.info(`[updater] fetch https://api.github.com/repos/${REPO}/releases/latest (timeout=${timeoutMs}ms)`);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'vMux-updater'
+        },
+        signal: ctrl.signal
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(
+          `GitHub API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ''}`
+        );
       }
-    });
-    if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-    const data = (await res.json()) as GhRelease;
-    const version = (data.tag_name || '').replace(/^v/, '');
-    if (!version) return null;
-    const installer = data.assets?.find(
-      (a) => /Setup.*\.exe$/i.test(a.name) && !a.name.endsWith('.blockmap')
-    );
-    return { version, notes: data.body, installerUrl: installer?.browser_download_url };
+      const data = (await res.json()) as GhRelease;
+      const version = (data.tag_name || '').replace(/^v/, '');
+      if (!version) throw new Error('Empty tag_name in GitHub release');
+      const installer = data.assets?.find(
+        (a) => /Setup.*\.exe$/i.test(a.name) && !a.name.endsWith('.blockmap')
+      );
+      log.info(`[updater] latest tag=${version} installer=${installer?.name ?? 'none'}`);
+      return {
+        version,
+        notes: data.body,
+        installerUrl: installer?.browser_download_url
+      };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function isNewer(remote: string, local: string): boolean {
     const parse = (v: string): number[] =>
-      v.split('.').map((n) => parseInt(n, 10) || 0);
+      v.split(/[.-]/).map((n) => parseInt(n, 10) || 0);
     const r = parse(remote);
     const l = parse(local);
     for (let i = 0; i < Math.max(r.length, l.length); i++) {
@@ -245,74 +272,84 @@ async function setupAutoUpdater(): Promise<void> {
     return false;
   }
 
-  // En dev : pas d'electron-updater (pas d'app-update.yml), mais on garde
-  // le check via API GitHub pour que l'UI Settings → Updates marche quand même.
-  if (is.dev) {
-    log.info('[updater] dev mode — using GitHub API fallback only');
-    ipcMain.handle(IPC.updateCheck, async () => {
-      send({ kind: 'checking' });
-      try {
-        const latest = await ghFetchLatest();
-        const local = app.getVersion();
-        if (!latest) {
-          send({ kind: 'not-available', currentVersion: local });
-          return;
-        }
-        if (isNewer(latest.version, local)) {
-          send({ kind: 'available', version: latest.version, releaseNotes: latest.notes });
-        } else {
-          send({ kind: 'not-available', currentVersion: local });
-        }
-      } catch (err) {
-        send({ kind: 'error', message: (err as Error).message });
+  /** Check primaire : API GitHub. Aucun hang possible (timeout 8s strict).
+   *  Envoie 'checking' immédiatement, puis 'available' / 'not-available' / 'error'. */
+  async function checkUpdates(): Promise<void> {
+    log.info('[updater] checkUpdates() called');
+    sendStatus({ kind: 'checking' });
+    const local = app.getVersion();
+    try {
+      const latest = await ghFetchLatest();
+      log.info(`[updater] local=${local} remote=${latest.version}`);
+      if (isNewer(latest.version, local)) {
+        sendStatus({
+          kind: 'available',
+          version: latest.version,
+          releaseNotes: latest.notes
+        });
+      } else {
+        sendStatus({ kind: 'not-available', currentVersion: local });
       }
-    });
+    } catch (err) {
+      const e = err as Error;
+      const msg =
+        e.name === 'AbortError'
+          ? 'Request timed out (8s) — check your connection or proxy'
+          : e.message;
+      log.warn('[updater] check failed', msg);
+      sendStatus({
+        kind: 'error',
+        code: 'github-api-failed',
+        message: msg
+      });
+    }
+  }
+
+  // Handler check : toujours dispo (dev + prod).
+  ipcMain.handle(IPC.updateCheck, () => checkUpdates());
+
+  // Mode dev : pas d'electron-updater (pas d'app-update.yml). Download =
+  // ouvre l'installer dans le browser. Install = no-op explicite.
+  if (is.dev) {
+    log.info('[updater] dev mode — no electron-updater, browser download fallback');
     ipcMain.handle(IPC.updateDownload, async () => {
       try {
         const latest = await ghFetchLatest();
-        if (latest?.installerUrl) {
-          const { shell } = await import('electron');
+        if (latest.installerUrl) {
           await shell.openExternal(latest.installerUrl);
         } else {
-          send({ kind: 'error', message: 'Installer URL not found.' });
+          sendStatus({
+            kind: 'error',
+            code: 'no-installer-url',
+            message: 'Installer URL not found in latest release.'
+          });
         }
       } catch (err) {
-        send({ kind: 'error', message: (err as Error).message });
+        sendStatus({
+          kind: 'error',
+          code: 'github-api-failed',
+          message: (err as Error).message
+        });
       }
     });
     ipcMain.handle(IPC.updateInstall, () => {
-      send({
+      sendStatus({
         kind: 'error',
         code: 'dev-mode',
         message: 'Available only in the installed app, not in dev mode.'
       });
     });
+    setTimeout(() => void checkUpdates(), 3000);
     return;
   }
 
+  // Mode prod : electron-updater pour le download différentiel via blockmap.
   try {
     const { autoUpdater } = await import('electron-updater');
     autoUpdater.logger = log;
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
 
-    let lastSentStatus: import('@shared/types').UpdateStatus['kind'] = 'idle';
-    const sendStatus = (s: import('@shared/types').UpdateStatus): void => {
-      lastSentStatus = s.kind;
-      send(s);
-    };
-
-    autoUpdater.on('checking-for-update', () => sendStatus({ kind: 'checking' }));
-    autoUpdater.on('update-available', (info) =>
-      sendStatus({
-        kind: 'available',
-        version: info.version,
-        releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined
-      })
-    );
-    autoUpdater.on('update-not-available', (info) =>
-      sendStatus({ kind: 'not-available', currentVersion: info.version })
-    );
     autoUpdater.on('download-progress', (p) =>
       sendStatus({
         kind: 'downloading',
@@ -330,93 +367,46 @@ async function setupAutoUpdater(): Promise<void> {
       })
     );
     autoUpdater.on('error', (err) => {
-      log.warn('[updater] event error', err.message);
-      sendStatus({ kind: 'error', message: err.message });
+      log.warn('[updater] electron-updater event error', err.message);
     });
-
-    /** Check via electron-updater avec timeout 15s, fallback API GitHub. */
-    async function checkUpdates(): Promise<void> {
-      sendStatus({ kind: 'checking' });
-
-      const electronUpdaterPromise = new Promise<'done' | 'timeout' | 'error'>((resolve) => {
-        const t = setTimeout(() => resolve('timeout'), 15000);
-        const cleanup = (): void => clearTimeout(t);
-
-        autoUpdater.once('update-available', () => {
-          cleanup();
-          resolve('done');
-        });
-        autoUpdater.once('update-not-available', () => {
-          cleanup();
-          resolve('done');
-        });
-        autoUpdater.once('error', () => {
-          cleanup();
-          resolve('error');
-        });
-
-        autoUpdater.checkForUpdates().catch(() => {
-          cleanup();
-          resolve('error');
-        });
-      });
-
-      const result = await electronUpdaterPromise;
-      if (result === 'done') return;
-
-      // electron-updater a timeout/échoué → fallback API GitHub.
-      log.info(`[updater] electron-updater ${result}, falling back to GitHub API`);
-      try {
-        const latest = await ghFetchLatest();
-        const local = app.getVersion();
-        if (!latest) {
-          sendStatus({ kind: 'not-available', currentVersion: local });
-          return;
-        }
-        if (isNewer(latest.version, local)) {
-          sendStatus({
-            kind: 'available',
-            version: latest.version,
-            releaseNotes: latest.notes
-          });
-        } else {
-          sendStatus({ kind: 'not-available', currentVersion: local });
-        }
-      } catch (err) {
-        sendStatus({ kind: 'error', message: (err as Error).message });
-      }
-    }
-
-    ipcMain.handle(IPC.updateCheck, () => checkUpdates());
 
     ipcMain.handle(IPC.updateDownload, async () => {
       try {
-        // Tente d'abord via electron-updater (download différentiel via blockmap).
+        log.info('[updater] electron-updater downloadUpdate()');
+        // checkForUpdates est nécessaire avant downloadUpdate sinon le metadata
+        // n'est pas chargé. On l'enrobe d'un timeout court.
+        const checkPromise = autoUpdater.checkForUpdates();
+        await Promise.race([
+          checkPromise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('check timeout (10s)')), 10000)
+          )
+        ]);
         await autoUpdater.downloadUpdate();
       } catch (err) {
         log.warn('[updater] downloadUpdate failed, falling back to browser', err);
-        // Fallback : ouvre le navigateur sur l'installer.
         try {
           const latest = await ghFetchLatest();
-          if (latest?.installerUrl) {
-            const { shell } = await import('electron');
+          if (latest.installerUrl) {
             await shell.openExternal(latest.installerUrl);
           } else {
             sendStatus({
-            kind: 'error',
-            code: 'no-installer-url',
-            message: 'Installer URL not found in latest release.'
-          });
+              kind: 'error',
+              code: 'no-installer-url',
+              message: 'Installer URL not found in latest release.'
+            });
           }
         } catch (err2) {
-          sendStatus({ kind: 'error', message: (err2 as Error).message });
+          sendStatus({
+            kind: 'error',
+            code: 'github-api-failed',
+            message: (err2 as Error).message
+          });
         }
       }
     });
 
     ipcMain.handle(IPC.updateInstall, () => {
-      // Si l'update n'a pas été téléchargée par electron-updater (fallback API),
-      // quitAndInstall plante. On laisse le user installer manuellement.
       if (lastSentStatus !== 'downloaded') {
         sendStatus({
           kind: 'error',
@@ -429,20 +419,34 @@ async function setupAutoUpdater(): Promise<void> {
       autoUpdater.quitAndInstall(true, true);
     });
 
-    // Check 5s après boot.
-    setTimeout(() => {
-      void checkUpdates();
-    }, 5000);
+    // Premier check 3s après boot (laisse le first paint respirer).
+    setTimeout(() => void checkUpdates(), 3000);
 
-    // Re-check toutes les 4 heures (via la même logique avec fallback).
-    setInterval(
-      () => {
-        void checkUpdates();
-      },
-      4 * 60 * 60 * 1000
-    );
+    // Re-check toutes les 4 heures.
+    setInterval(() => void checkUpdates(), 4 * 60 * 60 * 1000);
   } catch (err) {
-    log.warn('[updater] setup failed', err);
+    log.warn('[updater] electron-updater unavailable', err);
+    // Fallback complet : download = browser, install = error explicite.
+    ipcMain.handle(IPC.updateDownload, async () => {
+      try {
+        const latest = await ghFetchLatest();
+        if (latest.installerUrl) await shell.openExternal(latest.installerUrl);
+      } catch (err2) {
+        sendStatus({
+          kind: 'error',
+          code: 'github-api-failed',
+          message: (err2 as Error).message
+        });
+      }
+    });
+    ipcMain.handle(IPC.updateInstall, () => {
+      sendStatus({
+        kind: 'error',
+        code: 'install-no-download',
+        message: 'electron-updater unavailable — install manually.'
+      });
+    });
+    setTimeout(() => void checkUpdates(), 3000);
   }
 }
 
