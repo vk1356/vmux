@@ -110,7 +110,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('fr.agate.vmux');
+  electronApp.setAppUserModelId('com.vmux.app');
   app.on('browser-window-created', (_e, w) => {
     optimizer.watchWindowShortcuts(w);
   });

@@ -71,7 +71,7 @@
     "node-gyp": "^12.3.0"
   },
   "build": {
-    "appId": "fr.agate.vmux",
+    "appId": "com.vmux.app",
     "productName": "vMux",
     "asar": true,
     "npmRebuild": false,
