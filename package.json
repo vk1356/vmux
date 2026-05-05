@@ -74,6 +74,8 @@
     "appId": "fr.agate.vmux",
     "productName": "vMux",
     "asar": true,
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
     "asarUnpack": [
       "**/node_modules/node-pty/**"
     ],
