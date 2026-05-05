@@ -287,7 +287,10 @@ export const IPC = {
   updateStatus: 'update:status',
   updateCheck: 'update:check',
   updateDownload: 'update:download',
-  updateInstall: 'update:install'
+  updateInstall: 'update:install',
+
+  // App version (read-only)
+  appVersion: 'app:version'
 } as const;
 
 // ============================================================

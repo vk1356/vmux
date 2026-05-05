@@ -210,6 +210,10 @@ const api = {
         ipcRenderer.off(IPC.updateStatus, listener);
       };
     }
+  },
+
+  app: {
+    version: (): Promise<string> => ipcRenderer.invoke(IPC.appVersion)
   }
 };
 

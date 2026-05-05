@@ -1,6 +1,18 @@
-import { useState, type JSX } from 'react';
-import { X, Palette, Bot, Sliders, ExternalLink } from 'lucide-react';
-import type { AgentId, AppSettings } from '@shared/types';
+import { useEffect, useState, type JSX } from 'react';
+import {
+  X,
+  Palette,
+  Bot,
+  Sliders,
+  ExternalLink,
+  Bell,
+  Globe,
+  Download,
+  RefreshCw,
+  CheckCircle2,
+  AlertTriangle
+} from 'lucide-react';
+import type { AgentId, AppSettings, UpdateStatus } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
 
 interface Props {
@@ -8,7 +20,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'apparence' | 'agents' | 'avance';
+type Tab = 'apparence' | 'terminal' | 'notifs' | 'agents' | 'updates' | 'avance';
 
 const FONT_PRESETS = [
   '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
@@ -16,6 +28,13 @@ const FONT_PRESETS = [
   '"Fira Code", Consolas, monospace',
   'Consolas, monospace',
   '"Courier New", monospace'
+];
+
+const SHELL_PRESETS = [
+  { value: 'pwsh', label: 'PowerShell 7+ (pwsh)' },
+  { value: 'powershell', label: 'Windows PowerShell 5 (powershell)' },
+  { value: 'cmd', label: 'cmd.exe' },
+  { value: 'bash', label: 'Git Bash (bash)' }
 ];
 
 export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
@@ -50,7 +69,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
     <div className="dialog-backdrop" onClick={onClose}>
       <div
         className="dialog"
-        style={{ width: 'min(680px, 92vw)' }}
+        style={{ width: 'min(720px, 92vw)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="dialog-header">
@@ -60,11 +79,11 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
           </button>
         </div>
 
-        <div style={{ display: 'flex', minHeight: 380 }}>
+        <div style={{ display: 'flex', minHeight: 420 }}>
           {/* Tabs */}
           <div
             style={{
-              width: 160,
+              width: 170,
               borderRight: '1px solid var(--border)',
               padding: '12px 8px',
               display: 'flex',
@@ -79,10 +98,28 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
               onClick={() => setTab('apparence')}
             />
             <SettingsTabButton
+              label="Terminal"
+              icon={<Sliders size={14} />}
+              active={tab === 'terminal'}
+              onClick={() => setTab('terminal')}
+            />
+            <SettingsTabButton
+              label="Notifications"
+              icon={<Bell size={14} />}
+              active={tab === 'notifs'}
+              onClick={() => setTab('notifs')}
+            />
+            <SettingsTabButton
               label="Agents"
               icon={<Bot size={14} />}
               active={tab === 'agents'}
               onClick={() => setTab('agents')}
+            />
+            <SettingsTabButton
+              label="Mises à jour"
+              icon={<Download size={14} />}
+              active={tab === 'updates'}
+              onClick={() => setTab('updates')}
             />
             <SettingsTabButton
               label="Avancé"
@@ -96,6 +133,21 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
           <div className="dialog-body" style={{ flex: 1, overflowY: 'auto' }}>
             {tab === 'apparence' && (
               <>
+                <div className="field">
+                  <label className="field-label">Thème</label>
+                  <select
+                    className="select"
+                    value={settings.theme}
+                    onChange={(e) =>
+                      void apply({ theme: e.target.value as AppSettings['theme'] })
+                    }
+                  >
+                    <option value="dark">Sombre</option>
+                    <option value="light">Clair (à venir)</option>
+                    <option value="system">Système</option>
+                  </select>
+                  <div className="hint">Le mode clair n'est pas encore stylé — reste sur sombre.</div>
+                </div>
                 <div className="field">
                   <label className="field-label">Police</label>
                   <select
@@ -129,6 +181,123 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                   />
                   Curseur clignotant
                 </label>
+              </>
+            )}
+
+            {tab === 'terminal' && (
+              <>
+                <div className="field">
+                  <label className="field-label">Shell par défaut</label>
+                  <select
+                    className="select"
+                    value={settings.defaultShell}
+                    onChange={(e) => void apply({ defaultShell: e.target.value })}
+                  >
+                    {SHELL_PRESETS.map((s) => (
+                      <option key={s.value} value={s.value}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="hint">
+                    Utilisé pour les nouveaux panes shell. Les sessions agent gardent leur commande.
+                  </div>
+                </div>
+                <div className="field">
+                  <label className="field-label">
+                    Scrollback ({settings.scrollback.toLocaleString('fr-FR')} lignes)
+                  </label>
+                  <input
+                    type="range"
+                    min={1000}
+                    max={50000}
+                    step={1000}
+                    value={settings.scrollback}
+                    onChange={(e) => void apply({ scrollback: Number(e.target.value) })}
+                  />
+                </div>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.copyOnSelection}
+                    onChange={(e) => void apply({ copyOnSelection: e.target.checked })}
+                  />
+                  Copier la sélection automatiquement
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.pasteOnRightClick}
+                    onChange={(e) => void apply({ pasteOnRightClick: e.target.checked })}
+                  />
+                  Coller au clic-droit
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.webglRenderer}
+                    onChange={(e) => void apply({ webglRenderer: e.target.checked })}
+                  />
+                  Renderer WebGL (perf++)
+                  <span className="hint" style={{ marginLeft: 8 }}>
+                    redémarre l'app pour appliquer
+                  </span>
+                </label>
+              </>
+            )}
+
+            {tab === 'notifs' && (
+              <>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.notificationsEnabled}
+                    onChange={(e) => void apply({ notificationsEnabled: e.target.checked })}
+                  />
+                  Notifications système Windows
+                </label>
+                <div className="hint" style={{ marginTop: -6, marginBottom: 12 }}>
+                  Reçois une notif push (avec icône vMux) quand un agent demande une action ou
+                  qu'un événement (build, server, tests) est détecté en arrière-plan.
+                </div>
+
+                <div className="dialog-section-title">
+                  <Globe size={12} /> Preview localhost
+                </div>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.previewToastEnabled}
+                    onChange={(e) => void apply({ previewToastEnabled: e.target.checked })}
+                  />
+                  Afficher un toast quand une URL localhost est détectée
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.previewAutoOpen}
+                    onChange={(e) => void apply({ previewAutoOpen: e.target.checked })}
+                  />
+                  Ouvrir le preview embarqué automatiquement
+                </label>
+                <div className="field" style={{ marginTop: 8 }}>
+                  <label className="field-label">
+                    Taille du split preview ({settings.previewDefaultSplit}%)
+                  </label>
+                  <input
+                    type="range"
+                    min={30}
+                    max={70}
+                    step={5}
+                    value={settings.previewDefaultSplit}
+                    onChange={(e) =>
+                      void apply({ previewDefaultSplit: Number(e.target.value) })
+                    }
+                  />
+                  <div className="hint">
+                    Pourcentage que prend le terminal vs le preview quand on ouvre un preview.
+                  </div>
+                </div>
               </>
             )}
 
@@ -197,64 +366,19 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     </div>
                   );
                 })}
-                <div className="hint">
-                  Les overrides sont sauvegardés mais ne sont pas encore appliqués au spawn (à venir).
-                </div>
               </>
             )}
+
+            {tab === 'updates' && <UpdatesTab />}
 
             {tab === 'avance' && (
               <>
                 <div className="field">
-                  <label className="field-label">
-                    Scrollback ({settings.scrollback} lignes)
-                  </label>
-                  <input
-                    type="range"
-                    min={1000}
-                    max={50000}
-                    step={1000}
-                    value={settings.scrollback}
-                    onChange={(e) => void apply({ scrollback: Number(e.target.value) })}
-                  />
-                </div>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={settings.copyOnSelection}
-                    onChange={(e) => void apply({ copyOnSelection: e.target.checked })}
-                  />
-                  Copier la sélection automatiquement
-                </label>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={settings.pasteOnRightClick}
-                    onChange={(e) => void apply({ pasteOnRightClick: e.target.checked })}
-                  />
-                  Coller au clic-droit
-                </label>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={settings.webglRenderer}
-                    onChange={(e) => void apply({ webglRenderer: e.target.checked })}
-                  />
-                  Renderer WebGL (perf++)
-                  <span className="hint" style={{ marginLeft: 8 }}>
-                    redémarre l'app pour appliquer
-                  </span>
-                </label>
-
-                <div className="field" style={{ marginTop: 8 }}>
                   <label className="field-label">Diagnostic</label>
                   <button
                     className="btn"
                     onClick={async () => {
-                      const r = await window.cmux.diagnostic.export();
-                      if (r.ok && r.data) {
-                        // Le main ouvre déjà l'explorateur sur le fichier.
-                      }
+                      await window.cmux.diagnostic.export();
                     }}
                   >
                     Exporter le diagnostic (.json)
@@ -263,6 +387,17 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     Génère un rapport (versions, agents, sessions, derniers logs) à fournir
                     en cas de bug. Les overrides agents sont anonymisés.
                   </div>
+                </div>
+                <div className="field">
+                  <label className="field-label">Source</label>
+                  <button
+                    className="btn"
+                    onClick={() =>
+                      window.cmux.dialog.openExternal('https://github.com/vk1356/vmux')
+                    }
+                  >
+                    Ouvrir le repo GitHub <ExternalLink size={11} />
+                  </button>
                 </div>
               </>
             )}
@@ -311,4 +446,151 @@ function SettingsTabButton({ label, icon, active, onClick }: TabBtnProps): JSX.E
       {label}
     </button>
   );
+}
+
+/** Onglet Mises à jour : version actuelle, check manuel, statut live. */
+function UpdatesTab(): JSX.Element {
+  const [version, setVersion] = useState<string>('');
+  const [status, setStatus] = useState<UpdateStatus>({ kind: 'idle' });
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    void window.cmux.app.version().then(setVersion);
+    return window.cmux.updater.onStatus((s) => {
+      setStatus(s);
+      if (s.kind === 'checking') setCheckedAt(Date.now());
+    });
+  }, []);
+
+  const onCheck = (): void => {
+    setStatus({ kind: 'checking' });
+    setCheckedAt(Date.now());
+    void window.cmux.updater.check();
+  };
+  const onDownload = (): void => {
+    void window.cmux.updater.download();
+  };
+  const onInstall = (): void => {
+    void window.cmux.updater.install();
+  };
+
+  return (
+    <>
+      <div className="field">
+        <label className="field-label">Version installée</label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <code style={{ fontSize: 13, color: 'var(--text)' }}>vMux {version || '…'}</code>
+        </div>
+      </div>
+
+      <div className="field">
+        <label className="field-label">Statut</label>
+        <UpdateStatusLine status={status} checkedAt={checkedAt} />
+      </div>
+
+      <div className="field" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          className="btn"
+          onClick={onCheck}
+          disabled={status.kind === 'checking' || status.kind === 'downloading'}
+        >
+          <RefreshCw
+            size={12}
+            className={status.kind === 'checking' ? 'spin' : undefined}
+          />
+          Vérifier maintenant
+        </button>
+        {status.kind === 'available' && (
+          <button className="btn primary" onClick={onDownload}>
+            <Download size={12} /> Télécharger v{status.version}
+          </button>
+        )}
+        {status.kind === 'downloaded' && (
+          <button className="btn primary" onClick={onInstall}>
+            <CheckCircle2 size={12} /> Installer et redémarrer
+          </button>
+        )}
+      </div>
+
+      <div className="hint">
+        vMux vérifie automatiquement les nouvelles versions au démarrage et toutes les 4 heures.
+        Les mises à jour sont publiées sur GitHub Releases.
+      </div>
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <button
+          className="btn"
+          onClick={() =>
+            window.cmux.dialog.openExternal('https://github.com/vk1356/vmux/releases')
+          }
+        >
+          Voir toutes les versions <ExternalLink size={11} />
+        </button>
+      </div>
+    </>
+  );
+}
+
+interface StatusLineProps {
+  status: UpdateStatus;
+  checkedAt: number | null;
+}
+
+function UpdateStatusLine({ status, checkedAt }: StatusLineProps): JSX.Element {
+  switch (status.kind) {
+    case 'idle':
+      return <span style={{ color: 'var(--text-muted)' }}>Aucune vérification récente.</span>;
+    case 'checking':
+      return (
+        <span style={{ color: 'var(--info)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <RefreshCw size={11} className="spin" /> Vérification en cours…
+        </span>
+      );
+    case 'not-available':
+      return (
+        <span
+          style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <CheckCircle2 size={11} /> À jour (v{status.currentVersion})
+          {checkedAt && ` — il y a ${secondsAgo(checkedAt)}`}
+        </span>
+      );
+    case 'available':
+      return (
+        <span style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Download size={11} /> Nouvelle version v{status.version} disponible
+        </span>
+      );
+    case 'downloading': {
+      const pct = Math.round(status.percent);
+      const mbs = (status.bytesPerSecond / 1024 / 1024).toFixed(1);
+      return (
+        <span style={{ color: 'var(--info)' }}>
+          Téléchargement {pct}% — {mbs} MB/s
+        </span>
+      );
+    }
+    case 'downloaded':
+      return (
+        <span
+          style={{ color: 'var(--success)', display: 'flex', alignItems: 'center', gap: 6 }}
+        >
+          <CheckCircle2 size={11} /> Mise à jour v{status.version} prête à être installée
+        </span>
+      );
+    case 'error':
+      return (
+        <span style={{ color: 'var(--error)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <AlertTriangle size={11} /> Erreur : {status.message}
+        </span>
+      );
+  }
+}
+
+function secondsAgo(ts: number): string {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} h`;
 }

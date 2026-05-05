@@ -50,6 +50,9 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   };
 
 
+  // ---------- App ----------
+  ipcMain.handle(IPC.appVersion, () => app.getVersion());
+
   // ---------- Window ----------
   ipcMain.handle(IPC.windowMinimize, () => getMainWindow()?.minimize());
   ipcMain.handle(IPC.windowMaximize, () => {
