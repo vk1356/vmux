@@ -65,6 +65,10 @@ export function App(): JSX.Element {
   const [notifsOpen, setNotifsOpen] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Auto-collapse manuel par l'user — on ne ré-ouvre pas auto si l'user
+  // a explicitement collapsé. On track ça pour ne forcer le collapse que
+  // sur résize en dessous du seuil et ne pas le défaire ensuite.
+  const userToggledSidebarRef = useRef(false);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionId: string; name: string } | null>(
     null
   );
@@ -172,6 +176,23 @@ export function App(): JSX.Element {
     }
   }, [activeSessionId, sessions, clearAttention]);
 
+  // Auto-collapse sidebar quand la fenêtre est étroite (mobile-like).
+  // On respecte un toggle manuel récent pour ne pas se battre avec l'user.
+  useEffect(() => {
+    const SIDEBAR_AUTO_THRESHOLD = 720;
+    const onResize = (): void => {
+      if (userToggledSidebarRef.current) return;
+      const w = window.innerWidth;
+      setSidebarCollapsed((cur) => {
+        const shouldCollapse = w < SIDEBAR_AUTO_THRESHOLD;
+        return shouldCollapse !== cur ? shouldCollapse : cur;
+      });
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   useEffect(() => {
     if (newSessionOpen) void window.cmux.agents.check().then(setAgentAvailability);
   }, [newSessionOpen, setAgentAvailability]);
@@ -195,6 +216,7 @@ export function App(): JSX.Element {
       } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'b') {
         // Toggle sidebar (style VS Code).
         e.preventDefault();
+        userToggledSidebarRef.current = true;
         setSidebarCollapsed((c) => !c);
       } else if (ctrl && !e.shiftKey && /^[1-9]$/.test(e.key)) {
         // Ctrl+1..9 → switche à la Nème session.

@@ -82,18 +82,9 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
           </button>
         </div>
 
-        <div style={{ display: 'flex', minHeight: 420 }}>
+        <div className="settings-layout">
           {/* Tabs */}
-          <div
-            style={{
-              width: 170,
-              borderRight: '1px solid var(--border)',
-              padding: '12px 8px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 2
-            }}
-          >
+          <div className="settings-tabs">
             <SettingsTabButton
               label={t('tabAppearance')}
               icon={<Palette size={14} />}
