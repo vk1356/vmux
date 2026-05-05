@@ -245,7 +245,9 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             color: accent,
             borderColor: accent
           }}
-          title={`${agent?.label ?? main?.agentId ?? 'shell'} — clic-droit pour changer la couleur`}
+          title={t('avatarHint', {
+            agent: agent?.label ?? main?.agentId ?? 'shell'
+          })}
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -254,16 +256,16 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
         >
           {(agent?.label ?? main?.agentId ?? '?').charAt(0).toUpperCase()}
           <span className={`session-avatar-dot ${dotStatus}`} />
-          {s.pinned && <span className="session-pin-mark" title="Épinglée" />}
+          {s.pinned && <span className="session-pin-mark" title={t('pinnedLabel')} />}
           {attention !== 'idle' && (
             <span
               className={`attention-badge attention-${attention}`}
               title={
                 attention === 'needs-input'
-                  ? 'Demande une action'
+                  ? t('attentionNeedsInputLabel')
                   : attention === 'alert'
-                    ? 'Agent terminé / alerte'
-                    : 'Activité'
+                    ? t('attentionAlertLabel')
+                    : t('attentionActivityLabel')
               }
             />
           )}
@@ -290,7 +292,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
           ) : (
             <div
               className="session-name"
-              title="Double-cliquer pour renommer"
+              title={t('actionRenameHint')}
               onDoubleClick={(e) => startRename(e, s)}
             >
               {s.name}
@@ -311,7 +313,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             )}
             <span className="session-icons">
               {hasUrls && (
-                <span title="URL localhost détectée">
+                <span title={t('urlDetectedLabel')}>
                   <Globe size={10} style={{ color: 'var(--info)' }} />
                 </span>
               )}
@@ -337,7 +339,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
           <button
             className={`btn-icon session-action ${s.pinned ? 'pinned' : ''}`}
             onClick={(e) => onTogglePin(e, s)}
-            title={s.pinned ? 'Désépingler' : 'Épingler'}
+            title={s.pinned ? t('actionUnpin') : t('actionPin')}
           >
             {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
           </button>
@@ -345,7 +347,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             <button
               className="btn-icon session-action"
               onClick={(e) => onRestartAll(e, s)}
-              title="Redémarrer les panes inactifs"
+              title={t('actionRestartIdle')}
             >
               <RotateCw size={12} />
             </button>
@@ -353,7 +355,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
           <button
             className="btn-icon session-action danger"
             onClick={(e) => onRemove(e, s)}
-            title="Fermer la session"
+            title={t('actionCloseSession')}
           >
             <X size={12} />
           </button>
@@ -373,8 +375,8 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             <button
               className="color-swatch reset"
               onClick={() => void onPickColor(s.id, null)}
-              title="Réinitialiser"
-              aria-label="Réinitialiser la couleur"
+              title={t('actionResetColor')}
+              aria-label={t('actionResetColor')}
             >
               <Palette size={11} />
             </button>
@@ -398,16 +400,16 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             <button
               className="btn-icon"
               onClick={onOpenSettings}
-              title="Paramètres (Ctrl+,)"
-              aria-label="Paramètres"
+              title={t('actionSettings')}
+              aria-label={t('actionSettings')}
             >
               <SettingsIcon size={14} />
             </button>
             <button
               className="btn-icon primary"
               onClick={onNewSession}
-              title="Nouvelle session  (Ctrl+N)"
-              aria-label="Nouvelle session"
+              title={t('actionNewSession')}
+              aria-label={t('actionNewSession')}
             >
               <Plus size={15} strokeWidth={2.5} />
             </button>
@@ -417,14 +419,9 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
           <div className="sidebar-pulse">
             <span className={`sidebar-pulse-dot ${totalRunning > 0 ? 'running' : ''}`} />
             <span className="sidebar-pulse-text">
-              {totalRunning > 0 ? (
-                <>
-                  <strong>{totalRunning}</strong> agent{totalRunning > 1 ? 's' : ''} actif
-                  {totalRunning > 1 ? 's' : ''}
-                </>
-              ) : (
-                <>Aucun agent actif</>
-              )}
+              {totalRunning > 0
+                ? t(totalRunning > 1 ? 'agentsActive' : 'agentActive', { n: totalRunning })
+                : t('noAgentActive')}
             </span>
           </div>
         )}
@@ -443,8 +440,8 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             <button
               className="sidebar-search-clear"
               onClick={() => setFilter('')}
-              title="Effacer"
-              aria-label="Effacer"
+              title={t('actionClearFilter')}
+              aria-label={t('actionClearFilter')}
             >
               <X size={10} />
             </button>
@@ -462,14 +459,14 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             <span className="sidebar-empty-body">{t('sidebarEmptyBody')}</span>
             <button className="btn primary sidebar-empty-cta" onClick={onNewSession}>
               <Plus size={12} strokeWidth={2.5} />
-              Nouvelle session
+              {t('sidebarEmptyCta')}
             </button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="sidebar-empty">
             <div className="sidebar-empty-title">{t('sidebarNoResults')}</div>
             <span className="sidebar-empty-body">
-              Aucune session ne correspond à "{filter}".
+              {t('sidebarNoResultsBody', { q: filter })}
             </span>
           </div>
         ) : (
@@ -477,7 +474,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             {groups.pinned.length > 0 && (
               <SidebarSection
                 icon={<Pin size={10} />}
-                label="Épinglées"
+                label={t('groupPinned')}
                 count={groups.pinned.length}
               >
                 {groups.pinned.map(renderItem)}
@@ -486,7 +483,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             {groups.active.length > 0 && (
               <SidebarSection
                 icon={<Activity size={10} />}
-                label="Actives"
+                label={t('groupActive')}
                 count={groups.active.length}
                 tone="active"
               >
@@ -496,7 +493,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             {groups.idle.length > 0 && (
               <SidebarSection
                 icon={<Moon size={10} />}
-                label="Au repos"
+                label={t('groupIdle')}
                 count={groups.idle.length}
                 tone="idle"
                 collapsible
@@ -514,17 +511,17 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
         <div className="sidebar-footer">
           <div className="sidebar-footer-stat">
             <span className="sidebar-footer-stat-value">{sessions.length}</span>
-            <span className="sidebar-footer-stat-label">sessions</span>
+            <span className="sidebar-footer-stat-label">{t('footerSessions')}</span>
           </div>
           <div className="sidebar-footer-divider" />
           <div className="sidebar-footer-stat">
             <span className="sidebar-footer-stat-value">{totalRunning}</span>
-            <span className="sidebar-footer-stat-label">actives</span>
+            <span className="sidebar-footer-stat-label">{t('footerActives')}</span>
           </div>
           <div className="sidebar-footer-divider" />
           <div className="sidebar-footer-stat">
             <span className="sidebar-footer-stat-value">{groups.pinned.length}</span>
-            <span className="sidebar-footer-stat-label">épinglées</span>
+            <span className="sidebar-footer-stat-label">{t('footerPinned')}</span>
           </div>
         </div>
       )}
