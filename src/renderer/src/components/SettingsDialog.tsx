@@ -466,6 +466,18 @@ function UpdatesTab(): JSX.Element {
     setStatus({ kind: 'checking' });
     setCheckedAt(Date.now());
     void window.cmux.updater.check();
+    // Watchdog UI : si après 25s on est toujours sur 'checking', on affiche
+    // une erreur. Le main a aussi son watchdog 20s, ceci est un filet de sécurité.
+    setTimeout(() => {
+      setStatus((cur) =>
+        cur.kind === 'checking'
+          ? {
+              kind: 'error',
+              message: 'Pas de réponse — vérifie que tu utilises la version installée.'
+            }
+          : cur
+      );
+    }, 25000);
   };
   const onDownload = (): void => {
     void window.cmux.updater.download();

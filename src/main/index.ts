@@ -152,11 +152,10 @@ app.whenReady().then(() => {
   }
   setGracefulShutdown(false);
 
-  // Auto-update (electron-updater) — actif uniquement en prod et si une release
-  // GitHub est configurée. Échec silencieux sinon (pas d'app-update.yml = no-op).
-  if (!is.dev) {
-    void setupAutoUpdater();
-  }
+  // Auto-update (electron-updater) — IPC handlers toujours enregistrés pour
+  // que l'UI Settings → Mises à jour ne reste pas bloquée sur "Vérification…".
+  // En dev, les handlers renvoient un statut explicite sans appeler le réseau.
+  void setupAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -192,18 +191,39 @@ app.on('before-quit', async (event) => {
  *  Pousse l'état (checking/available/downloading/downloaded/error) au renderer
  *  via IPC.updateStatus pour qu'il affiche une bannière. */
 async function setupAutoUpdater(): Promise<void> {
+  const { ipcMain } = await import('electron');
+
+  const send = (status: import('@shared/types').UpdateStatus): void => {
+    const w = mainWindow;
+    if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return;
+    w.webContents.send(IPC.updateStatus, status);
+  };
+
+  // En dev : enregistre des stubs IPC qui répondent immédiatement, sinon
+  // l'UI reste bloquée sur "Vérification en cours…" car aucun event n'arrive.
+  if (is.dev) {
+    log.info('[updater] dev mode — stub handlers (no network check)');
+    ipcMain.handle(IPC.updateCheck, () => {
+      send({
+        kind: 'error',
+        message: "Mode développement — l'auto-update n'est actif que sur l'app installée."
+      });
+    });
+    ipcMain.handle(IPC.updateDownload, () => {
+      send({ kind: 'error', message: 'Indisponible en mode dev.' });
+    });
+    ipcMain.handle(IPC.updateInstall, () => {
+      send({ kind: 'error', message: 'Indisponible en mode dev.' });
+    });
+    return;
+  }
+
   try {
     const { autoUpdater } = await import('electron-updater');
     autoUpdater.logger = log;
     autoUpdater.autoDownload = true;
     // On préfère installer manuellement via le bouton "Installer et redémarrer".
     autoUpdater.autoInstallOnAppQuit = false;
-
-    const send = (status: import('@shared/types').UpdateStatus): void => {
-      const w = mainWindow;
-      if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return;
-      w.webContents.send(IPC.updateStatus, status);
-    };
 
     autoUpdater.on('checking-for-update', () => send({ kind: 'checking' }));
     autoUpdater.on('update-available', (info) =>
@@ -235,13 +255,47 @@ async function setupAutoUpdater(): Promise<void> {
     autoUpdater.on('error', (err) => send({ kind: 'error', message: err.message }));
 
     // IPC handlers : déclenche check/download/install depuis le renderer.
-    const { ipcMain } = await import('electron');
     ipcMain.handle(IPC.updateCheck, async () => {
+      // Watchdog : si après 20s aucun event final n'a été émis, on bascule
+      // explicitement en error pour ne pas laisser l'UI sur "Vérification en cours…".
+      let settled = false;
+      const onFinal = (): void => {
+        settled = true;
+      };
+      autoUpdater.once('update-available', onFinal);
+      autoUpdater.once('update-not-available', onFinal);
+      autoUpdater.once('error', onFinal);
+
+      const watchdog = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        send({
+          kind: 'error',
+          message:
+            "Vérification interrompue (pas de réponse de GitHub Releases). Vérifie ta connexion."
+        });
+      }, 20000);
+
       try {
-        await autoUpdater.checkForUpdates();
+        const result = await autoUpdater.checkForUpdates();
+        // Cas dégénéré : checkForUpdates renvoie null/undefined sans émettre
+        // d'event (ex. app non packagée). On force un statut.
+        if (!settled && !result) {
+          settled = true;
+          clearTimeout(watchdog);
+          send({
+            kind: 'error',
+            message:
+              "Auto-update indisponible (app-update.yml introuvable — utilise l'installateur officiel)."
+          });
+        }
       } catch (err) {
+        if (!settled) {
+          settled = true;
+          clearTimeout(watchdog);
+          send({ kind: 'error', message: (err as Error).message });
+        }
         log.warn('[updater] manual check failed', err);
-        send({ kind: 'error', message: (err as Error).message });
       }
     });
     ipcMain.handle(IPC.updateDownload, async () => {
