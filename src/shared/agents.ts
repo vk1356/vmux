@@ -6,7 +6,7 @@ export const DEFAULT_AGENTS: AgentPreset[] = [
   {
     id: 'claude-code',
     label: 'Claude Code',
-    description: 'CLI officielle Anthropic — agent de code Claude',
+    description: 'Official Anthropic CLI — Claude coding agent',
     command: 'claude',
     args: [],
     color: '#d97706',
@@ -24,7 +24,7 @@ export const DEFAULT_AGENTS: AgentPreset[] = [
   {
     id: 'cursor-agent',
     label: 'Cursor Agent',
-    description: 'Agent CLI Cursor',
+    description: 'Cursor CLI agent',
     command: 'cursor-agent',
     args: [],
     color: '#6366f1',
@@ -33,7 +33,7 @@ export const DEFAULT_AGENTS: AgentPreset[] = [
   {
     id: 'aider',
     label: 'Aider',
-    description: 'Pair-programmer IA en CLI',
+    description: 'AI pair programmer in your CLI',
     command: 'aider',
     args: [],
     color: '#ec4899',
@@ -51,7 +51,7 @@ export const DEFAULT_AGENTS: AgentPreset[] = [
   {
     id: 'shell',
     label: 'Shell',
-    description: 'PowerShell brut, sans agent',
+    description: 'Raw PowerShell, no agent',
     command: 'pwsh',
     args: [],
     color: '#71717a'

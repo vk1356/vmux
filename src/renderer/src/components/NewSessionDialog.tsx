@@ -158,7 +158,7 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
                         </span>
                       )}
                     </div>
-                    <div className="agent-card-desc">{a.description}</div>
+                    <div className="agent-card-desc">{translateAgentDesc(t, a.id, a.description)}</div>
                   </button>
                 );
               })}
@@ -293,4 +293,17 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
       </div>
     </div>
   );
+}
+
+/** Renvoie la description traduite de l'agent (clé `agentDesc.<id>`) ou
+ *  un fallback sur la description par défaut du preset si la clé manque. */
+function translateAgentDesc(
+  t: ReturnType<typeof useT>,
+  agentId: string,
+  fallback: string
+): string {
+  const key = `agentDesc.${agentId}` as Parameters<typeof t>[0];
+  const translated = t(key);
+  // Si la clé n'existe pas du tout, translate() renvoie la clé brute.
+  return translated && translated !== key ? translated : fallback;
 }

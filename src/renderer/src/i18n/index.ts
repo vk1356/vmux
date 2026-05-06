@@ -360,7 +360,15 @@ const EN = {
 
   // Common labels (placeholders, etc.)
   agentCommandPlaceholder: 'command',
-  agentArgsPlaceholder: 'space-separated arguments'
+  agentArgsPlaceholder: 'space-separated arguments',
+
+  // Agent descriptions (per agent id, used in NewSessionDialog cards)
+  'agentDesc.claude-code': 'Official Anthropic CLI — Claude coding agent',
+  'agentDesc.codex': 'OpenAI Codex CLI',
+  'agentDesc.cursor-agent': 'Cursor CLI agent',
+  'agentDesc.aider': 'AI pair programmer in your CLI',
+  'agentDesc.gemini': 'Google Gemini CLI',
+  'agentDesc.shell': 'Raw PowerShell, no agent'
 } as const;
 
 const FR: Partial<Record<TKey, string>> = {
@@ -656,7 +664,13 @@ const FR: Partial<Record<TKey, string>> = {
     "vMux démarre minimisé à la connexion. Disponible uniquement dans l'app installée, pas en dev.",
   fieldAutoLaunchDevDisabled: "Désactivé en dev (le path n'est pas l'exe installé).",
   agentCommandPlaceholder: 'commande',
-  agentArgsPlaceholder: 'arguments séparés par espace'
+  agentArgsPlaceholder: 'arguments séparés par espace',
+  'agentDesc.claude-code': 'CLI officielle Anthropic — agent de code Claude',
+  'agentDesc.codex': 'OpenAI Codex CLI',
+  'agentDesc.cursor-agent': 'Agent CLI Cursor',
+  'agentDesc.aider': 'Pair-programmer IA en CLI',
+  'agentDesc.gemini': 'Google Gemini CLI',
+  'agentDesc.shell': 'PowerShell brut, sans agent'
 };
 
 const DE: Partial<Record<TKey, string>> = {
@@ -904,7 +918,13 @@ const DE: Partial<Record<TKey, string>> = {
     'vMux startet minimiert bei der Anmeldung. Nur in der installierten App verfügbar, nicht im Dev-Modus.',
   fieldAutoLaunchDevDisabled: 'Im Dev-Modus deaktiviert (Pfad ist nicht die installierte exe).',
   agentCommandPlaceholder: 'Befehl',
-  agentArgsPlaceholder: 'leerzeichengetrennte Argumente'
+  agentArgsPlaceholder: 'leerzeichengetrennte Argumente',
+  'agentDesc.claude-code': 'Offizielle Anthropic CLI — Claude Coding-Agent',
+  'agentDesc.codex': 'OpenAI Codex CLI',
+  'agentDesc.cursor-agent': 'Cursor CLI-Agent',
+  'agentDesc.aider': 'KI Pair-Programmer in der CLI',
+  'agentDesc.gemini': 'Google Gemini CLI',
+  'agentDesc.shell': 'Reines PowerShell, kein Agent'
 };
 
 const ES: Partial<Record<TKey, string>> = {
@@ -1151,7 +1171,13 @@ const ES: Partial<Record<TKey, string>> = {
     'vMux se inicia minimizado al iniciar sesión. Solo disponible en la app instalada, no en dev.',
   fieldAutoLaunchDevDisabled: 'Desactivado en dev (la ruta no es el exe instalado).',
   agentCommandPlaceholder: 'comando',
-  agentArgsPlaceholder: 'argumentos separados por espacios'
+  agentArgsPlaceholder: 'argumentos separados por espacios',
+  'agentDesc.claude-code': 'CLI oficial de Anthropic — agente de código Claude',
+  'agentDesc.codex': 'OpenAI Codex CLI',
+  'agentDesc.cursor-agent': 'Agente CLI de Cursor',
+  'agentDesc.aider': 'Pair-programmer IA en CLI',
+  'agentDesc.gemini': 'Google Gemini CLI',
+  'agentDesc.shell': 'PowerShell puro, sin agente'
 };
 
 const ZH: Partial<Record<TKey, string>> = {
@@ -1386,7 +1412,13 @@ const ZH: Partial<Record<TKey, string>> = {
   fieldAutoLaunchHint: '登录时 vMux 最小化启动。仅在已安装的应用中可用,开发模式下不可用。',
   fieldAutoLaunchDevDisabled: '在开发模式下禁用(路径不是已安装的 exe)。',
   agentCommandPlaceholder: '命令',
-  agentArgsPlaceholder: '以空格分隔的参数'
+  agentArgsPlaceholder: '以空格分隔的参数',
+  'agentDesc.claude-code': 'Anthropic 官方 CLI — Claude 编码智能体',
+  'agentDesc.codex': 'OpenAI Codex CLI',
+  'agentDesc.cursor-agent': 'Cursor CLI 智能体',
+  'agentDesc.aider': 'CLI 中的 AI 结对编程助手',
+  'agentDesc.gemini': 'Google Gemini CLI',
+  'agentDesc.shell': '纯 PowerShell,无智能体'
 };
 
 const JA: Partial<Record<TKey, string>> = {
@@ -1630,7 +1662,13 @@ const JA: Partial<Record<TKey, string>> = {
     'ログイン時に vMux が最小化された状態で起動します。インストール済みのアプリでのみ利用可能、開発モードでは不可。',
   fieldAutoLaunchDevDisabled: '開発モードでは無効(パスがインストール済み exe ではありません)。',
   agentCommandPlaceholder: 'コマンド',
-  agentArgsPlaceholder: 'スペース区切りの引数'
+  agentArgsPlaceholder: 'スペース区切りの引数',
+  'agentDesc.claude-code': 'Anthropic 公式 CLI — Claude コーディングエージェント',
+  'agentDesc.codex': 'OpenAI Codex CLI',
+  'agentDesc.cursor-agent': 'Cursor CLI エージェント',
+  'agentDesc.aider': 'CLI の AI ペアプログラマー',
+  'agentDesc.gemini': 'Google Gemini CLI',
+  'agentDesc.shell': '生の PowerShell、エージェントなし'
 };
 
 const TR: Partial<Record<TKey, string>> = {
@@ -1875,7 +1913,13 @@ const TR: Partial<Record<TKey, string>> = {
     'Oturum açtığında vMux küçültülmüş olarak başlar. Yalnızca yüklü uygulamada kullanılabilir, dev modunda değil.',
   fieldAutoLaunchDevDisabled: 'Dev modunda devre dışı (yol yüklü exe değil).',
   agentCommandPlaceholder: 'komut',
-  agentArgsPlaceholder: 'boşlukla ayrılmış argümanlar'
+  agentArgsPlaceholder: 'boşlukla ayrılmış argümanlar',
+  'agentDesc.claude-code': 'Resmi Anthropic CLI — Claude kodlama ajanı',
+  'agentDesc.codex': 'OpenAI Codex CLI',
+  'agentDesc.cursor-agent': 'Cursor CLI ajanı',
+  'agentDesc.aider': "CLI'da AI çift programcı",
+  'agentDesc.gemini': 'Google Gemini CLI',
+  'agentDesc.shell': 'Saf PowerShell, ajan yok'
 };
 
 const CATALOG: Record<Lang, Partial<Record<TKey, string>>> = {
