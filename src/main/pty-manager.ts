@@ -39,6 +39,11 @@ interface ManagedPane {
   bootTimer?: NodeJS.Timeout;
   fallbackTimer?: NodeJS.Timeout;
   inputTimer?: NodeJS.Timeout;
+  /** Disposables retournés par child.onData / child.onExit — à dispose
+   *  avant kill pour éviter les chunks de l'ancien process qui leakent
+   *  dans le buffer du nouveau au restart. */
+  dataSub?: pty.IDisposable;
+  exitSub?: pty.IDisposable;
 }
 
 interface ManagedSession {
@@ -300,6 +305,7 @@ class PtyManager extends EventEmitter {
     const mp = m.panes.get(paneId);
     if (mp) {
       this.clearPaneTimers(mp);
+      this.disposeChildSubs(mp);
       try {
         mp.process?.kill();
       } catch {
@@ -448,6 +454,7 @@ class PtyManager extends EventEmitter {
 
     const mp = m.panes.get(paneId) ?? {};
     this.clearPaneTimers(mp);
+    this.disposeChildSubs(mp);
     if (mp.process) {
       try {
         mp.process.kill();
@@ -627,7 +634,7 @@ class PtyManager extends EventEmitter {
       }, 1000);
     }
 
-    child.onData((data) => {
+    mp.dataSub = child.onData((data) => {
       // Batch côté main : agrège les chunks pour réduire l'overhead IPC.
       this.bufferPaneData(paneId, data);
 
@@ -700,17 +707,41 @@ class PtyManager extends EventEmitter {
       }
     });
 
-    child.onExit(({ exitCode }) => {
+    mp.exitSub = child.onExit(({ exitCode }) => {
       const cur = this.sessions.get(sessionId);
       if (!cur) return;
       const curMp = cur.panes.get(paneId);
-      if (curMp) curMp.process = undefined;
+      if (curMp) {
+        curMp.process = undefined;
+        // Le child est mort : ses disposables sont déjà neutralisés mais on
+        // les retire explicitement pour ne pas les rappeler au restart.
+        curMp.dataSub = undefined;
+        curMp.exitSub = undefined;
+      }
       ptyStats.removePane(paneId);
       this.updatePane(sessionId, paneId, {
         status: exitCode === 0 ? 'exited' : 'error',
         exitCode
       });
     });
+  }
+
+  /** Dispose les listeners onData/onExit du child PTY avant un kill manuel.
+   *  Sans ça, lors d'un restart rapide, des chunks de l'ancien child peuvent
+   *  arriver après spawn du nouveau et leak dans le buffer du nouveau pane. */
+  private disposeChildSubs(mp: ManagedPane): void {
+    try {
+      mp.dataSub?.dispose();
+    } catch {
+      /* ignore */
+    }
+    try {
+      mp.exitSub?.dispose();
+    } catch {
+      /* ignore */
+    }
+    mp.dataSub = undefined;
+    mp.exitSub = undefined;
   }
 
   private updatePane(sessionId: string, paneId: PaneId, patch: Partial<TerminalPane> & { status?: PaneStatus }): void {
@@ -739,6 +770,7 @@ class PtyManager extends EventEmitter {
     for (const m of this.sessions.values()) {
       for (const mp of m.panes.values()) {
         this.clearPaneTimers(mp);
+        this.disposeChildSubs(mp);
         try {
           mp.process?.kill();
         } catch {

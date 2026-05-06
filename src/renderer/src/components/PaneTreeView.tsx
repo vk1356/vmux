@@ -168,9 +168,15 @@ function SplitNode({
     <div className="pane-split" style={{ flexDirection: flexDir }} ref={containerRef}>
       {tree.children.map((child, i) => {
         const size = sizes[i] ?? 100 / tree.children.length;
+        // Clé stable : déduite du contenu du sous-arbre, pas de l'index.
+        // key={i} causait un remount du <TerminalPane> quand on fermait un
+        // pane au milieu (les enfants suivants se décalaient → React pensait
+        // qu'ils avaient changé de type). Maintenant on dérive une clé du
+        // premier paneId du sous-arbre, ce qui reste stable au reorder.
+        const stableKey = subtreeKey(child);
         return (
           <RowFragment
-            key={i}
+            key={stableKey}
             isLast={i === tree.children.length - 1}
             size={size}
             direction={tree.direction}
@@ -190,6 +196,17 @@ function SplitNode({
       })}
     </div>
   );
+}
+
+/** Dérive une clé React stable d'un sous-arbre — utilise le 1er paneId rencontré
+ *  en DFS. Le 1er leaf reste identifiant tant que ce sous-arbre existe (les
+ *  reorder de splits adjacents ne le modifient pas). Suffisant pour que React
+ *  préserve l'état (xterm, focus, scroll) à travers les remaniements. */
+function subtreeKey(t: PaneTree): string {
+  if (t.kind === 'leaf') return `leaf-${t.paneId}`;
+  let cur: PaneTree = t;
+  while (cur.kind === 'split') cur = cur.children[0];
+  return `split-${cur.paneId}`;
 }
 
 interface RowFragmentProps {

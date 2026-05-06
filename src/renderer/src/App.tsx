@@ -128,12 +128,15 @@ export function App(): JSX.Element {
       bumpAttention(paneId, level);
     });
     const offStats = window.cmux.panes.onStats(pushStatSamples);
+    // Single handler — précédemment 2 abonnements distincts (onEvent x2)
+    // créaient un doublon : chaque event était traité 2 fois et bumpAttention
+    // pouvait flasher le badge. On centralise ici toast + attention.
     const offEvents = window.cmux.panes.onEvent((event) => {
       const state = useSessionStore.getState();
       const session = state.sessions.find((s) => event.paneId in s.panes);
       if (!session) return;
       recordEvent(session.id, event);
-      const lang = useSessionStore.getState().settings?.language ?? 'en';
+      const lang = state.settings?.language ?? 'en';
       addToast({
         kind: 'event',
         title: eventTitleFor(event.kind, lang),
@@ -142,11 +145,7 @@ export function App(): JSX.Element {
         sessionId: session.id,
         eventKind: event.kind
       });
-    });
-    // Map événements détectés → escalade attention :
-    //   build-error → needs-input (bloquant)
-    //   agent-done / build-success / server-ready → alert
-    const offEvents2 = window.cmux.panes.onEvent((event) => {
+      // Escalade attention : build-error → needs-input (bloquant), sinon alert.
       const level: PaneAttention =
         event.kind === 'build-error' ? 'needs-input' : 'alert';
       bumpAttention(event.paneId, level);
@@ -174,7 +173,6 @@ export function App(): JSX.Element {
       offStats();
       offEvents();
       offAttention();
-      offEvents2();
       offNotifSound();
     };
   }, [
@@ -269,6 +267,20 @@ export function App(): JSX.Element {
   // Raccourcis clavier
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      // Court-circuit : si un dialog/overlay est déjà ouvert, on ne déclenche
+      // PAS les raccourcis globaux. Évite l'ouverture de 2 dialogs en parallèle
+      // (ex: Ctrl+K dans Settings ouvrait la palette par-dessus). Esc et la
+      // fermeture restent gérés par chaque dialog individuellement.
+      const aDialogIsOpen =
+        newSessionOpen ||
+        settingsOpen ||
+        paletteOpen ||
+        shortcutsOpen ||
+        notifsOpen ||
+        snippetsOpen ||
+        closeConfirm !== null;
+      if (aDialogIsOpen && e.key !== 'Escape') return;
+
       const ctrl = e.ctrlKey || e.metaKey;
       const session = sessions.find((s) => s.id === activeSessionId);
       const activePaneId = session?.activePaneId;
@@ -386,6 +398,7 @@ export function App(): JSX.Element {
     shortcutsOpen,
     notifsOpen,
     snippetsOpen,
+    closeConfirm,
     removeSession,
     toggleSync
   ]);

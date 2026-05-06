@@ -35,12 +35,18 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
   if (args.includes('--hidden')) {
     return { kind: 'hidden' };
   }
+  // Help peut être une commande positionnelle (`vmux help`) ou un flag global
+  // (`vmux --help` / `vmux -h`). On gère les flags en premier car ils
+  // seraient filtrés par `args.find` en-dessous.
+  if (args.includes('--help') || args.includes('-h')) {
+    return { kind: 'help' };
+  }
   const first = args.find((a) => !a.startsWith('-') && !a.endsWith('.js') && !a.endsWith('.exe'));
 
   if (!first) return { kind: 'none' };
   const cmd = first.toLowerCase();
 
-  if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
+  if (cmd === 'help') {
     return { kind: 'help' };
   }
   if (cmd === 'focus') {
@@ -75,7 +81,12 @@ function readFlag(args: readonly string[], long: string, short?: string): string
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === long || a === short) {
-      return args[i + 1];
+      // Garde-fou : `vmux new --agent` (sans valeur) ou `--agent --prompt …`
+      // (la valeur suivante est un autre flag) ⇒ on retourne undefined
+      // pour que le parser remonte 'none' au lieu d'utiliser '--prompt' comme valeur d'agent.
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith('-')) return undefined;
+      return next;
     }
     if (a.startsWith(`${long}=`)) {
       return a.slice(long.length + 1);

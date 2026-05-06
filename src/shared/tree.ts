@@ -152,6 +152,9 @@ function nodeAt(tree: PaneTree, path: TreePath): PaneTree | null {
   let cur: PaneTree = tree;
   for (const step of path) {
     if (cur.kind !== 'split') return null;
+    // Garde-fou : si le path est corrompu (ex: persisté avec un index obsolète
+    // après refactoring du tree), on retourne null au lieu de undefined → null.
+    if (step < 0 || step >= cur.children.length) return null;
     cur = cur.children[step];
   }
   return cur;

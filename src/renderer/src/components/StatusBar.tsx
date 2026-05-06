@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from 'react';
+import { useEffect, useMemo, useState, type JSX } from 'react';
 import { Activity, Folder, GitBranch, Cpu, Bell, AlertCircle } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import { allPaneIds } from '@shared/tree';
@@ -19,31 +19,42 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
     void window.cmux.app?.version().then(setVersion);
   }, []);
 
-  let runningPanes = 0;
-  let totalPanes = 0;
-  for (const s of sessions) {
-    for (const id of allPaneIds(s.tree)) {
-      const p = s.panes[id];
-      if (p?.kind === 'terminal') {
-        totalPanes++;
-        if (p.status === 'running' || p.status === 'starting') runningPanes++;
+  // Memoized — sinon ce calcul O(sessions × panes) re-tournait à chaque
+  // re-render (et la StatusBar re-rend sur n'importe quel store update).
+  const { runningPanes, totalPanes } = useMemo(() => {
+    let running = 0;
+    let total = 0;
+    for (const s of sessions) {
+      for (const id of allPaneIds(s.tree)) {
+        const p = s.panes[id];
+        if (p?.kind === 'terminal') {
+          total++;
+          if (p.status === 'running' || p.status === 'starting') running++;
+        }
       }
     }
-  }
+    return { runningPanes: running, totalPanes: total };
+  }, [sessions]);
 
-  const unreadCount = eventHistory.filter((e) => !e.readAt).length;
+  const unreadCount = useMemo(
+    () => eventHistory.filter((e) => !e.readAt).length,
+    [eventHistory]
+  );
 
   // Global needs-input : sessions qui ont au moins un pane en attention 'needs-input' ou 'alert'.
-  const needsInputSessions: { id: string; paneId: string; level: 'alert' | 'needs-input' }[] = [];
-  for (const s of sessions) {
-    for (const id of allPaneIds(s.tree)) {
-      const a = paneActivity[id];
-      if (a === 'needs-input' || a === 'alert') {
-        needsInputSessions.push({ id: s.id, paneId: id, level: a });
-        break;
+  const needsInputSessions = useMemo(() => {
+    const out: { id: string; paneId: string; level: 'alert' | 'needs-input' }[] = [];
+    for (const s of sessions) {
+      for (const id of allPaneIds(s.tree)) {
+        const a = paneActivity[id];
+        if (a === 'needs-input' || a === 'alert') {
+          out.push({ id: s.id, paneId: id, level: a });
+          break;
+        }
       }
     }
-  }
+    return out;
+  }, [sessions, paneActivity]);
   const needsInputCount = needsInputSessions.length;
   const hasNeedsInput = needsInputSessions.some((x) => x.level === 'needs-input');
 

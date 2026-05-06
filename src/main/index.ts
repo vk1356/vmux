@@ -192,7 +192,9 @@ async function ensureDevShortcutForNotifications(aumid: string): Promise<void> {
   const shortcutPath = path.join(startMenu, 'vMux (Dev).lnk');
   try {
     await fs.promises.mkdir(startMenu, { recursive: true });
-    if (fs.existsSync(shortcutPath)) return;
+    // Async stat — on évite fs.existsSync (sync, bloque le main thread au boot).
+    const exists = await fs.promises.access(shortcutPath).then(() => true).catch(() => false);
+    if (exists) return;
     // Script PowerShell : crée un .lnk avec WScript.Shell + définit la
     // propriété System.AppUserModel.ID (PKEY 9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3).
     // C'est le pattern documenté par Microsoft pour associer l'AUMID au shortcut.
@@ -325,10 +327,20 @@ app.on('before-quit', async (event) => {
     event.preventDefault();
     quitting = true;
     log.info('[main] graceful shutdown — killing PTYs');
+    // Stop l'interval auto-update pour ne pas garder le process alive après quit.
+    if (updateRecheckInterval) {
+      clearInterval(updateRecheckInterval);
+      updateRecheckInterval = null;
+    }
     await ptyManager.shutdown();
-    setTimeout(() => app.exit(0), 80);
+    // 500ms : ConPTY/node-pty Windows mettent ~200-400ms à terminer proprement.
+    // 80ms était trop court → force-kill avec perte de données en buffer.
+    setTimeout(() => app.exit(0), 500);
   }
 });
+
+/** Stocké au scope module pour pouvoir clearer l'interval au shutdown. */
+let updateRecheckInterval: NodeJS.Timeout | null = null;
 
 /**
  * Stratégie auto-update :
@@ -613,13 +625,11 @@ async function setupAutoUpdater(): Promise<void> {
     ipcMain.handle(IPC.updateDownload, async () => {
       try {
         log.info('[updater] electron-updater downloadUpdate()');
-        const checkPromise = autoUpdater.checkForUpdates();
-        await Promise.race([
-          checkPromise,
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('check timeout (10s)')), 10000)
-          )
-        ]);
+        // Avant : Promise.race avec timeout 10s — si timeout gagnait, le check
+        // continuait en background → état autoUpdater incohérent et race
+        // possible avec downloadUpdate(). Maintenant : on `await` directement,
+        // electron-updater a son propre timeout interne (~30s) et se gère bien.
+        await autoUpdater.checkForUpdates();
         await autoUpdater.downloadUpdate();
         // electron-updater émet 'update-downloaded' → handler global envoie le statut.
         // pendingManualInstaller reste null donc Install utilisera quitAndInstall.
@@ -685,8 +695,8 @@ async function setupAutoUpdater(): Promise<void> {
     // Premier check 3s après boot (laisse le first paint respirer).
     setTimeout(() => void checkUpdates(), 3000);
 
-    // Re-check toutes les 4 heures.
-    setInterval(() => void checkUpdates(), 4 * 60 * 60 * 1000);
+    // Re-check toutes les 4 heures. Stocké pour clearInterval au shutdown.
+    updateRecheckInterval = setInterval(() => void checkUpdates(), 4 * 60 * 60 * 1000);
   } catch (err) {
     log.warn('[updater] electron-updater unavailable, manual download only', err);
     ipcMain.handle(IPC.updateDownload, async () => {

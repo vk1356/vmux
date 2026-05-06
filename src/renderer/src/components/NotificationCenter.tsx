@@ -98,9 +98,12 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
               <div style={{ fontSize: 11, opacity: 0.6 }}>{t('notifEmptyHint')}</div>
             </div>
           ) : (
-            filtered.map((e, i) => (
+            filtered.map((e) => (
               <button
-                key={`${e.event.timestamp}-${i}`}
+                // Clé stable : timestamp + paneId est unique, ne dépend pas
+                // de l'index dans la liste filtrée → pas de remount au change
+                // de filtre, donc pas de perte de scroll position.
+                key={`${e.event.timestamp}-${e.event.paneId}`}
                 className="notif-item"
                 onClick={() => {
                   setActiveSession(e.sessionId);
