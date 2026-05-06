@@ -508,14 +508,6 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
         )}
       </div>
 
-      {sessions.length > 0 && (
-        <div className="sidebar-footer">
-          <div className="sidebar-footer-stat">
-            <span className="sidebar-footer-stat-value">{sessions.length}</span>
-            <span className="sidebar-footer-stat-label">{t('footerSessions')}</span>
-          </div>
-        </div>
-      )}
     </aside>
   );
 }
