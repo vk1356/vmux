@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { PreviewPane as PreviewPaneT, TerminalPane } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
+import { useT } from '../i18n';
 
 interface Props {
   sessionId: string;
@@ -64,6 +65,7 @@ const LEVEL_FROM_CODE: Record<number, ConsoleLevel> = {
 const MAX_LOGS = 500;
 
 function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
+  const t = useT();
   const ref = useRef<WebviewElement | null>(null);
   const [addr, setAddr] = useState(pane.url);
   const [loading, setLoading] = useState(false);
@@ -228,8 +230,8 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
           className="btn-icon"
           onClick={back}
           disabled={!canBack}
-          title="Précédent"
-          aria-label="Précédent"
+          title={t('previewBack')}
+          aria-label={t('previewBack')}
         >
           <ArrowLeft size={14} />
         </button>
@@ -237,12 +239,17 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
           className="btn-icon"
           onClick={forward}
           disabled={!canForward}
-          title="Suivant"
-          aria-label="Suivant"
+          title={t('previewForward')}
+          aria-label={t('previewForward')}
         >
           <ArrowRight size={14} />
         </button>
-        <button className="btn-icon" onClick={reload} title="Recharger" aria-label="Recharger">
+        <button
+          className="btn-icon"
+          onClick={reload}
+          title={t('previewReload')}
+          aria-label={t('previewReload')}
+        >
           {loading ? <Loader2 size={14} className="spin" /> : <RotateCw size={14} />}
         </button>
         <form onSubmit={onAddrSubmit} className="preview-addr">
@@ -259,7 +266,7 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
             e.stopPropagation();
             setConsoleOpen((v) => !v);
           }}
-          title={consoleOpen ? 'Masquer la console' : 'Afficher la console'}
+          title={consoleOpen ? t('previewConsoleHide') : t('previewConsoleShow')}
           aria-label="Console"
         >
           <Terminal size={14} />
@@ -276,8 +283,8 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
         <button
           className="btn-icon"
           onClick={openExternal}
-          title="Ouvrir dans le navigateur"
-          aria-label="Ouvrir dans le navigateur"
+          title={t('previewOpenExternal')}
+          aria-label={t('previewOpenExternal')}
         >
           <ExternalLink size={14} />
         </button>
@@ -287,8 +294,8 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
             dismissPreview(sessionId);
             void window.cmux.panes.close(sessionId, pane.id);
           }}
-          title="Fermer le preview"
-          aria-label="Fermer le preview"
+          title={t('previewClose')}
+          aria-label={t('previewClose')}
         >
           ×
         </button>
@@ -309,12 +316,10 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
         {failed && (
           <div className="preview-error">
             <AlertCircle size={20} />
-            <div className="preview-error-title">Impossible de charger {addr}</div>
-            <div className="preview-error-sub">
-              Le serveur n'est peut-être pas encore prêt. Réessaye dans quelques secondes.
-            </div>
+            <div className="preview-error-title">{t('previewLoadFailed', { url: addr })}</div>
+            <div className="preview-error-sub">{t('previewLoadFailedHint')}</div>
             <button className="btn primary" onClick={reload}>
-              <RotateCw size={14} /> Recharger
+              <RotateCw size={14} /> {t('previewReload')}
             </button>
           </div>
         )}
@@ -356,16 +361,16 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
             <button
               className="btn-icon"
               onClick={() => setLogs([])}
-              title="Vider la console"
-              aria-label="Vider"
+              title={t('previewConsoleClear')}
+              aria-label={t('previewConsoleClear')}
             >
               <Trash2 size={11} />
             </button>
             <button
               className="btn-icon"
               onClick={() => setConsoleOpen(false)}
-              title="Masquer"
-              aria-label="Masquer"
+              title={t('previewConsoleHide')}
+              aria-label={t('previewConsoleHide')}
             >
               <ChevronDown size={11} />
             </button>
@@ -373,9 +378,7 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
           <div className="preview-console-body" ref={logsScrollRef}>
             {filteredLogs.length === 0 ? (
               <div className="preview-console-empty">
-                {logs.length === 0
-                  ? 'Aucun message console pour le moment. Charge la page pour voir les logs.'
-                  : 'Aucun message dans ce filtre.'}
+                {logs.length === 0 ? t('previewConsoleEmpty') : t('previewConsoleEmptyFiltered')}
               </div>
             ) : (
               filteredLogs.map((l) => <ConsoleEntry key={l.id} entry={l} />)

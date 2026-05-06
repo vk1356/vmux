@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type JSX } from 'react';
 import { Bell, X, Trash2, CheckCircle2, XCircle, Rocket, FlaskConical, Sparkles } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import type { DetectedEventKind } from '@shared/types';
+import { useT } from '../i18n';
 
 interface Props {
   open: boolean;
@@ -17,6 +18,7 @@ const KIND_LABELS: Record<DetectedEventKind, string> = {
 };
 
 export function NotificationCenter({ open, onClose }: Props): JSX.Element | null {
+  const t = useT();
   const eventHistory = useSessionStore((s) => s.eventHistory);
   const markEventsRead = useSessionStore((s) => s.markEventsRead);
   const clearEventHistory = useSessionStore((s) => s.clearEventHistory);
@@ -43,10 +45,10 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
       <div className="notif-drawer" onClick={(e) => e.stopPropagation()}>
         <div className="notif-header">
           <div className="notif-title">
-            <Bell size={14} /> Notifications
+            <Bell size={14} /> {t('notificationsTitle')}
             <span className="notif-count">{eventHistory.length}</span>
           </div>
-          <button className="btn-icon" onClick={onClose} aria-label="Fermer">
+          <button className="btn-icon" onClick={onClose} aria-label={t('windowClose')}>
             <X size={14} />
           </button>
         </div>
@@ -77,7 +79,7 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
             className="btn-icon notif-clear"
             onClick={clearEventHistory}
             disabled={eventHistory.length === 0}
-            title="Vider l'historique"
+            title={t('notificationsClear')}
           >
             <Trash2 size={12} />
           </button>
@@ -87,9 +89,9 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
           {filtered.length === 0 ? (
             <div className="notif-empty">
               <Sparkles size={20} style={{ opacity: 0.4 }} />
-              <div>Aucun événement</div>
+              <div>{t('notificationsEmpty')}</div>
               <div style={{ fontSize: 11, opacity: 0.6 }}>
-                Les events détectés (server ready, build, tests…) apparaîtront ici.
+                Detected events (server ready, build, tests…) will appear here.
               </div>
             </div>
           ) : (

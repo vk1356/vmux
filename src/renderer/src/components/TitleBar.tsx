@@ -1,7 +1,9 @@
 import { useEffect, useState, type JSX } from 'react';
 import { Minus, Square, Copy, X } from 'lucide-react';
+import { useT } from '../i18n';
 
 export function TitleBar(): JSX.Element {
+  const t = useT();
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -30,24 +32,24 @@ export function TitleBar(): JSX.Element {
         <button
           className="titlebar-button"
           onClick={() => window.cmux.window.minimize()}
-          aria-label="Réduire"
-          title="Réduire"
+          aria-label={t('windowMinimize')}
+          title={t('windowMinimize')}
         >
           <Minus size={14} />
         </button>
         <button
           className="titlebar-button"
           onClick={() => window.cmux.window.maximize()}
-          aria-label={maximized ? 'Restaurer' : 'Agrandir'}
-          title={maximized ? 'Restaurer' : 'Agrandir'}
+          aria-label={maximized ? t('windowRestore') : t('windowMaximize')}
+          title={maximized ? t('windowRestore') : t('windowMaximize')}
         >
           {maximized ? <Copy size={12} /> : <Square size={12} />}
         </button>
         <button
           className="titlebar-button danger"
           onClick={() => window.cmux.window.close()}
-          aria-label="Fermer"
-          title="Fermer"
+          aria-label={t('windowClose')}
+          title={t('windowClose')}
         >
           <X size={14} />
         </button>

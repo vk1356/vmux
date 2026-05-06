@@ -17,6 +17,7 @@ import {
 import { useSessionStore } from '../store/sessions';
 import { allPaneIds } from '@shared/tree';
 import type { TerminalPane } from '@shared/types';
+import { useT } from '../i18n';
 
 interface Props {
   open: boolean;
@@ -42,6 +43,7 @@ export function CommandPalette({
   onNewSession,
   onOpenSettings
 }: Props): JSX.Element | null {
+  const t = useT();
   const sessions = useSessionStore((s) => s.sessions);
   const agents = useSessionStore((s) => s.agents);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -350,7 +352,7 @@ export function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Tape pour chercher : sessions, panes, actions, URLs…"
+            placeholder={t('palettePlaceholder')}
           />
           <span className="palette-hint">
             <CornerDownLeft size={11} /> entrer
@@ -360,7 +362,7 @@ export function CommandPalette({
           {filtered.length === 0 ? (
             <div className="palette-empty">
               <Sparkles size={20} style={{ opacity: 0.5 }} />
-              <div>Aucun résultat pour "{query}"</div>
+              <div>{t('paletteNoResults', { q: query })}</div>
             </div>
           ) : (
             grouped.map(({ group, items }) => (

@@ -81,7 +81,8 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
   const [filter, setFilter] = useState('');
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [colorPickerFor, setColorPickerFor] = useState<string | null>(null);
-  const [idleCollapsed, setIdleCollapsed] = useState(true);
+  // Idle section : déployée par défaut. L'user peut la replier manuellement.
+  const [idleCollapsed, setIdleCollapsed] = useState(false);
 
   const filtered = useMemo(() => {
     if (!filter.trim()) return sessions;
