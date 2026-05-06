@@ -2,7 +2,7 @@
   "name": "vmux-windows",
   "private": true,
   "version": "0.3.1",
-  "description": "vMux — orchestrateur multi-agents IA pour Windows. Splits, preview localhost, détection d'événements.",
+  "description": "vMux — multi-agent AI orchestrator for Windows. Splits, localhost preview, event detection.",
   "main": "./out/main/index.js",
   "author": {
     "name": "Vural Kutun",
