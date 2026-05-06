@@ -7,9 +7,11 @@ import { useT } from '../i18n';
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Cwd pré-rempli (ex: après un drag-drop de dossier sur la window). */
+  defaultCwd?: string;
 }
 
-export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
+export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Element | null {
   const t = useT();
   const { agents, agentAvailability, upsertSession } = useSessionStore();
   const [agentId, setAgentId] = useState<string>('claude-code');
@@ -27,14 +29,14 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
     if (!open) return;
     setAgentId('claude-code');
     setName('');
-    setCwd('');
+    setCwd(defaultCwd ?? '');
     setRepoInfo(null);
     setUseWorktree(true);
     setBranch('');
     setBase('');
     setInitialInput('');
     setError(null);
-  }, [open]);
+  }, [open, defaultCwd]);
 
   // Inspection git debouncée.
   useEffect(() => {

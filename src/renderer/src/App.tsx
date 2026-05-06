@@ -61,6 +61,8 @@ export function App(): JSX.Element {
     pushStatSamples
   } = useSessionStore();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  /** Cwd transmis à NewSessionDialog quand on ouvre via drag-drop d'un dossier. */
+  const [newSessionDefaultCwd, setNewSessionDefaultCwd] = useState<string | undefined>(undefined);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -187,6 +189,48 @@ export function App(): JSX.Element {
     bumpAttention,
     pushStatSamples
   ]);
+
+  // Drag-drop d'un dossier sur la window → ouvre New Session avec ce cwd
+  // pré-rempli. On skip si le drop atterrit dans un terminal (qui a son propre
+  // handler insérant le path dans le PTY) — on lit `e.defaultPrevented` après
+  // que le bubbling React ait laissé TerminalPane.onDrop appeler preventDefault.
+  useEffect(() => {
+    const onDragOver = (e: DragEvent): void => {
+      // preventDefault sur dragover est nécessaire pour autoriser le drop
+      // au niveau window. Sans ça, l'OS rejette le drop.
+      if (e.dataTransfer?.types?.includes('Files')) {
+        e.preventDefault();
+      }
+    };
+    const onDrop = (e: DragEvent): void => {
+      // Si TerminalPane a déjà géré le drop, on ne fait rien.
+      if (e.defaultPrevented) return;
+      const target = e.target as Element | null;
+      if (target?.closest?.('.terminal-host')) return;
+      const files = e.dataTransfer ? Array.from(e.dataTransfer.files) : [];
+      if (files.length === 0) return;
+      e.preventDefault();
+      // Premier File qui résout en dossier → cwd pré-rempli.
+      void (async (): Promise<void> => {
+        for (const f of files) {
+          const p = window.cmux.fs.pathForFile(f);
+          if (!p) continue;
+          const isDir = await window.cmux.fs.isDirectory(p);
+          if (isDir) {
+            setNewSessionDefaultCwd(p);
+            setNewSessionOpen(true);
+            return;
+          }
+        }
+      })();
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
 
   // Clear l'attention quand le pane actif **change** (pas à chaque heartbeat).
   const prevActivePaneRef = useRef<string | null>(null);
@@ -374,8 +418,14 @@ export function App(): JSX.Element {
   }, []);
 
   // Handlers stables pour limiter les re-renders des composants memo (Sidebar, TabBar).
-  const openNewSession = useCallback(() => setNewSessionOpen(true), []);
-  const closeNewSession = useCallback(() => setNewSessionOpen(false), []);
+  const openNewSession = useCallback(() => {
+    setNewSessionDefaultCwd(undefined);
+    setNewSessionOpen(true);
+  }, []);
+  const closeNewSession = useCallback(() => {
+    setNewSessionOpen(false);
+    setNewSessionDefaultCwd(undefined);
+  }, []);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const openPalette = useCallback(() => setPaletteOpen(true), []);
@@ -452,7 +502,11 @@ export function App(): JSX.Element {
       <ToastContainer />
       <Suspense fallback={null}>
         {newSessionOpen && (
-          <NewSessionDialog open={newSessionOpen} onClose={closeNewSession} />
+          <NewSessionDialog
+            open={newSessionOpen}
+            onClose={closeNewSession}
+            defaultCwd={newSessionDefaultCwd}
+          />
         )}
         {settingsOpen && <SettingsDialog open={settingsOpen} onClose={closeSettings} />}
         {paletteOpen && (

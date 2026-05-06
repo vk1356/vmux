@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import pidusage from 'pidusage';
+import pidtree from 'pidtree';
 import log from 'electron-log/main';
 import type { PaneId } from '@shared/types';
 
@@ -53,38 +54,80 @@ class PtyStatsCollector extends EventEmitter {
     }
   }
 
+  /** Pour un PID donné, retourne pid + tous ses descendants. Sur Windows, c'est
+   *  crucial : `pty.pid` pointe sur `pwsh.exe` (le wrapper) mais l'agent
+   *  (`claude`/`codex`/`node.exe` enfant) tourne dans un sous-processus.
+   *  Sans cette agrégation, les stats restent figées sur le shell idle. */
+  private async treePids(rootPid: number): Promise<number[]> {
+    try {
+      const children = await pidtree(rootPid);
+      // pidtree renvoie uniquement les descendants — on ajoute la racine.
+      return [rootPid, ...children];
+    } catch {
+      // Le process est mort ou inaccessible : on retombe sur le pid seul,
+      // pidusage gérera le throw downstream.
+      return [rootPid];
+    }
+  }
+
   private async collect(): Promise<void> {
     const entries = Array.from(this.pids.entries());
     if (entries.length === 0) return;
-    const pidArr = entries.map(([, pid]) => pid);
     const ts = Date.now();
 
+    // Étape 1 : pour chaque pane, énumère pid + descendants.
+    const trees = await Promise.all(
+      entries.map(async ([paneId, pid]) => ({
+        paneId,
+        rootPid: pid,
+        pids: await this.treePids(pid)
+      }))
+    );
+
+    // Étape 2 : flatten et dedupe pour un seul appel pidusage batché.
+    const allPids = Array.from(new Set(trees.flatMap((t) => t.pids)));
+    let stats: Record<number, { cpu: number; memory: number }> = {};
     try {
-      const stats = await pidusage(pidArr);
-      const samples: PaneStatSample[] = [];
-      for (const [paneId, pid] of entries) {
-        const s = stats[pid];
-        if (s) samples.push({ paneId, cpu: s.cpu, memory: s.memory, timestamp: ts });
-      }
-      if (samples.length > 0) this.emit('stats', samples);
-    } catch (err) {
-      // pidusage throw si UN seul PID est mort — on retombe sur du per-PID
-      // pour ne pas perdre les autres samples.
-      const samples: PaneStatSample[] = [];
+      stats = await pidusage(allPids);
+    } catch {
+      // Au moins un PID mort dans le batch : retombe sur du per-pid pour ne
+      // pas perdre les autres.
       await Promise.all(
-        entries.map(async ([paneId, pid]) => {
+        allPids.map(async (pid) => {
           try {
             const s = await pidusage(pid);
-            samples.push({ paneId, cpu: s.cpu, memory: s.memory, timestamp: ts });
+            stats[pid] = { cpu: s.cpu, memory: s.memory };
           } catch {
-            // PID mort : on retire silencieusement de la map.
-            this.pids.delete(paneId);
+            /* pid mort — on saute */
           }
         })
       );
-      if (samples.length > 0) this.emit('stats', samples);
-      log.debug('[stats] batch failed, fell back to per-pid', (err as Error).message);
     }
+
+    // Étape 3 : somme par pane.
+    const samples: PaneStatSample[] = [];
+    for (const tree of trees) {
+      let cpuSum = 0;
+      let memSum = 0;
+      let alive = false;
+      for (const pid of tree.pids) {
+        const s = stats[pid];
+        if (s) {
+          cpuSum += s.cpu;
+          memSum += s.memory;
+          alive = true;
+        }
+      }
+      if (alive) {
+        samples.push({ paneId: tree.paneId, cpu: cpuSum, memory: memSum, timestamp: ts });
+      } else {
+        // Tous les PIDs morts (pwsh + descendants) → le pane n'a plus de
+        // process actif, on l'enlève de la map pour libérer le timer.
+        this.pids.delete(tree.paneId);
+        log.debug(`[stats] pane ${tree.paneId} (root pid=${tree.rootPid}) has no live process`);
+      }
+    }
+    if (samples.length > 0) this.emit('stats', samples);
   }
 
   shutdown(): void {

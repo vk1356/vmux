@@ -318,7 +318,10 @@ export const IPC = {
   notifPlaySound: 'notif:play-sound',
 
   // Sound file picker (renderer → main)
-  dialogPickSoundFile: 'dialog:pick-sound-file'
+  dialogPickSoundFile: 'dialog:pick-sound-file',
+
+  // Filesystem
+  fsIsDirectory: 'fs:is-directory'
 } as const;
 
 // ============================================================

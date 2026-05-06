@@ -292,6 +292,17 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     void shell.openExternal(url);
   });
 
+  // ---------- FS ----------
+  ipcMain.handle(IPC.fsIsDirectory, async (_e, p: string) => {
+    if (typeof p !== 'string' || !p) return false;
+    try {
+      const st = await fsp.stat(p);
+      return st.isDirectory();
+    } catch {
+      return false;
+    }
+  });
+
   // ---------- Clipboard ----------
   ipcMain.handle(IPC.clipboardRead, () => clipboard.readText());
   ipcMain.handle(IPC.clipboardWrite, (_e, text: string) => {

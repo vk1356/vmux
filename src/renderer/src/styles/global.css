@@ -622,6 +622,13 @@ a:hover {
   gap: 4px;
   margin-left: auto;
 }
+/* Centre les SVG des spans wrappers (event icons), sinon ils s'alignent
+   sur la baseline et apparaissent légèrement plus haut que les btn voisins. */
+.session-icons > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
 
 .session-actions {
   display: flex;

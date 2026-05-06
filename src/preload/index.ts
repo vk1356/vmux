@@ -200,7 +200,11 @@ const api = {
       } catch {
         return '';
       }
-    }
+    },
+    /** Détecte si un chemin pointe sur un dossier — utilisé pour le drag-drop
+     *  de dossier sur la window (ouvre New Session avec ce cwd pré-rempli). */
+    isDirectory: (path: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC.fsIsDirectory, path)
   },
 
   settings: {
