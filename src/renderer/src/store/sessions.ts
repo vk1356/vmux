@@ -6,9 +6,22 @@ import type {
   DetectedEvent,
   PaneAttention,
   PaneId,
+  PaneStatSample,
   Session,
   TerminalPane
 } from '@shared/types';
+
+/** Capacité de la fenêtre glissante d'historique (samples par pane). */
+export const STATS_WINDOW = 30;
+
+export interface PaneStatsHistory {
+  /** CPU% — fenêtre circulaire ; ordre chronologique (plus ancien en [0]). */
+  cpu: number[];
+  /** RAM en octets — même fenêtre. */
+  memory: number[];
+  /** Dernière valeur reçue (pratique pour l'affichage instantané). */
+  last: { cpu: number; memory: number; timestamp: number } | null;
+}
 
 export interface ToastItem {
   id: string;
@@ -41,6 +54,8 @@ interface SessionStore {
   eventHistory: Array<{ event: DetectedEvent; sessionId: string; sessionName: string; readAt?: number }>;
   /** Niveau d'attention par pane — `idle` quand le user a focus, sinon escalade. */
   paneActivity: Record<PaneId, PaneAttention>;
+  /** Historique CPU/RAM par pane (fenêtre glissante de STATS_WINDOW samples). */
+  paneStats: Record<PaneId, PaneStatsHistory>;
 
   setSessions: (s: Session[]) => void;
   setAgents: (a: AgentPreset[]) => void;
@@ -67,6 +82,8 @@ interface SessionStore {
   bumpAttention: (paneId: PaneId, level: PaneAttention) => void;
   /** Clear l'attention d'un pane (appelé quand le user focuses ce pane). */
   clearAttention: (paneId: PaneId) => void;
+  /** Append samples CPU/RAM (push depuis le main toutes les 2s). */
+  pushStatSamples: (samples: PaneStatSample[]) => void;
 }
 
 /** Ordre d'escalade des niveaux d'attention. */
@@ -77,7 +94,10 @@ const ATTENTION_LEVEL: Record<PaneAttention, number> = {
   'needs-input': 3
 };
 
-export const useSessionStore = create<SessionStore>((set) => ({
+// Zustand v5 : la forme curried `create<T>()(...)` est requise pour bénéficier
+// de l'inférence de types et rester compatible avec les middlewares (cf. docs
+// Zustand v5 — migrating to v5).
+export const useSessionStore = create<SessionStore>()((set) => ({
   sessions: [],
   agents: [],
   agentAvailability: {},
@@ -89,6 +109,7 @@ export const useSessionStore = create<SessionStore>((set) => ({
   toasts: [],
   eventHistory: [],
   paneActivity: {},
+  paneStats: {},
 
   setSessions: (sessions) =>
     set((state) => ({
@@ -244,5 +265,25 @@ export const useSessionStore = create<SessionStore>((set) => ({
       const { [paneId]: _, ...rest } = state.paneActivity;
       void _;
       return { paneActivity: rest };
+    }),
+
+  pushStatSamples: (samples) =>
+    set((state) => {
+      if (samples.length === 0) return {};
+      const next: Record<PaneId, PaneStatsHistory> = { ...state.paneStats };
+      for (const s of samples) {
+        const cur = next[s.paneId] ?? { cpu: [], memory: [], last: null };
+        // Ring buffer : on coupe en tête si on dépasse la fenêtre.
+        const cpu = cur.cpu.length >= STATS_WINDOW ? cur.cpu.slice(1) : cur.cpu.slice();
+        const memory = cur.memory.length >= STATS_WINDOW ? cur.memory.slice(1) : cur.memory.slice();
+        cpu.push(s.cpu);
+        memory.push(s.memory);
+        next[s.paneId] = {
+          cpu,
+          memory,
+          last: { cpu: s.cpu, memory: s.memory, timestamp: s.timestamp }
+        };
+      }
+      return { paneStats: next };
     })
 }));

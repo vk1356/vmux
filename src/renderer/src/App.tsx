@@ -56,7 +56,8 @@ export function App(): JSX.Element {
     patchPane,
     toggleSync,
     bumpAttention,
-    clearAttention
+    clearAttention,
+    pushStatSamples
   } = useSessionStore();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -122,6 +123,7 @@ export function App(): JSX.Element {
     const offAttention = window.cmux.panes.onAttention((paneId, level) => {
       bumpAttention(paneId, level);
     });
+    const offStats = window.cmux.panes.onStats(pushStatSamples);
     const offEvents = window.cmux.panes.onEvent((event) => {
       const state = useSessionStore.getState();
       const session = state.sessions.find((s) => event.paneId in s.panes);
@@ -147,6 +149,7 @@ export function App(): JSX.Element {
       offSession();
       offStatus();
       offUrls();
+      offStats();
       offEvents();
       offAttention();
       offEvents2();
@@ -160,7 +163,8 @@ export function App(): JSX.Element {
     addToast,
     recordEvent,
     patchPane,
-    bumpAttention
+    bumpAttention,
+    pushStatSamples
   ]);
 
   // Clear l'attention quand le pane actif **change** (pas à chaque heartbeat).

@@ -23,6 +23,7 @@ import { createWorktree, removeWorktree } from './worktree-manager';
 import { getSettings, loadSessions, saveSessions } from './settings-store';
 import { extractUrls, mergeUrls, stripAnsi } from './url-detector';
 import { clearDetector, detectEvents } from './event-detector';
+import { ptyStats } from './pty-stats';
 
 interface ManagedPane {
   process?: pty.IPty;
@@ -230,6 +231,7 @@ class PtyManager extends EventEmitter {
         /* déjà mort */
       }
       clearDetector(paneId);
+      ptyStats.removePane(paneId);
       this.paneBuffers.delete(paneId);
       this.lastActivityEmit.delete(paneId);
     }
@@ -306,6 +308,7 @@ class PtyManager extends EventEmitter {
       m.panes.delete(paneId);
     }
     clearDetector(paneId);
+    ptyStats.removePane(paneId);
     this.paneBuffers.delete(paneId);
     const newTree = removePane(m.session.tree, paneId);
     if (!newTree) {
@@ -593,6 +596,7 @@ class PtyManager extends EventEmitter {
 
     mp.process = child;
     this.updatePane(sessionId, paneId, { status: 'running', pid: child.pid });
+    ptyStats.setPid(paneId, child.pid);
 
     const bootLine = buildAgentBootLine(agent);
     mp.pendingBootLine = bootLine || undefined;
@@ -701,6 +705,7 @@ class PtyManager extends EventEmitter {
       if (!cur) return;
       const curMp = cur.panes.get(paneId);
       if (curMp) curMp.process = undefined;
+      ptyStats.removePane(paneId);
       this.updatePane(sessionId, paneId, {
         status: exitCode === 0 ? 'exited' : 'error',
         exitCode
@@ -730,6 +735,7 @@ class PtyManager extends EventEmitter {
       this.flushTimer = null;
     }
     this.paneBuffers.clear();
+    ptyStats.shutdown();
     for (const m of this.sessions.values()) {
       for (const mp of m.panes.values()) {
         this.clearPaneTimers(mp);

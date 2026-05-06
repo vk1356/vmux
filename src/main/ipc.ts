@@ -15,6 +15,7 @@ import {
 } from '@shared/types';
 import { DEFAULT_AGENTS } from '@shared/agents';
 import { ptyManager } from './pty-manager';
+import { ptyStats } from './pty-stats';
 import { inspectRepo, listWorktrees } from './worktree-manager';
 import {
   deleteSnippet,
@@ -149,6 +150,9 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   });
   ptyManager.on('urlsDetected', (paneId, urls) => {
     safeSend(IPC.urlsDetected, paneId, urls);
+  });
+  ptyStats.on('stats', (samples) => {
+    safeSend(IPC.paneStats, samples);
   });
   ptyManager.on('paneAttention', (paneId, level) => {
     safeSend(IPC.paneAttention, paneId, level);

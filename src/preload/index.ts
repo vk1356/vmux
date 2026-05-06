@@ -10,6 +10,7 @@ import {
   type GitRepoInfo,
   type IpcResult,
   type PaneId,
+  type PaneStatSample,
   type PtySize,
   type Session,
   type Snippet,
@@ -147,6 +148,13 @@ const api = {
       ipcRenderer.on(IPC.paneAttention, listener);
       return (): void => {
         ipcRenderer.off(IPC.paneAttention, listener);
+      };
+    },
+    onStats: (cb: (samples: PaneStatSample[]) => void): (() => void) => {
+      const listener = (_: unknown, samples: PaneStatSample[]): void => cb(samples);
+      ipcRenderer.on(IPC.paneStats, listener);
+      return (): void => {
+        ipcRenderer.off(IPC.paneStats, listener);
       };
     }
   },

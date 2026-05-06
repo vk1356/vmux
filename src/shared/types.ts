@@ -193,6 +193,16 @@ export type DetectedEventKind =
 /** Niveau d'attention requis sur un pane non-actif (style tmux monitor-activity). */
 export type PaneAttention = 'idle' | 'activity' | 'alert' | 'needs-input';
 
+/** Échantillon CPU/RAM pour un pane à un instant donné. */
+export interface PaneStatSample {
+  paneId: PaneId;
+  /** CPU% — 0..100*vcore (8 cœurs ⇒ jusqu'à ~800). */
+  cpu: number;
+  /** RAM en octets. */
+  memory: number;
+  timestamp: number;
+}
+
 export interface DetectedEvent {
   paneId: PaneId;
   kind: DetectedEventKind;
@@ -255,6 +265,9 @@ export const IPC = {
 
   // Attention détectée (bell, needs-input, etc.)
   paneAttention: 'pane:attention',
+
+  // Stats CPU/RAM par pane (push depuis main toutes les 2s)
+  paneStats: 'pane:stats',
 
   // Agents
   agentsList: 'agents:list',

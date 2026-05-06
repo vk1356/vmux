@@ -4,7 +4,9 @@ import {
   useEffect,
   useRef,
   useState,
+  type DragEvent,
   type JSX,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent
 } from 'react';
 import { Terminal } from '@xterm/xterm';
@@ -281,13 +283,13 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
 
   // Drag & drop : on récupère le chemin disque des fichiers déposés et on les
   // écrit dans le PTY (séparés par espace, avec quotes pour les chemins à espaces).
-  const onDragOver = useCallback((e: React.DragEvent): void => {
+  const onDragOver = useCallback((e: DragEvent): void => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
   }, []);
 
   const onDrop = useCallback(
-    (e: React.DragEvent): void => {
+    (e: DragEvent): void => {
       e.preventDefault();
       const files = Array.from(e.dataTransfer.files);
       if (files.length === 0) return;
@@ -401,7 +403,7 @@ function TerminalSearchBar({ searchAddon, onClose }: SearchBarProps): JSX.Elemen
   }, [query, searchAddon]);
 
   const onKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
       if (e.key === 'Enter') {
         e.preventDefault();
         if (e.shiftKey) findPrev();

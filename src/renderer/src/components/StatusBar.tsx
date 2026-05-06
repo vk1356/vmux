@@ -4,6 +4,7 @@ import { useSessionStore } from '../store/sessions';
 import { allPaneIds } from '@shared/tree';
 import type { TerminalPane } from '@shared/types';
 import { useT } from '../i18n';
+import { PaneStats } from './PaneStats';
 
 interface Props {
   onOpenNotifications: () => void;
@@ -59,9 +60,16 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
       {active && (
         <>
           {activeTerm && (
-            <span className="statusbar-section">
-              <Cpu size={11} /> PID&nbsp;{activeTerm.pid ?? '—'}
-            </span>
+            <>
+              <span className="statusbar-section">
+                <Cpu size={11} /> PID&nbsp;{activeTerm.pid ?? '—'}
+              </span>
+              {activeTerm.status === 'running' && (
+                <span className="statusbar-section statusbar-stats">
+                  <PaneStats paneId={activeTerm.id} />
+                </span>
+              )}
+            </>
           )}
           {active.branch && (
             <span className="statusbar-section">

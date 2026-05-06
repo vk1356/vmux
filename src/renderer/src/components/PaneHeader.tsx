@@ -2,6 +2,7 @@ import { memo, type JSX } from 'react';
 import { X, Globe, Terminal as TerminalIcon } from 'lucide-react';
 import type { Pane, TerminalPane as TerminalPaneT } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
+import { PaneStats } from './PaneStats';
 
 interface Props {
   sessionId: string;
@@ -16,12 +17,14 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
   let label = pane.label || '';
   let dotClass = 'idle';
   let icon: JSX.Element;
+  let isRunningTerm = false;
 
   if (pane.kind === 'terminal') {
     const t = pane as TerminalPaneT;
     label = label || t.agentId;
     dotClass = t.status;
     icon = <TerminalIcon size={11} />;
+    isRunningTerm = t.status === 'running';
   } else {
     label = label || hostFromUrl(pane.url);
     dotClass = 'running';
@@ -35,6 +38,7 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
       <span className="pane-header-label" title={label}>
         {label}
       </span>
+      {isRunningTerm && <PaneStats paneId={pane.id} compact />}
       <button
         className="pane-header-close"
         onClick={(e) => {
