@@ -17,6 +17,7 @@ import { ChevronDown, ChevronUp, X as XIcon, Play } from 'lucide-react';
 import type { TerminalPane as TerminalPaneT } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { useSessionStore } from '../store/sessions';
+import { useT } from '../i18n';
 
 interface Props {
   sessionId: string;
@@ -50,6 +51,7 @@ const THEME = {
 } as const;
 
 function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Element {
+  const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -339,18 +341,16 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
           <div className="terminal-overlay-card">
             <div className="terminal-overlay-title">
               {pane.status === 'idle'
-                ? 'Pane inactif'
+                ? t('paneIdle')
                 : pane.status === 'exited'
-                  ? `Pane terminé (code ${pane.exitCode ?? 0})`
-                  : `Erreur (code ${pane.exitCode ?? -1})`}
+                  ? t('paneExited', { code: pane.exitCode ?? 0 })
+                  : t('paneError', { code: pane.exitCode ?? -1 })}
             </div>
             <div className="terminal-overlay-sub">
-              {pane.status === 'idle'
-                ? 'Le PTY ne survit pas aux redémarrages — relance pour reprendre.'
-                : 'Cliquer pour relancer ce pane avec les mêmes paramètres.'}
+              {pane.status === 'idle' ? t('paneIdleHint') : t('paneExitedHint')}
             </div>
             <button className="btn primary" onClick={onRestart} disabled={restarting}>
-              <Play size={14} /> {restarting ? 'Démarrage…' : 'Redémarrer'}
+              <Play size={14} /> {restarting ? t('paneStarting') : t('paneRestart')}
             </button>
           </div>
         </div>

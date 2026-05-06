@@ -514,16 +514,6 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             <span className="sidebar-footer-stat-value">{sessions.length}</span>
             <span className="sidebar-footer-stat-label">{t('footerSessions')}</span>
           </div>
-          <div className="sidebar-footer-divider" />
-          <div className="sidebar-footer-stat">
-            <span className="sidebar-footer-stat-value">{totalRunning}</span>
-            <span className="sidebar-footer-stat-label">{t('footerActives')}</span>
-          </div>
-          <div className="sidebar-footer-divider" />
-          <div className="sidebar-footer-stat">
-            <span className="sidebar-footer-stat-value">{groups.pinned.length}</span>
-            <span className="sidebar-footer-stat-label">{t('footerPinned')}</span>
-          </div>
         </div>
       )}
     </aside>
