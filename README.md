@@ -1,202 +1,314 @@
-# vMux — Windows edition
+<div align="center">
 
-> Orchestrateur multi-agents IA pour Windows. Lance Claude Code, Codex, Aider, Cursor Agent et Gemini en parallèle, chacun isolé dans son propre **git worktree**, avec des terminaux **ConPTY** natifs, du **split tmux-style**, un **preview localhost embarqué** et de la **détection d'événements** automatique.
+<img src="docs/screenshots/hero.png" alt="vMux landing screen" width="100%"/>
 
-## Fonctionnalités
+# vMux
 
-### Orchestration multi-agents
-- **Sessions** isolées : chaque agent IA tourne dans son propre git worktree
-- 6 agents preset : Claude Code, Codex, Cursor Agent, Aider, Gemini, shell brut
-- Détection automatique de la présence d'un agent dans le PATH
-- Override des commandes/args par agent dans les Settings
+**The Windows multi-agent AI orchestrator.**
+Run Claude Code, Codex, Aider, Cursor Agent and Gemini in parallel — each isolated in its own git worktree, with native ConPTY terminals, tmux-style splits, embedded localhost preview and automatic event detection.
 
-### Splits tmux-style + auto-tile
-- **Ctrl+Shift+D** : ajouter un pane → auto-tile en grid 2D équilibré
-- **Ctrl+Shift+E** : split vertical manuel
-- **Ctrl+G** : re-tiler la session
-- **Ctrl+Shift+W** : fermer le pane focusé (la session reste)
-- **Alt+←/→/↑/↓** : naviguer entre panes
-- Layouts presets : tiled (2D), even-horizontal, even-vertical, main+stack
-- Drag des séparateurs pour redimensionner
+[![Latest release](https://img.shields.io/github/v/release/vk1356/vmux?label=latest&color=f97316)](https://github.com/vk1356/vmux/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](#license)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-3b82f6)](#requirements)
+[![Built with Electron](https://img.shields.io/badge/electron-41-9333ea)](https://www.electronjs.org/)
 
-### Preview localhost embarqué
-- Détection automatique des URLs `localhost:XXXX`, `127.0.0.1:XXXX`, etc. dans la sortie de chaque pane
-- **Ouverture auto** du preview embarqué (`<webview>`) dès qu'une URL est détectée
-- Toolbar : back / forward / reload / address bar / open external
-- **Chips persistants** dans la tab bar pour ré-ouvrir n'importe quelle URL détectée
-- Auto-suivi des nouvelles URLs
+[Download](https://github.com/vk1356/vmux/releases/latest) ·
+[Features](#features) ·
+[Quick start](#installation) ·
+[Architecture](#architecture)
 
-### Détection d'événements + notifications
-- Patterns détectés : `server-ready`, `build-success`, `build-error`, `test-results`, `agent-done`
-- **Toast** in-app avec badge de couleur
-- **Notification système Windows** quand vMux est en arrière-plan
-- Badges dans la sidebar : 🚀 ready / ✓ build / ✗ error / 🌐 URL
+</div>
+
+---
+
+## Why vMux?
+
+Modern AI coding agents are powerful but **hard to orchestrate**: each one wants its own terminal, its own working directory, its own branch. Running three of them in parallel without stepping on each other's toes means juggling worktrees, tmux panes, browser tabs and notifications.
+
+**vMux solves that in one window.** Spawn as many agent sessions as you want, each one fenced inside its own git worktree, with terminal splits that auto-tile, an embedded browser for your dev server, and Windows-native push notifications when an agent needs your attention.
+
+<div align="center">
+<img src="docs/screenshots/session-active.png" alt="Claude Code session running in vMux" width="100%"/>
+<sub><i>A Claude Code agent running in its own worktree, with live CPU/memory stats and pane attention indicators.</i></sub>
+</div>
+
+---
+
+## Features
+
+### Multi-agent orchestration
+- **6 preset agents**: Claude Code, Codex, Aider, Cursor Agent, Gemini, raw shell
+- **Isolated sessions** — each agent runs inside its own dedicated git worktree, no branch collisions
+- **PATH detection** with availability checking + install hints if an agent isn't found
+- **Per-agent overrides** — remap commands/args/env from Settings without touching code
+
+### Tmux-style splits + auto-tile
+- `Ctrl+Shift+D` — add a pane → auto-tile in a balanced 2D grid
+- `Ctrl+Shift+E` — manual vertical split
+- `Ctrl+G` — re-tile current session
+- `Ctrl+Shift+W` — close focused pane (session stays alive)
+- `Alt+←/→/↑/↓` — navigate between panes
+- **Layout presets**: tiled (2D), even-horizontal, even-vertical, main+stack
+- Drag separators to resize live
+
+### Embedded localhost preview
+- **Auto-detection** of `localhost:XXXX`, `127.0.0.1:XXXX`, etc. from each pane's output (ANSI/box-drawing stripped)
+- Embedded `<webview>` opens automatically when a URL is detected
+- Toolbar: back / forward / reload / address bar / open external
+- **Built-in DevTools console** with level filters (errors / warnings / logs), live capture, peek banner when errors occur, clear button, max 500 entries (FIFO)
+- Persistent URL chips in the tab bar to re-open any detected URL
+
+### Event detection + native notifications
+- Patterns detected: `server-ready`, `build-success`, `build-error`, `test-results`, `agent-done`
+- In-app toast with colored badge per kind
+- **Native Windows notifications** with vMux icon when the app is in background
+- **Taskbar flash** (`flashFrame`) when an agent needs an action
+- **Custom notification sound** (configurable in Settings)
+- Sidebar badges per session: 🚀 ready / ✓ build / ✗ error / 🌐 URL
+
+### Auto-update from GitHub Releases
+- Update check via GitHub Releases API on launch and every 4 hours (8s timeout, no hangs)
+- **Differential download via blockmap** — only changed bytes (~few MB instead of 100 MB)
+- One-click in-app install: download → install silently → app restarts itself
+- Manual install fallback via integrated download (no browser opened)
+- 7-language status messages
+
+### Internationalization (7 languages)
+- 🇬🇧 English (default) · 🇫🇷 Français · 🇩🇪 Deutsch · 🇪🇸 Español · 🇨🇳 中文 · 🇯🇵 日本語 · 🇹🇷 Türkçe
+- Custom lightweight i18n system, switch live from **Settings → Appearance → Language**
+- Fallback to English when a key is missing in a translation
+
+### CLI: launch sessions from any terminal
+The NSIS installer adds vMux to your `PATH` automatically:
+
+```bash
+vmux                                              # focus the running window
+vmux new --agent claude-code --prompt "fix bug"   # spawn a new session
+vmux new -a codex -d "C:\repos\my-app" -p "tests"
+vmux help                                         # full reference
+```
 
 ### Pro features
-- **Command palette Ctrl+K** : fuzzy search sur sessions, panes, actions, URLs, agents
-- **Pane sync input** Ctrl+Shift+S : broadcast à tous les terminaux de la session (bord rouge)
-- **Renommage** sessions (double-click) et panes (right-click → Rename)
-- **Restart all** sur les sessions avec panes inactifs
-- **Sidebar** avec filtre + agent avatars + badges last-event
-- **Settings** : font, taille, scrollback, copy-on-selection, paste-on-right-click, WebGL, agent overrides
-- **Persistance** : sessions, layouts, position fenêtre, taille sidebar
-- **ErrorBoundary** scopée par pane (un pane crashé ne tue pas l'app)
-- **Migration** des sessions persistées (formats anciens nettoyés)
+- **Command palette** `Ctrl+K` — fuzzy search over sessions, panes, actions, URLs, agents
+- **Sync input** `Ctrl+Shift+S` — broadcast keystrokes to every terminal in the session (red border)
+- **Drag & drop** a folder onto the window → opens the new-session dialog with the cwd pre-filled
+- **Live process monitoring** — CPU % and memory (MB) per pane, plus PID, displayed in the status bar
+- **Session rename** (double-click) and pane rename (right-click → Rename)
+- **Pinning + grouping** — sessions are auto-grouped into Pinned / Active / Idle in the sidebar
+- **Restart all idle panes** in a session in one click
+- **Sidebar with filter** + agent avatars + last-event badges + custom session colors
+- **Settings**: theme, font, size, scrollback, copy-on-selection, paste-on-right-click, WebGL, agent overrides, notification sound, preview behavior
+- **Persistence**: sessions, layouts, window position, sidebar width survive restarts (cap 100 sessions)
+- **ErrorBoundary** scoped per pane — a crashed pane never kills the whole app
+- **Crash recovery** — graceful-shutdown flag detects unclean exits
+- **Single-instance lock** — second `vmux.exe` invocations focus the existing window
 
 ### Terminal (xterm.js)
-- Renderer **WebGL** par défaut (5x plus rapide sur les flux d'output)
-- **Search** Ctrl+Shift+F dans le pane
-- Unicode 11 (emoji)
-- **Copy-on-selection** + **paste-on-right-click**
-- Theme orange/zinc cohérent
+- WebGL renderer by default (5× faster on streaming output)
+- `Ctrl+Shift+F` in-pane search
+- Unicode 11 (full emoji support)
+- Copy-on-selection + paste-on-right-click
+- ConPTY native Windows terminal via `node-pty`
+- Bracketed paste mode preserved
+
+---
 
 ## Stack
 
-- **Electron 41** (Chromium + Node 22)
-- **React 19** + TypeScript 6
-- **electron-vite 5** + Vite 7 (HMR)
-- **node-pty 1.1** + ConPTY (Windows native)
-- **xterm.js 5.5** + addons fit / web-links / search / unicode11 / webgl
-- **Zustand 5** (state)
-- **electron-store 8** (persistance settings + sessions + layouts)
-- **electron-log** (logs persistés `%APPDATA%/vmux/logs/`)
-- **lucide-react** (icônes)
-- **Vitest 4** (tests utils purs)
+| Layer | Tech |
+|---|---|
+| Shell | Electron 41 (Chromium + Node 22) |
+| UI | React 19 + TypeScript 6 |
+| Bundler | electron-vite 5 + Vite 7 (HMR) |
+| PTY | node-pty 1.1 + ConPTY (Windows native) |
+| Terminal | xterm.js 6 + addons (fit / web-links / search / unicode11 / webgl) |
+| State | Zustand 5 |
+| Persistence | electron-store 8 |
+| Auto-update | electron-updater 6 + GitHub API fallback |
+| Process monitoring | pidusage + pidtree |
+| Logs | electron-log (`%APPDATA%\vMux\logs\`) |
+| Icons | lucide-react |
+| Tests | Vitest 4 |
 
-## Prérequis
+---
 
-- **Windows 10 (build 1809+) ou Windows 11**
-- **Node.js 22 LTS** (minimum)
-- **Git** dans le PATH (gestion des worktrees)
-- **PowerShell 7** recommandé (sinon Windows PowerShell 5.1 fonctionne)
-- Au moins un agent installé dans le PATH (`claude`, `codex`, `aider`, `cursor-agent`, `gemini`)
+## Requirements
+
+- **Windows 10** (build 1809+) or **Windows 11**
+- **Node.js 22 LTS** (for development only)
+- **Git** in PATH (worktree management)
+- **PowerShell 7** recommended (Windows PowerShell 5.1 also works)
+- At least one agent installed in PATH for productive use (`claude`, `codex`, `aider`, `cursor-agent`, `gemini`)
+
+---
 
 ## Installation
 
-```powershell
+### For end-users
+
+Download the latest installer from [Releases](https://github.com/vk1356/vmux/releases/latest):
+
+- **`vMux-Setup-x.y.z-x64.exe`** — NSIS installer (creates desktop & start menu shortcuts, adds `vmux` to PATH, enables auto-update)
+- **`vMux-Portable-x.y.z-x64.exe`** — standalone executable, no install required
+
+After install, all future updates happen in-app automatically: **Settings → Updates → Check now → Download → Install and restart**.
+
+### For developers
+
+```bash
+git clone https://github.com/vk1356/vmux.git
+cd vmux
 npm install
+npm run dev    # opens with HMR (renderer on port 5183)
 ```
 
-> Si `node-pty` échoue à compiler (Python 3.12 distutils manquant) : l'override `node-gyp@12` dans `package.json` règle ça automatiquement. Pas de Python build tools requis.
+> If `node-pty` fails to compile (Python 3.12 distutils issue), the `node-gyp@^12` override in `package.json` handles it. **No Python build tools required** — the prebuilt NAPI binary works with Electron.
 
-## Développement
+---
 
-```powershell
-npm run dev
+## Scripts
+
+```bash
+npm run dev          # dev server with HMR
+npm run build        # bundle out/
+npm run package      # NSIS installer + portable in release/
+npm run release      # build + publish to GitHub Releases (needs GH_TOKEN)
+npm run typecheck    # tsc --noEmit on main + preload + renderer
+npm run test         # vitest run (46 tests on tree, layouts, url-detector, event-detector)
+npm run icon         # regenerate build/icon.ico from build/icon.svg
 ```
 
-L'app s'ouvre avec HMR sur le renderer (port **5183** — choisi pour ne pas collider avec les dev servers usuels).
+---
 
-## Tests
+## Keyboard shortcuts
 
-```powershell
-npm run test         # vitest run (46 tests sur tree, layouts, url-detector, event-detector)
-npm run test:watch   # mode watch
-```
-
-## Typecheck
-
-```powershell
-npm run typecheck    # vérifie main + preload + renderer
-```
-
-## Build production
-
-```powershell
-npm run build         # bundle out/
-npm run package       # NSIS installer + portable dans release/
-```
-
-Artefacts générés :
-- `release/vMux-0.1.0-x64.exe` — installeur NSIS (raccourcis bureau / menu démarrer)
-- `release/vMux-0.1.0-x64-portable.exe` — version portable
-
-## Raccourcis clavier
-
-| Raccourci | Action |
-|-----------|--------|
-| `Ctrl+N` | Nouvelle session |
+| Shortcut | Action |
+|---|---|
+| `Ctrl+N` | New session |
 | `Ctrl+K` | Command palette |
-| `Ctrl+,` | Paramètres |
-| `Ctrl+W` | Fermer la session active |
-| `Ctrl+Shift+D` | Ajouter un pane (auto-tile) |
-| `Ctrl+Shift+E` | Split vertical manuel |
-| `Ctrl+Shift+W` | Fermer le pane focusé |
-| `Ctrl+Shift+S` | Toggle sync input session |
-| `Ctrl+Shift+F` | Recherche dans le terminal |
-| `Ctrl+G` | Re-tiler la session |
-| `Alt+←/→/↑/↓` | Naviguer entre panes |
-| `Esc` | Fermer dialog / palette |
+| `Ctrl+,` | Settings |
+| `Ctrl+W` | Close active session |
+| `Ctrl+Shift+D` | Add a pane (auto-tile) |
+| `Ctrl+Shift+E` | Manual vertical split |
+| `Ctrl+Shift+W` | Close focused pane |
+| `Ctrl+Shift+S` | Toggle sync-input on session |
+| `Ctrl+Shift+F` | Search inside terminal |
+| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+G` | Re-tile session |
+| `Ctrl+1..9` | Switch to Nth session |
+| `Alt+←/→/↑/↓` | Navigate between panes |
+| `Esc` | Close dialog / palette |
+
+---
 
 ## Architecture
 
 ```
 src/
-├── main/                    # Process Node (Electron main)
-│   ├── index.ts                   # Window, lifecycle, electron-log
-│   ├── ipc.ts                     # Handlers IPC (~30 channels)
-│   ├── pty-manager.ts             # Sessions + Panes + PTY (per-pane)
-│   ├── url-detector.ts            # Regex localhost (strip ANSI/box-drawing)
-│   ├── event-detector.ts          # Regex events + dedup window 2s
-│   ├── worktree-manager.ts        # git worktree add/remove
-│   ├── agent-check.ts             # where.exe + cache 30s
-│   ├── settings-store.ts          # electron-store + migration sessions
-│   └── shell.ts                   # Détection pwsh / Windows PowerShell
-├── preload/                 # Bridge contextIsolated
-│   └── index.ts                   # window.cmux API typée
-├── shared/                  # Types + utils purs (testables)
-│   ├── types.ts                   # Pane, PaneTree, Session, IPC channels
-│   ├── tree.ts                    # splitAt, removePane, neighbors, paths
-│   ├── layouts.ts                 # tiled (2D), even-h, even-v, main-stack
-│   └── agents.ts                  # Presets + resolveAgent (overrides)
-└── renderer/                # UI React 19
+├── main/                      # Electron main process (Node)
+│   ├── index.ts                     # Window, lifecycle, single-instance, auto-updater, CLI dispatch
+│   ├── ipc.ts                       # ~35 IPC channels (session/pane/git/dialog/clipboard/notif/updater)
+│   ├── pty-manager.ts               # Sessions + panes + per-pane PTY (ConPTY)
+│   ├── pty-stats.ts                 # Live CPU/RAM monitoring via pidusage
+│   ├── url-detector.ts              # Localhost URL regex (ANSI/box-drawing stripped)
+│   ├── event-detector.ts            # Event regex + 2s dedup window
+│   ├── worktree-manager.ts          # git worktree add/remove
+│   ├── agent-check.ts               # where.exe + 30s cache
+│   ├── settings-store.ts            # electron-store wrapper + session migration
+│   ├── shell.ts                     # Detect pwsh / Windows PowerShell / cmd / bash
+│   └── cli-args.ts                  # `vmux new --agent X` argument parser
+├── preload/                   # Context-isolated bridge
+│   └── index.ts                     # window.cmux typed API
+├── shared/                    # Pure types + utils (testable)
+│   ├── types.ts                     # Pane, PaneTree, Session, IPC channels, Lang, UpdateStatus
+│   ├── tree.ts                      # splitAt, removePane, neighbors, paths
+│   ├── layouts.ts                   # tiled (2D), even-h, even-v, main-stack
+│   └── agents.ts                    # Agent presets + resolver (with overrides)
+└── renderer/                  # React 19 UI
     └── src/
         ├── App.tsx
+        ├── i18n/index.ts                # 7-language catalog + useT/useLocale hooks
         ├── components/
-        │   ├── TitleBar.tsx           # Custom frameless
-        │   ├── Sidebar.tsx            # Sessions + filter + avatars
-        │   ├── TabBar.tsx             # Panes de la session active + menu
-        │   ├── PaneTreeView.tsx       # Rendu récursif de l'arbre
-        │   ├── TerminalPane.tsx       # xterm.js + WebGL + addons
-        │   ├── PreviewPane.tsx        # <webview> + toolbar
+        │   ├── TitleBar.tsx              # Custom frameless window controls
+        │   ├── Sidebar.tsx               # Sessions grouped (Pinned/Active/Idle), avatars, search
+        │   ├── TabBar.tsx                # Panes of active session + context menu
+        │   ├── PaneTreeView.tsx          # Recursive tree rendering with drag handles
+        │   ├── TerminalPane.tsx          # xterm.js + WebGL + addons, restart overlay
+        │   ├── PreviewPane.tsx           # <webview> + integrated DevTools console panel
         │   ├── NewSessionDialog.tsx
-        │   ├── SettingsDialog.tsx
-        │   ├── CommandPalette.tsx     # Ctrl+K fuzzy search
-        │   ├── UrlChips.tsx           # URLs détectées dans tab-bar
-        │   ├── Toast.tsx              # Notifications in-app
-        │   ├── ErrorBoundary.tsx      # Scopée: app vs pane
-        │   └── EmptyState.tsx
+        │   ├── SettingsDialog.tsx        # 6 tabs: Appearance / Terminal / Notifs / Agents / Updates / Advanced
+        │   ├── CommandPalette.tsx        # Ctrl+K fuzzy search
+        │   ├── UpdateBanner.tsx          # Top banner with download progress + install button
+        │   ├── UrlChips.tsx              # Detected URLs in tab-bar
+        │   ├── Toast.tsx                 # In-app notifications
+        │   ├── ErrorBoundary.tsx         # Scoped: app vs pane
+        │   └── EmptyState.tsx            # Hero with feature cards
         ├── store/
-        │   └── sessions.ts        # Zustand store
+        │   └── sessions.ts               # Zustand store (sessions, attention, stats, toasts)
         └── styles/
             └── global.css
 ```
 
-## Personnaliser les agents
+---
 
-Édite [`src/shared/agents.ts`](src/shared/agents.ts) ou utilise **Settings** (Ctrl+,) → onglet **Agents** pour overrider la commande/args sans toucher au code :
+## Customizing agents
+
+Edit `src/shared/agents.ts`, or use **Settings → Agents** to override the command/args without touching code:
 
 ```ts
 {
-  id: 'mon-agent',
-  label: 'Mon Agent',
-  description: 'Description courte',
-  command: 'mon-agent-cli',
+  id: 'my-agent',
+  label: 'My Agent',
+  description: 'Short description',
+  command: 'my-agent-cli',
   args: ['--mode', 'interactive'],
+  env: { CUSTOM_VAR: 'value' },
   color: '#a855f7',
-  installUrl: 'https://...'
+  installUrl: 'https://example.com/install'
 }
 ```
 
-Les overrides utilisateur sont mergés au spawn — l'utilisateur peut remapper `claude` → `claude-dev`, ajouter des env vars, etc.
+User overrides are merged at spawn time — you can remap `claude` → `claude-dev`, inject env vars, etc.
 
-## Dépannage
+---
 
-- **L'agent ne se lance pas** : vérifie qu'il est dans le PATH avec `where.exe <command>`. Le Settings dialog liste les agents trouvés.
-- **node-pty crash au lancement** : `npm run rebuild:native` (recompile contre Electron).
-- **Preview vide / erreur** : vérifie que ton dev server tourne sur l'URL affichée. La toolbar permet de réessayer.
-- **TUI baveuse au split étroit** : le bootLine de l'agent attend le 1er resize du renderer ; en cas de doute, fais un Ctrl+L manuel.
+## Troubleshooting
 
-## Licence
+| Problem | Solution |
+|---|---|
+| Agent doesn't launch | Check it's in PATH with `where.exe <command>`. Settings → Agents lists detected agents. |
+| `node-pty` crash on launch | `npm run rebuild:native` (recompiles against Electron). |
+| Preview blank / error | Verify your dev server is running on the displayed URL. The toolbar has a reload button. |
+| Update check stays on "Checking…" | The check has an 8s hard timeout. If it persists, check `%APPDATA%\vMux\logs\main.log`. |
+| TUI looks garbled on narrow split | The agent's bootLine waits for the renderer's first resize; press `Ctrl+L` to repaint manually. |
+| `vmux` command not found | Open a **new** terminal after install (PATH only updates for new sessions). |
 
-MIT — © Vural Kutun
+---
+
+## Releasing a new version
+
+```bash
+# 1. Bump version in package.json
+# 2. Commit + push
+git add package.json
+git commit -m "chore: bump 0.x.y → 0.x.z"
+git push origin main
+
+# 3. Build + publish (uses gh auth token)
+export GH_TOKEN=$(gh auth token)
+npm run release
+```
+
+The release script builds the NSIS installer + portable, signs them, generates the differential blockmap, and uploads everything to GitHub Releases as a new tag. Existing users will see the update banner on next launch.
+
+---
+
+## License
+
+MIT — © [Vural Kutun](mailto:xlazvek@gmail.com)
+
+---
+
+<div align="center">
+<sub>Made with ⚡ for developers who run multiple AI agents at once.</sub>
+</div>
