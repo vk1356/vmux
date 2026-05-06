@@ -9,6 +9,7 @@ import {
   type CreateSessionInput,
   type DetectedEvent,
   type IpcResult,
+  type Lang,
   type PaneId,
   type PtySize,
   type SplitPaneInput
@@ -27,6 +28,7 @@ import {
 import type { Snippet } from '@shared/types';
 import { defaultDiagnosticFilename, saveDiagnosticTo } from './diagnostic';
 import { checkAgents } from './agent-check';
+import { attentionBody, notifBundle } from '@shared/notif-i18n';
 import type { TreePath } from '@shared/tree';
 import type { LayoutPreset } from '@shared/layouts';
 
@@ -163,6 +165,8 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     const w = getMainWindow();
     const settings = getSettings();
     if (!settings.notificationsEnabled) return;
+    const lang = settings.language as Lang;
+    const bundle = notifBundle(lang);
 
     // Trouve la session/pane pour donner du contexte dans la notif.
     const all = ptyManager.list();
@@ -191,14 +195,13 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
 
     if (Notification.isSupported()) {
       try {
+        const silent = settings.notificationSound !== 'default';
         const notif = new Notification({
-          title: `vMux — ${sessionName}`,
-          body: agentLabel
-            ? `${agentLabel} demande une action`
-            : "L'agent demande une action",
+          title: `${bundle.attentionTitlePrefix} — ${sessionName}`,
+          body: attentionBody(lang, agentLabel || undefined),
           icon: getNotificationIcon(),
           urgency: 'critical',
-          silent: false
+          silent
         });
         notif.on('click', () => {
           if (!w || w.isDestroyed()) return;
@@ -212,6 +215,10 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
           }
         });
         notif.show();
+        // Custom sound : on demande au renderer de jouer le .wav/.mp3 choisi.
+        if (settings.notificationSound === 'custom' && settings.notificationSoundPath) {
+          safeSend(IPC.notifPlaySound, settings.notificationSoundPath);
+        }
       } catch (err) {
         log.warn('[notif] paneAttention show failed', err);
       }
@@ -223,14 +230,20 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     // Notification système si fenêtre en arrière-plan ET activée dans les settings.
     const settings = getSettings();
     if (settings.notificationsEnabled && w && !w.isFocused() && Notification.isSupported()) {
-      const title = eventTitle(event);
+      const lang = settings.language as Lang;
+      const bundle = notifBundle(lang);
+      const title = bundle.eventTitle[event.kind];
       try {
+        const silent = settings.notificationSound !== 'default';
         new Notification({
           title,
           body: event.message,
           icon: getNotificationIcon(),
-          silent: false
+          silent
         }).show();
+        if (settings.notificationSound === 'custom' && settings.notificationSoundPath) {
+          safeSend(IPC.notifPlaySound, settings.notificationSoundPath);
+        }
       } catch (err) {
         log.warn('[notif] failed to show', err);
       }
@@ -245,18 +258,31 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.dialogPickDirectory, async () => {
     const w = getMainWindow();
     if (!w) return null;
+    const lang = getSettings().language as Lang;
     const r = await dialog.showOpenDialog(w, {
       properties: ['openDirectory', 'createDirectory'],
-      title: 'Choisir un dossier'
+      title: notifBundle(lang).dialogPickDirectory
     });
     return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
   });
   ipcMain.handle(IPC.dialogPickRepo, async () => {
     const w = getMainWindow();
     if (!w) return null;
+    const lang = getSettings().language as Lang;
     const r = await dialog.showOpenDialog(w, {
       properties: ['openDirectory'],
-      title: 'Choisir un dépôt Git'
+      title: notifBundle(lang).dialogPickRepo
+    });
+    return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
+  });
+  ipcMain.handle(IPC.dialogPickSoundFile, async () => {
+    const w = getMainWindow();
+    if (!w) return null;
+    const lang = getSettings().language as Lang;
+    const r = await dialog.showOpenDialog(w, {
+      properties: ['openFile'],
+      title: notifBundle(lang).dialogPickSound,
+      filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'ogg', 'flac', 'm4a'] }]
     });
     return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
   });
@@ -292,7 +318,23 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
 
   // ---------- Settings ----------
   ipcMain.handle(IPC.settingsGet, () => getSettings());
-  ipcMain.handle(IPC.settingsSet, (_e, patch) => updateSettings(patch));
+  ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<import('@shared/types').AppSettings>) => {
+    const next = updateSettings(patch);
+    // Si autoLaunch a changé dans ce patch, applique le LoginItemSetting.
+    // Pas en dev (le path serait electron.exe, ce qui n'a pas de sens).
+    if (Object.prototype.hasOwnProperty.call(patch, 'autoLaunch') && process.platform === 'win32') {
+      try {
+        app.setLoginItemSettings({
+          openAtLogin: next.autoLaunch,
+          path: process.execPath,
+          args: ['--hidden']
+        });
+      } catch (err) {
+        log.warn('[autolaunch] sync failed', err);
+      }
+    }
+    return next;
+  });
 
   // ---------- Snippets ----------
   ipcMain.handle(IPC.snippetsList, () => listSnippets());
@@ -304,8 +346,9 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     safe('diagnosticExport', async () => {
       const w = getMainWindow();
       if (!w) return null;
+      const lang = getSettings().language as Lang;
       const r = await dialog.showSaveDialog(w, {
-        title: 'Exporter le diagnostic vMux',
+        title: notifBundle(lang).dialogExportDiagnostic,
         defaultPath: defaultDiagnosticFilename(),
         filters: [{ name: 'JSON', extensions: ['json'] }]
       });
@@ -340,17 +383,3 @@ function getNotificationIcon(): Electron.NativeImage | undefined {
   return nativeImage.createFromPath(cachedIconPath);
 }
 
-function eventTitle(event: DetectedEvent): string {
-  switch (event.kind) {
-    case 'server-ready':
-      return '🚀 Serveur prêt';
-    case 'build-success':
-      return '✓ Build réussi';
-    case 'build-error':
-      return '✗ Build en erreur';
-    case 'test-results':
-      return '🧪 Tests terminés';
-    case 'agent-done':
-      return '✓ Agent terminé';
-  }
-}

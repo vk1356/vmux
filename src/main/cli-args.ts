@@ -13,7 +13,8 @@ export type CliCommand =
       name?: string;
     }
   | { kind: 'focus' }
-  | { kind: 'help' };
+  | { kind: 'help' }
+  | { kind: 'hidden' };
 
 const VALID_AGENTS: ReadonlySet<AgentId> = new Set([
   'claude-code',
@@ -30,6 +31,10 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
   // En prod : argv[0] = vMux.exe, argv[1] = first user arg.
   // En dev : argv contient electron + chemin script + args. On scan dans tous les cas.
   const args = argv.slice(1);
+  // --hidden : flag passé par auto-launch Windows pour démarrer minimisé.
+  if (args.includes('--hidden')) {
+    return { kind: 'hidden' };
+  }
   const first = args.find((a) => !a.startsWith('-') && !a.endsWith('.js') && !a.endsWith('.exe'));
 
   if (!first) return { kind: 'none' };

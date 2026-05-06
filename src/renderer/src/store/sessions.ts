@@ -4,6 +4,7 @@ import type {
   AgentPreset,
   AppSettings,
   DetectedEvent,
+  DetectedEventKind,
   PaneAttention,
   PaneId,
   PaneStatSample,
@@ -33,6 +34,8 @@ export interface ToastItem {
   /** Pane terminal qui a généré le toast. */
   paneId?: PaneId;
   sessionId?: string;
+  /** Type d'event détecté — utilisé pour choisir l'icône sans inférer via le texte traduit. */
+  eventKind?: DetectedEventKind;
   ts: number;
 }
 

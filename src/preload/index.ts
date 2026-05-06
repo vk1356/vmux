@@ -167,7 +167,19 @@ const api = {
   dialog: {
     pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(IPC.dialogPickDirectory),
     pickRepo: (): Promise<string | null> => ipcRenderer.invoke(IPC.dialogPickRepo),
+    pickSoundFile: (): Promise<string | null> =>
+      ipcRenderer.invoke(IPC.dialogPickSoundFile),
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke(IPC.dialogOpenExternal, url)
+  },
+
+  notif: {
+    onPlaySound: (cb: (path: string) => void): (() => void) => {
+      const listener = (_: unknown, p: string): void => cb(p);
+      ipcRenderer.on(IPC.notifPlaySound, listener);
+      return (): void => {
+        ipcRenderer.off(IPC.notifPlaySound, listener);
+      };
+    }
   },
 
   clipboard: {

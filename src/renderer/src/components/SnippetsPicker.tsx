@@ -3,6 +3,7 @@ import { Search, X, Plus, Trash2, Edit3 } from 'lucide-react';
 import type { Session, Snippet } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { pathBasename } from '@shared/utils';
+import { useT } from '../i18n';
 
 interface Props {
   open: boolean;
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element | null {
+  const t = useT();
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Snippet | null>(null);
@@ -112,7 +114,7 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
               <Edit3 size={14} style={{ color: 'var(--accent)' }} />
               <input
                 ref={inputRef}
-                placeholder="Nom du snippet"
+                placeholder={t('snippetsName')}
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                 style={{ flex: 1 }}
@@ -125,17 +127,17 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
               className="snippet-edit-content"
               value={editing.content}
               onChange={(e) => setEditing({ ...editing, content: e.target.value })}
-              placeholder="Contenu du snippet — utilise {{file}}, {{branch}}, {{cwd}} pour des variables."
+              placeholder={t('snippetsContent')}
               rows={8}
             />
             <div className="palette-input-row" style={{ borderTop: '1px solid var(--border)', borderBottom: 0 }}>
               <input
-                placeholder="tags (séparés par virgule)"
+                placeholder={t('snippetsTagsPlaceholder')}
                 value={(editing.tags ?? []).join(', ')}
                 onChange={(e) =>
                   setEditing({
                     ...editing,
-                    tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean)
+                    tags: e.target.value.split(',').map((tag) => tag.trim()).filter(Boolean)
                   })
                 }
               />
@@ -144,7 +146,7 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
                 onClick={() => void saveEditing()}
                 disabled={!editing.name.trim() || !editing.content.trim()}
               >
-                Sauver
+                {t('snippetsSave')}
               </button>
             </div>
           </>
@@ -157,21 +159,34 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder="Rechercher un snippet…"
+                placeholder={t('palettePlaceholder')}
               />
-              <button className="btn-icon" onClick={newSnippet} title="Nouveau snippet">
+              <button className="btn-icon" onClick={newSnippet} title={t('snippetsNew')}>
                 <Plus size={14} />
               </button>
-              <button className="btn-icon" onClick={onClose} aria-label="Fermer">
+              <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
                 <X size={14} />
               </button>
             </div>
             <div className="palette-list">
               {filtered.length === 0 ? (
                 <div className="palette-empty">
-                  <div>Aucun snippet</div>
+                  <div>{t('snippetsEmpty')}</div>
                   <div style={{ fontSize: 11, opacity: 0.6 }}>
-                    Crée-en avec le bouton <Plus size={11} style={{ verticalAlign: '-2px' }} />.
+                    {t('snippetsEmptyHint', { plus: '+' })
+                      .split('+')
+                      .flatMap((part, i, arr) =>
+                        i < arr.length - 1
+                          ? [
+                              <span key={`s${i}`}>{part}</span>,
+                              <Plus
+                                key={`p${i}`}
+                                size={11}
+                                style={{ verticalAlign: '-2px' }}
+                              />
+                            ]
+                          : [<span key={`s${i}`}>{part}</span>]
+                      )}
                   </div>
                 </div>
               ) : (
@@ -187,9 +202,9 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
                       <div className="snippet-content">{s.content}</div>
                       {s.tags && s.tags.length > 0 && (
                         <div className="snippet-tags">
-                          {s.tags.map((t) => (
-                            <span key={t} className="snippet-tag">
-                              {t}
+                          {s.tags.map((tag) => (
+                            <span key={tag} className="snippet-tag">
+                              {tag}
                             </span>
                           ))}
                         </div>
@@ -202,7 +217,7 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
                           e.stopPropagation();
                           setEditing(s);
                         }}
-                        title="Éditer"
+                        title={t('snippetsEdit')}
                       >
                         <Edit3 size={11} />
                       </button>
@@ -212,7 +227,7 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
                           e.stopPropagation();
                           void deleteSnippet(s.id);
                         }}
-                        title="Supprimer"
+                        title={t('snippetsDelete')}
                       >
                         <Trash2 size={11} />
                       </button>
@@ -223,9 +238,11 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
             </div>
             <div className="palette-footer">
               <span><kbd>↑</kbd><kbd>↓</kbd> nav</span>
-              <span><kbd>↵</kbd> insérer</span>
+              <span>
+                <kbd>↵</kbd> {t('snippetsInsertHint')}
+              </span>
               <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-dim)' }}>
-                Variables : <code>{'{{file}}'}</code> <code>{'{{branch}}'}</code>{' '}
+                <code>{'{{file}}'}</code> <code>{'{{branch}}'}</code>{' '}
                 <code>{'{{cwd}}'}</code>
               </span>
             </div>

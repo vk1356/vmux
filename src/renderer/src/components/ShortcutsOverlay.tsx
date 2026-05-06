@@ -1,64 +1,66 @@
 import type { JSX } from 'react';
 import { X, Keyboard } from 'lucide-react';
+import { useT, type TKey } from '../i18n';
 
 interface Props {
   open: boolean;
   onClose: () => void;
 }
 
-interface Shortcut {
+interface ShortcutSpec {
   keys: string;
-  label: string;
+  labelKey: TKey;
 }
 
-interface Group {
-  title: string;
-  items: Shortcut[];
+interface GroupSpec {
+  titleKey: TKey;
+  items: ShortcutSpec[];
 }
 
-const GROUPS: Group[] = [
+const GROUPS: GroupSpec[] = [
   {
-    title: 'Sessions',
+    titleKey: 'shortcutsGroupSessions',
     items: [
-      { keys: 'Ctrl+N', label: 'Nouvelle session' },
-      { keys: 'Ctrl+W', label: 'Fermer la session active' },
-      { keys: 'Ctrl+K', label: 'Command palette' },
-      { keys: 'Ctrl+,', label: 'Paramètres' }
+      { keys: 'Ctrl+N', labelKey: 'shortcutsItemNewSession' },
+      { keys: 'Ctrl+W', labelKey: 'shortcutsItemCloseSession' },
+      { keys: 'Ctrl+K', labelKey: 'shortcutsItemPalette' },
+      { keys: 'Ctrl+,', labelKey: 'shortcutsItemSettings' }
     ]
   },
   {
-    title: 'Panes',
+    titleKey: 'shortcutsGroupPanes',
     items: [
-      { keys: 'Ctrl+Shift+D', label: 'Ajouter un pane (auto-tile)' },
-      { keys: 'Ctrl+Shift+E', label: 'Split vertical manuel' },
-      { keys: 'Ctrl+Shift+W', label: 'Fermer le pane focusé' },
-      { keys: 'Ctrl+G', label: 'Re-tiler la session' },
-      { keys: 'Alt+←/→/↑/↓', label: 'Naviguer entre panes' },
-      { keys: 'Ctrl+Shift+S', label: 'Toggle sync input (broadcast)' }
+      { keys: 'Ctrl+Shift+D', labelKey: 'shortcutsItemAddPane' },
+      { keys: 'Ctrl+Shift+E', labelKey: 'shortcutsItemSplitVertical' },
+      { keys: 'Ctrl+Shift+W', labelKey: 'shortcutsItemClosePane' },
+      { keys: 'Ctrl+G', labelKey: 'shortcutsItemRetile' },
+      { keys: 'Alt+←/→/↑/↓', labelKey: 'shortcutsItemNavigatePanes' },
+      { keys: 'Ctrl+Shift+S', labelKey: 'shortcutsItemSyncInput' }
     ]
   },
   {
-    title: 'Terminal',
+    titleKey: 'shortcutsGroupTerminal',
     items: [
-      { keys: 'Ctrl+Shift+F', label: 'Recherche dans le pane' },
-      { keys: 'Glisser fichier', label: 'Insère le chemin du fichier' },
-      { keys: 'Bouton 📋', label: 'Coller image ou texte du clipboard' }
+      { keys: 'Ctrl+Shift+F', labelKey: 'shortcutsItemSearchPane' },
+      { keys: 'shortcutsItemDragFile', labelKey: 'shortcutsItemInsertPath' },
+      { keys: 'shortcutsItemPasteButton', labelKey: 'shortcutsItemPasteHint' }
     ]
   },
   {
-    title: 'Édition shell (PSReadLine)',
+    titleKey: 'shortcutsGroupShellEdit',
     items: [
-      { keys: 'Ctrl+A / Home', label: 'Début de ligne' },
-      { keys: 'Ctrl+E / End', label: 'Fin de ligne' },
-      { keys: 'Ctrl+W', label: 'Supprimer le mot précédent' },
-      { keys: 'Ctrl+U', label: 'Supprimer jusqu\'au début' },
-      { keys: 'Ctrl+K', label: 'Supprimer jusqu\'à la fin' },
-      { keys: '↑ / ↓', label: 'Historique commandes' }
+      { keys: 'Ctrl+A / Home', labelKey: 'shortcutsItemHomeKey' },
+      { keys: 'Ctrl+E / End', labelKey: 'shortcutsItemEndKey' },
+      { keys: 'Ctrl+W', labelKey: 'shortcutsItemDeleteWord' },
+      { keys: 'Ctrl+U', labelKey: 'shortcutsItemDeleteHome' },
+      { keys: 'Ctrl+K', labelKey: 'shortcutsItemDeleteEnd' },
+      { keys: '↑ / ↓', labelKey: 'shortcutsItemHistory' }
     ]
   }
 ];
 
 export function ShortcutsOverlay({ open, onClose }: Props): JSX.Element | null {
+  const t = useT();
   if (!open) return null;
   return (
     <div className="dialog-backdrop" onClick={onClose}>
@@ -66,28 +68,40 @@ export function ShortcutsOverlay({ open, onClose }: Props): JSX.Element | null {
         <div className="dialog-header">
           <div className="dialog-title">
             <Keyboard size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-            Raccourcis clavier
+            {t('shortcutsTitle')}
           </div>
-          <button className="btn-icon" onClick={onClose} aria-label="Fermer">
+          <button className="btn-icon" onClick={onClose} aria-label={t('shortcutsClose')}>
             <X size={14} />
           </button>
         </div>
         <div className="shortcuts-grid">
           {GROUPS.map((g) => (
-            <div key={g.title} className="shortcuts-group">
-              <div className="shortcuts-group-title">{g.title}</div>
-              {g.items.map((s) => (
-                <div key={s.keys + s.label} className="shortcut-row">
-                  <span className="shortcut-keys">{s.keys}</span>
-                  <span className="shortcut-label">{s.label}</span>
-                </div>
-              ))}
+            <div key={g.titleKey} className="shortcuts-group">
+              <div className="shortcuts-group-title">{t(g.titleKey)}</div>
+              {g.items.map((s) => {
+                // Cas spécial : pour la rangée "drag file" et "📋 button", la
+                // colonne `keys` est elle-même une clé i18n (texte plutôt qu'un
+                // raccourci). On détecte les `shortcutsItem*` pour traduire.
+                const keysLabel = s.keys.startsWith('shortcutsItem')
+                  ? t(s.keys as TKey)
+                  : s.keys;
+                return (
+                  <div key={s.keys + s.labelKey} className="shortcut-row">
+                    <span className="shortcut-keys">{keysLabel}</span>
+                    <span className="shortcut-label">{t(s.labelKey)}</span>
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
         <div className="dialog-footer">
           <span className="hint">
-            <kbd>?</kbd> ou <kbd>Esc</kbd> pour fermer
+            {t('shortcutsCloseHint', { q: '?', esc: 'Esc' })
+              .split(/(\?|Esc)/)
+              .map((part, i) =>
+                part === '?' || part === 'Esc' ? <kbd key={i}>{part}</kbd> : <span key={i}>{part}</span>
+              )}
           </span>
         </div>
       </div>

@@ -11,11 +11,12 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertTriangle,
-  Languages
+  Languages,
+  Music
 } from 'lucide-react';
 import type { AgentId, AppSettings, Lang, UpdateStatus } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
-import { LANG_LABELS, useT } from '../i18n';
+import { LANG_LABELS, useLocale, useT } from '../i18n';
 
 interface Props {
   open: boolean;
@@ -44,6 +45,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
   const [tab, setTab] = useState<Tab>('apparence');
   const [saving, setSaving] = useState(false);
   const t = useT();
+  const locale = useLocale();
 
   if (!open || !settings) return null;
 
@@ -205,7 +207,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
             {tab === 'terminal' && (
               <>
                 <div className="field">
-                  <label className="field-label">Shell par défaut</label>
+                  <label className="field-label">{t('fieldShell')}</label>
                   <select
                     className="select"
                     value={settings.defaultShell}
@@ -217,13 +219,13 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                       </option>
                     ))}
                   </select>
-                  <div className="hint">
-                    Utilisé pour les nouveaux panes shell. Les sessions agent gardent leur commande.
-                  </div>
+                  <div className="hint">{t('fieldShellHint')}</div>
                 </div>
                 <div className="field">
                   <label className="field-label">
-                    Scrollback ({settings.scrollback.toLocaleString('fr-FR')} lignes)
+                    {t('fieldScrollback')} (
+                    {new Intl.NumberFormat(locale).format(settings.scrollback)}{' '}
+                    {t('scrollbackUnit')})
                   </label>
                   <input
                     type="range"
@@ -240,7 +242,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     checked={settings.copyOnSelection}
                     onChange={(e) => void apply({ copyOnSelection: e.target.checked })}
                   />
-                  Copier la sélection automatiquement
+                  {t('fieldCopyOnSelect')}
                 </label>
                 <label className="checkbox-row">
                   <input
@@ -248,7 +250,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     checked={settings.pasteOnRightClick}
                     onChange={(e) => void apply({ pasteOnRightClick: e.target.checked })}
                   />
-                  Coller au clic-droit
+                  {t('fieldPasteRightClick')}
                 </label>
                 <label className="checkbox-row">
                   <input
@@ -256,9 +258,9 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     checked={settings.webglRenderer}
                     onChange={(e) => void apply({ webglRenderer: e.target.checked })}
                   />
-                  Renderer WebGL (perf++)
+                  {t('fieldWebgl')}
                   <span className="hint" style={{ marginLeft: 8 }}>
-                    redémarre l'app pour appliquer
+                    {t('fieldWebglHint')}
                   </span>
                 </label>
               </>
@@ -272,15 +274,79 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     checked={settings.notificationsEnabled}
                     onChange={(e) => void apply({ notificationsEnabled: e.target.checked })}
                   />
-                  Notifications système Windows
+                  {t('fieldNotifs')}
                 </label>
                 <div className="hint" style={{ marginTop: -6, marginBottom: 12 }}>
-                  Reçois une notif push (avec icône vMux) quand un agent demande une action ou
-                  qu'un événement (build, server, tests) est détecté en arrière-plan.
+                  {t('fieldNotifsHint')}
                 </div>
 
-                <div className="dialog-section-title">
-                  <Globe size={12} /> Preview localhost
+                <div className="field" style={{ marginTop: 8 }}>
+                  <label className="field-label">{t('fieldNotifSound')}</label>
+                  <select
+                    className="select"
+                    value={settings.notificationSound}
+                    onChange={(e) =>
+                      void apply({
+                        notificationSound: e.target.value as AppSettings['notificationSound']
+                      })
+                    }
+                    disabled={!settings.notificationsEnabled}
+                  >
+                    <option value="default">{t('notifSoundDefault')}</option>
+                    <option value="silent">{t('notifSoundSilent')}</option>
+                    <option value="custom">{t('notifSoundCustom')}</option>
+                  </select>
+                  <div className="hint">{t('fieldNotifSoundHint')}</div>
+                  {settings.notificationSound === 'custom' && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                        marginTop: 6,
+                        flexWrap: 'wrap'
+                      }}
+                    >
+                      <button
+                        className="btn"
+                        onClick={async () => {
+                          const p = await window.cmux.dialog.pickSoundFile();
+                          if (p) await apply({ notificationSoundPath: p });
+                        }}
+                      >
+                        <Music size={11} /> {t('notifSoundPick')}
+                      </button>
+                      {settings.notificationSoundPath && (
+                        <>
+                          <code
+                            style={{
+                              fontSize: 11,
+                              color: 'var(--text-muted)',
+                              flex: 1,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}
+                            title={settings.notificationSoundPath}
+                          >
+                            {t('notifSoundCurrent')} {settings.notificationSoundPath}
+                          </code>
+                          <button
+                            className="btn ghost"
+                            onClick={() =>
+                              void apply({ notificationSoundPath: undefined })
+                            }
+                          >
+                            {t('notifSoundClear')}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="dialog-section-title" style={{ marginTop: 16 }}>
+                  <Globe size={12} /> {t('sectionPreviewLocalhost')}
                 </div>
                 <label className="checkbox-row">
                   <input
@@ -288,7 +354,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     checked={settings.previewToastEnabled}
                     onChange={(e) => void apply({ previewToastEnabled: e.target.checked })}
                   />
-                  Afficher un toast quand une URL localhost est détectée
+                  {t('fieldPreviewToast')}
                 </label>
                 <label className="checkbox-row">
                   <input
@@ -296,11 +362,11 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                     checked={settings.previewAutoOpen}
                     onChange={(e) => void apply({ previewAutoOpen: e.target.checked })}
                   />
-                  Ouvrir le preview embarqué automatiquement
+                  {t('fieldPreviewAutoOpen')}
                 </label>
                 <div className="field" style={{ marginTop: 8 }}>
                   <label className="field-label">
-                    Taille du split preview ({settings.previewDefaultSplit}%)
+                    {t('fieldPreviewSplit')} ({settings.previewDefaultSplit}%)
                   </label>
                   <input
                     type="range"
@@ -312,9 +378,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                       void apply({ previewDefaultSplit: Number(e.target.value) })
                     }
                   />
-                  <div className="hint">
-                    Pourcentage que prend le terminal vs le preview quand on ouvre un preview.
-                  </div>
+                  <div className="hint">{t('fieldPreviewSplitHint')}</div>
                 </div>
               </>
             )}
@@ -355,7 +419,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                               a.installUrl && window.cmux.dialog.openExternal(a.installUrl)
                             }
                           >
-                            non installé{' '}
+                            {t('agentNotInstalled')}{' '}
                             <ExternalLink size={9} style={{ verticalAlign: '-1px' }} />
                           </a>
                         ) : null}
@@ -364,7 +428,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                         <input
                           className="input"
                           style={{ flex: '0 0 30%' }}
-                          placeholder="commande"
+                          placeholder={t('agentCommandPlaceholder')}
                           value={cmd}
                           onChange={(e) =>
                             void applyAgentOverride(a.id, { command: e.target.value })
@@ -372,7 +436,7 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
                         />
                         <input
                           className="input"
-                          placeholder="arguments séparés par espace"
+                          placeholder={t('agentArgsPlaceholder')}
                           value={argsStr}
                           onChange={(e) =>
                             void applyAgentOverride(a.id, {
@@ -392,29 +456,38 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
             {tab === 'avance' && (
               <>
                 <div className="field">
-                  <label className="field-label">Diagnostic</label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoLaunch}
+                      onChange={(e) => void apply({ autoLaunch: e.target.checked })}
+                    />
+                    {t('fieldAutoLaunch')}
+                  </label>
+                  <div className="hint">{t('fieldAutoLaunchHint')}</div>
+                </div>
+
+                <div className="field">
+                  <label className="field-label">{t('fieldDiagnostic')}</label>
                   <button
                     className="btn"
                     onClick={async () => {
                       await window.cmux.diagnostic.export();
                     }}
                   >
-                    Exporter le diagnostic (.json)
+                    {t('diagnosticBtn')}
                   </button>
-                  <div className="hint">
-                    Génère un rapport (versions, agents, sessions, derniers logs) à fournir
-                    en cas de bug. Les overrides agents sont anonymisés.
-                  </div>
+                  <div className="hint">{t('diagnosticHint')}</div>
                 </div>
                 <div className="field">
-                  <label className="field-label">Source</label>
+                  <label className="field-label">{t('fieldSource')}</label>
                   <button
                     className="btn"
                     onClick={() =>
                       window.cmux.dialog.openExternal('https://github.com/vk1356/vmux')
                     }
                   >
-                    Ouvrir le repo GitHub <ExternalLink size={11} />
+                    {t('sourceBtn')} <ExternalLink size={11} />
                   </button>
                 </div>
               </>

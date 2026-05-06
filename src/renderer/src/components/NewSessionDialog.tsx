@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react';
 import { FolderOpen, X, GitBranch, MessageSquare, AlertCircle, ExternalLink } from 'lucide-react';
 import type { AgentPreset, GitRepoInfo } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
+import { useT } from '../i18n';
 
 interface Props {
   open: boolean;
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
+  const t = useT();
   const { agents, agentAvailability, upsertSession } = useSessionStore();
   const [agentId, setAgentId] = useState<string>('claude-code');
   const [name, setName] = useState('');
@@ -68,11 +70,11 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
   const submit = async (): Promise<void> => {
     setError(null);
     if (!cwd) {
-      setError('Choisis un dossier de travail.');
+      setError(t('newSessionCwd'));
       return;
     }
     if (useWorktree && repoInfo?.isRepo && !branch.trim()) {
-      setError('Indique un nom de branche pour le nouveau worktree.');
+      setError(t('newSessionBranch'));
       return;
     }
 
@@ -101,7 +103,7 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
       upsertSession(r.data);
       onClose();
     } catch (err) {
-      setError((err as Error).message || 'Échec de création de la session.');
+      setError((err as Error).message || t('newSessionFailedToCreate'));
     } finally {
       setSubmitting(false);
     }
@@ -117,15 +119,15 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
     <div className="dialog-backdrop" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-header">
-          <div className="dialog-title">Nouvelle session</div>
-          <button className="btn-icon" onClick={onClose} aria-label="Fermer">
+          <div className="dialog-title">{t('newSessionTitle')}</div>
+          <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
             <X size={14} />
           </button>
         </div>
 
         <div className="dialog-body">
           <div className="field">
-            <label className="field-label">Agent</label>
+            <label className="field-label">{t('newSessionAgent')}</label>
             <div className="agent-grid">
               {agents.map((a) => {
                 const av = agentAvailability[a.id];
@@ -146,8 +148,11 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
                       />
                       <span className="agent-card-name">{a.label}</span>
                       {missing && (
-                        <span className="agent-card-badge" title="Non détecté dans le PATH">
-                          non installé
+                        <span
+                          className="agent-card-badge"
+                          title={t('newSessionAgentNotDetectedTip')}
+                        >
+                          {t('agentNotInstalled')}
                         </span>
                       )}
                     </div>
@@ -159,7 +164,7 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
             {selectedAvailability && !selectedAvailability.found && agentId !== 'shell' && (
               <div className="hint warn">
                 <AlertCircle size={11} style={{ verticalAlign: '-1px' }} />{' '}
-                <code>{selectedAgent?.command}</code> n'est pas dans le PATH.
+                <code>{selectedAgent?.command}</code> {t('newSessionAgentNotInstalled')}
                 {selectedAgent?.installUrl && (
                   <>
                     {' '}
@@ -169,7 +174,7 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
                         window.cmux.dialog.openExternal(selectedAgent.installUrl)
                       }
                     >
-                      Voir l'installation <ExternalLink size={9} style={{ verticalAlign: '-1px' }} />
+                      <ExternalLink size={9} style={{ verticalAlign: '-1px' }} />
                     </a>
                   </>
                 )}
@@ -178,17 +183,17 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
           </div>
 
           <div className="field">
-            <label className="field-label">Dossier de travail</label>
+            <label className="field-label">{t('newSessionCwd')}</label>
             <div className="input-group">
               <input
                 className="input"
-                placeholder="C:\chemin\vers\repo"
+                placeholder="C:\path\to\repo"
                 value={cwd}
                 onChange={(e) => setCwd(e.target.value)}
               />
               <button className="btn" onClick={pickFolder}>
                 <FolderOpen size={14} />
-                Parcourir
+                {t('newSessionCwdPick')}
               </button>
             </div>
             {repoInfo && (
@@ -196,12 +201,12 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
                 {repoInfo.isRepo ? (
                   <>
                     <GitBranch size={11} style={{ verticalAlign: '-2px', marginRight: 4 }} />
-                    Dépôt Git détecté · branche actuelle&nbsp;:{' '}
+                    {t('newSessionRepoDetected')}{' '}
                     <strong>{repoInfo.currentBranch ?? 'detached'}</strong>
-                    {repoInfo.hasUncommitted && ' · changements non commités'}
+                    {repoInfo.hasUncommitted && ` · ${t('newSessionUncommitted')}`}
                   </>
                 ) : (
-                  'Pas un dépôt Git — la session démarrera dans ce dossier sans worktree.'
+                  t('newSessionNotARepo')
                 )}
               </div>
             )}
@@ -215,13 +220,13 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
                   checked={useWorktree}
                   onChange={(e) => setUseWorktree(e.target.checked)}
                 />
-                Créer un nouveau git worktree pour isoler cet agent
+                {t('newSessionCreateWorktreeFull')}
               </label>
 
               {useWorktree && (
                 <>
                   <div className="field">
-                    <label className="field-label">Nouvelle branche</label>
+                    <label className="field-label">{t('newSessionBranch')}</label>
                     <input
                       className="input"
                       placeholder="agent/claude-feature-x"
@@ -230,7 +235,7 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
                     />
                   </div>
                   <div className="field">
-                    <label className="field-label">Branche de base</label>
+                    <label className="field-label">{t('newSessionBaseBranch')}</label>
                     <select
                       className="select"
                       value={base}
@@ -249,10 +254,10 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
           )}
 
           <div className="field">
-            <label className="field-label">Nom de la session (optionnel)</label>
+            <label className="field-label">{t('newSessionName')}</label>
             <input
               className="input"
-              placeholder="Ex: refactor api"
+              placeholder="refactor api"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
@@ -260,15 +265,16 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
 
           <div className="field">
             <label className="field-label">
-              <MessageSquare size={11} style={{ verticalAlign: '-1px' }} /> Prompt initial (optionnel)
+              <MessageSquare size={11} style={{ verticalAlign: '-1px' }} />{' '}
+              {t('newSessionInitialPrompt')}
             </label>
             <input
               className="input"
-              placeholder="Ce que l'agent doit faire en premier"
+              placeholder={t('newSessionInitialPromptPlaceholder')}
               value={initialInput}
               onChange={(e) => setInitialInput(e.target.value)}
             />
-            <div className="hint">Envoyé en stdin juste après le démarrage de l'agent.</div>
+            <div className="hint">{t('newSessionInitialPromptHint')}</div>
           </div>
 
           {error && <div className="error-banner">{error}</div>}
@@ -276,10 +282,10 @@ export function NewSessionDialog({ open, onClose }: Props): JSX.Element | null {
 
         <div className="dialog-footer">
           <button className="btn ghost" onClick={onClose} disabled={submitting}>
-            Annuler
+            {t('newSessionCancel')}
           </button>
           <button className="btn primary" onClick={submit} disabled={submitting || !cwd}>
-            {submitting ? 'Création…' : 'Lancer la session'}
+            {submitting ? t('newSessionCreating') : t('newSessionLaunch')}
           </button>
         </div>
       </div>

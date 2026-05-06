@@ -375,6 +375,7 @@ interface SearchBarProps {
 }
 
 function TerminalSearchBar({ searchAddon, onClose }: SearchBarProps): JSX.Element {
+  const t = useT();
   const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -423,15 +424,15 @@ function TerminalSearchBar({ searchAddon, onClose }: SearchBarProps): JSX.Elemen
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={onKeyDown}
-        placeholder="Rechercher…"
+        placeholder={t('palettePlaceholder')}
       />
-      <button className="btn-icon" onClick={findPrev} title="Précédent (Shift+Entrée)">
+      <button className="btn-icon" onClick={findPrev} title={t('searchPrev')}>
         <ChevronUp size={14} />
       </button>
-      <button className="btn-icon" onClick={findNext} title="Suivant (Entrée)">
+      <button className="btn-icon" onClick={findNext} title={t('searchNext')}>
         <ChevronDown size={14} />
       </button>
-      <button className="btn-icon" onClick={onClose} title="Fermer (Échap)">
+      <button className="btn-icon" onClick={onClose} title={t('searchClose')}>
         <XIcon size={14} />
       </button>
     </div>

@@ -174,6 +174,12 @@ export interface AppSettings {
   previewAutoOpen: boolean;
   /** Notif système quand fenêtre en arrière-plan + event détecté. */
   notificationsEnabled: boolean;
+  /** Son joué pour les notifs Windows. `custom` joue le fichier `notificationSoundPath`. */
+  notificationSound: 'default' | 'silent' | 'custom';
+  /** Chemin absolu vers un .wav/.mp3 quand `notificationSound === 'custom'`. */
+  notificationSoundPath?: string;
+  /** Lance vMux automatiquement au démarrage de Windows (en --hidden). */
+  autoLaunch: boolean;
   /** Pourcentage du split quand on ouvre un preview (terminal | preview). */
   previewDefaultSplit: number;
   agentOverrides: Partial<Record<AgentId, Partial<Pick<AgentPreset, 'command' | 'args' | 'env'>>>>;
@@ -306,7 +312,13 @@ export const IPC = {
   updateInstall: 'update:install',
 
   // App version (read-only)
-  appVersion: 'app:version'
+  appVersion: 'app:version',
+
+  // Notif sound (main → renderer pour custom .wav playback)
+  notifPlaySound: 'notif:play-sound',
+
+  // Sound file picker (renderer → main)
+  dialogPickSoundFile: 'dialog:pick-sound-file'
 } as const;
 
 // ============================================================

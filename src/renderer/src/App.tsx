@@ -32,6 +32,7 @@ const ConfirmDialog = lazy(() =>
   import('./components/ConfirmDialog').then((m) => ({ default: m.ConfirmDialog }))
 );
 import { useSessionStore } from './store/sessions';
+import { translate } from './i18n';
 import type { PaneAttention } from '@shared/types';
 import { neighborInDirection } from '@shared/tree';
 import { clamp, whenIdle } from '@shared/utils';
@@ -111,9 +112,10 @@ export function App(): JSX.Element {
 
       // Sinon : toast (l'utilisateur peut décider d'ouvrir manuellement).
       if (!state.settings?.previewToastEnabled) return;
+      const lang = state.settings?.language ?? 'en';
       addToast({
         kind: 'url',
-        title: 'URL localhost détectée',
+        title: translate(lang, 'urlDetectedLabel'),
         body: latest,
         url: latest,
         paneId,
@@ -129,12 +131,14 @@ export function App(): JSX.Element {
       const session = state.sessions.find((s) => event.paneId in s.panes);
       if (!session) return;
       recordEvent(session.id, event);
+      const lang = useSessionStore.getState().settings?.language ?? 'en';
       addToast({
         kind: 'event',
-        title: eventTitleFor(event.kind),
+        title: eventTitleFor(event.kind, lang),
         body: event.message,
         paneId: event.paneId,
-        sessionId: session.id
+        sessionId: session.id,
+        eventKind: event.kind
       });
     });
     // Map événements détectés → escalade attention :
@@ -145,6 +149,22 @@ export function App(): JSX.Element {
         event.kind === 'build-error' ? 'needs-input' : 'alert';
       bumpAttention(event.paneId, level);
     });
+    // Custom notification sound — main demande au renderer de jouer un .wav/.mp3.
+    // Le main passe le path absolu ; on le sert via file:// (ok car renderer
+    // a webSecurity et le preload contient le filtre, mais Audio() supporte
+    // les paths file://). Failover silencieux si le fichier est invalide.
+    const offNotifSound = window.cmux.notif.onPlaySound((path) => {
+      try {
+        const url = path.startsWith('file:') ? path : `file:///${path.replace(/\\/g, '/')}`;
+        const audio = new Audio(url);
+        audio.volume = 0.7;
+        void audio.play().catch(() => {
+          /* ignore — fichier introuvable / format non supporté */
+        });
+      } catch {
+        /* ignore */
+      }
+    });
     return () => {
       offSession();
       offStatus();
@@ -153,6 +173,7 @@ export function App(): JSX.Element {
       offEvents();
       offAttention();
       offEvents2();
+      offNotifSound();
     };
   }, [
     setSessions,

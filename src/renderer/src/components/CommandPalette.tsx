@@ -62,9 +62,9 @@ export function CommandPalette({
 
     out.push({
       id: 'action:new-session',
-      label: 'Nouvelle session',
+      label: t('cmdNewSession'),
       hint: 'Ctrl+N',
-      group: 'Actions',
+      group: t('cmdGroupOther'),
       icon: <Plus size={14} />,
       run: () => {
         onClose();
@@ -73,9 +73,9 @@ export function CommandPalette({
     });
     out.push({
       id: 'action:settings',
-      label: 'Paramètres',
+      label: t('cmdSettings'),
       hint: 'Ctrl+,',
-      group: 'Actions',
+      group: t('cmdGroupOther'),
       icon: <SettingsIcon size={14} />,
       run: () => {
         onClose();
@@ -86,9 +86,9 @@ export function CommandPalette({
     if (active && active.activePaneId) {
       out.push({
         id: 'action:split-horizontal',
-        label: 'Ajouter un pane (auto-tile)',
+        label: t('shortcutsItemAddPane'),
         hint: 'Ctrl+Shift+D',
-        group: 'Layout',
+        group: t('cmdGroupPanes'),
         icon: <SquareSplitHorizontal size={14} />,
         run: async () => {
           onClose();
@@ -102,9 +102,9 @@ export function CommandPalette({
       });
       out.push({
         id: 'action:split-vertical',
-        label: 'Split vertical',
+        label: t('cmdSplitVertical'),
         hint: 'Ctrl+Shift+E',
-        group: 'Layout',
+        group: t('cmdGroupPanes'),
         icon: <SquareSplitVertical size={14} />,
         run: async () => {
           onClose();
@@ -117,9 +117,9 @@ export function CommandPalette({
       });
       out.push({
         id: 'action:tile',
-        label: 'Re-tiler la session',
+        label: t('cmdRetile'),
         hint: 'Ctrl+G',
-        group: 'Layout',
+        group: t('cmdGroupPanes'),
         icon: <Layers size={14} />,
         run: async () => {
           onClose();
@@ -128,9 +128,9 @@ export function CommandPalette({
       });
       out.push({
         id: 'action:close-pane',
-        label: 'Fermer le pane actif',
+        label: t('shortcutsItemClosePane'),
         hint: 'Ctrl+Shift+W',
-        group: 'Layout',
+        group: t('cmdGroupPanes'),
         icon: <X size={14} />,
         run: async () => {
           onClose();
@@ -146,7 +146,7 @@ export function CommandPalette({
         id: `session:${s.id}`,
         label: s.name,
         hint: s.branch ?? '',
-        group: 'Sessions',
+        group: t('cmdGroupSessions'),
         searchExtras: `${s.cwd} ${s.branch ?? ''}`,
         icon: <Terminal size={14} />,
         run: () => {
@@ -172,7 +172,7 @@ export function CommandPalette({
           id: `pane:${id}`,
           label: `Focus: ${label}`,
           hint: 'Alt+arrows',
-          group: 'Panes',
+          group: t('cmdGroupPanes'),
           icon: <Terminal size={14} />,
           run: async () => {
             await window.cmux.panes.focus(active.id, id);
@@ -195,8 +195,8 @@ export function CommandPalette({
         out.push({
           id: `url:${i++}`,
           label: url,
-          hint: previewPaneId ? 'Charger dans le preview' : 'Ouvrir le preview',
-          group: 'URLs détectées',
+          hint: previewPaneId ? t('toastOpenPreview') : t('toastOpenPreview'),
+          group: t('cmdGroupUrls'),
           icon: <Globe size={14} style={{ color: 'var(--info)' }} />,
           run: async () => {
             onClose();
@@ -217,9 +217,9 @@ export function CommandPalette({
     for (const a of agents) {
       out.push({
         id: `agent:${a.id}`,
-        label: `Nouvelle session — ${a.label}`,
+        label: t('cmdLaunchAgent', { agent: a.label }),
         hint: a.command,
-        group: 'Agents',
+        group: t('cmdGroupAgents'),
         searchExtras: a.description,
         icon: (
           <span
@@ -243,9 +243,9 @@ export function CommandPalette({
     if (active) {
       out.push({
         id: 'action:remove-session',
-        label: 'Fermer la session active',
+        label: t('shortcutsItemCloseSession'),
         hint: 'Ctrl+W',
-        group: 'Actions',
+        group: t('cmdGroupOther'),
         icon: <X size={14} />,
         run: async () => {
           onClose();
@@ -255,9 +255,9 @@ export function CommandPalette({
       });
       out.push({
         id: 'action:restart-all',
-        label: 'Redémarrer tous les panes inactifs',
+        label: t('cmdRestartIdleAll'),
         hint: '',
-        group: 'Actions',
+        group: t('cmdGroupOther'),
         icon: <RotateCw size={14} />,
         run: async () => {
           onClose();
@@ -277,7 +277,8 @@ export function CommandPalette({
     removeSession,
     onClose,
     onNewSession,
-    onOpenSettings
+    onOpenSettings,
+    t
   ]);
 
   // Fuzzy filtering

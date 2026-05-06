@@ -2,23 +2,24 @@ import { useEffect, useMemo, useState, type JSX } from 'react';
 import { Bell, X, Trash2, CheckCircle2, XCircle, Rocket, FlaskConical, Sparkles } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import type { DetectedEventKind } from '@shared/types';
-import { useT } from '../i18n';
+import { useLocale, useT, type TKey } from '../i18n';
 
 interface Props {
   open: boolean;
   onClose: () => void;
 }
 
-const KIND_LABELS: Record<DetectedEventKind, string> = {
-  'server-ready': 'Serveur prêt',
-  'build-success': 'Build réussi',
-  'build-error': 'Build erreur',
-  'test-results': 'Tests',
-  'agent-done': 'Agent terminé'
+const KIND_LABEL_KEY: Record<DetectedEventKind, TKey> = {
+  'server-ready': 'notifKindServerReady',
+  'build-success': 'notifKindBuildSuccess',
+  'build-error': 'notifKindBuildError',
+  'test-results': 'notifKindTests',
+  'agent-done': 'notifKindAgentDone'
 };
 
 export function NotificationCenter({ open, onClose }: Props): JSX.Element | null {
   const t = useT();
+  const locale = useLocale();
   const eventHistory = useSessionStore((s) => s.eventHistory);
   const markEventsRead = useSessionStore((s) => s.markEventsRead);
   const clearEventHistory = useSessionStore((s) => s.clearEventHistory);
@@ -54,24 +55,28 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
         </div>
 
         <div className="notif-filters">
-          <FilterChip label="Tous" active={filter === 'all'} onClick={() => setFilter('all')} />
           <FilterChip
-            label="🚀 Ready"
+            label={t('notifFilterAll')}
+            active={filter === 'all'}
+            onClick={() => setFilter('all')}
+          />
+          <FilterChip
+            label={t('notifFilterReady')}
             active={filter === 'server-ready'}
             onClick={() => setFilter('server-ready')}
           />
           <FilterChip
-            label="✓ Build"
+            label={t('notifFilterBuild')}
             active={filter === 'build-success'}
             onClick={() => setFilter('build-success')}
           />
           <FilterChip
-            label="✗ Erreurs"
+            label={t('notifFilterErrors')}
             active={filter === 'build-error'}
             onClick={() => setFilter('build-error')}
           />
           <FilterChip
-            label="🧪 Tests"
+            label={t('notifFilterTests')}
             active={filter === 'test-results'}
             onClick={() => setFilter('test-results')}
           />
@@ -90,9 +95,7 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
             <div className="notif-empty">
               <Sparkles size={20} style={{ opacity: 0.4 }} />
               <div>{t('notificationsEmpty')}</div>
-              <div style={{ fontSize: 11, opacity: 0.6 }}>
-                Detected events (server ready, build, tests…) will appear here.
-              </div>
+              <div style={{ fontSize: 11, opacity: 0.6 }}>{t('notifEmptyHint')}</div>
             </div>
           ) : (
             filtered.map((e, i) => (
@@ -107,9 +110,9 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
                 <span className="notif-icon">{iconForKind(e.event.kind)}</span>
                 <div className="notif-body">
                   <div className="notif-row1">
-                    <span className="notif-kind">{KIND_LABELS[e.event.kind]}</span>
+                    <span className="notif-kind">{t(KIND_LABEL_KEY[e.event.kind])}</span>
                     <span className="notif-session">{e.sessionName}</span>
-                    <span className="notif-time">{formatTime(e.event.timestamp)}</span>
+                    <span className="notif-time">{formatTime(e.event.timestamp, locale)}</span>
                   </div>
                   <div className="notif-msg">{e.event.message}</div>
                 </div>
@@ -152,12 +155,17 @@ function iconForKind(kind: DetectedEventKind): JSX.Element {
   }
 }
 
-function formatTime(ts: number): string {
+/** Format relatif language-aware via Intl.RelativeTimeFormat. */
+function formatTime(ts: number, locale: string): string {
   const d = new Date(ts);
-  const now = Date.now();
-  const diff = (now - ts) / 1000;
-  if (diff < 60) return `il y a ${Math.floor(diff)}s`;
-  if (diff < 3600) return `il y a ${Math.floor(diff / 60)}m`;
-  if (diff < 86400) return `il y a ${Math.floor(diff / 3600)}h`;
-  return d.toLocaleDateString();
+  const diffSec = (Date.now() - ts) / 1000;
+  try {
+    const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+    if (diffSec < 60) return rtf.format(-Math.floor(diffSec), 'second');
+    if (diffSec < 3600) return rtf.format(-Math.floor(diffSec / 60), 'minute');
+    if (diffSec < 86400) return rtf.format(-Math.floor(diffSec / 3600), 'hour');
+  } catch {
+    /* fallback below */
+  }
+  return d.toLocaleDateString(locale);
 }

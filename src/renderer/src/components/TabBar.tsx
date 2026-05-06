@@ -3,6 +3,7 @@ import { Globe, RotateCw, X, Edit3, Layers, Keyboard } from 'lucide-react';
 import type { Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { useSessionStore } from '../store/sessions';
+import { useT } from '../i18n';
 
 interface Props {
   session: Session;
@@ -16,6 +17,7 @@ interface MenuState {
 }
 
 export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
+  const t = useT();
   const agents = useSessionStore((s) => s.agents);
   const upsertSession = useSessionStore((s) => s.upsertSession);
   const paneActivity = useSessionStore((s) => s.paneActivity);
@@ -152,18 +154,18 @@ export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
                 if (p) renamePane(menu.paneId, p.label || '');
               }}
             >
-              <Edit3 size={12} /> Renommer
+              <Edit3 size={12} /> {t('actionRenameHint').split('—')[0].trim() || t('actionRenameHint')}
             </button>
             {session.panes[menu.paneId]?.kind === 'terminal' && (
               <button className="context-menu-item" onClick={() => void restartPane(menu.paneId)}>
-                <RotateCw size={12} /> Redémarrer
+                <RotateCw size={12} /> {t('paneRestart')}
               </button>
             )}
             <button
               className="context-menu-item danger"
               onClick={() => void closePane(menu.paneId)}
             >
-              <X size={12} /> Fermer le pane
+              <X size={12} /> {t('shortcutsItemClosePane')}
             </button>
             {paneIds.length > 1 && (
               <button
@@ -173,7 +175,7 @@ export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
                   void window.cmux.panes.relayout(session.id, 'tiled');
                 }}
               >
-                <Layers size={12} /> Re-tiler la session
+                <Layers size={12} /> {t('shortcutsItemRetile')}
               </button>
             )}
           </div>

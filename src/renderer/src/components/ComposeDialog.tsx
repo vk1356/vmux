@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { Send, X, AlignLeft } from 'lucide-react';
 import type { Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
+import { useT } from '../i18n';
 
 interface Props {
   open: boolean;
@@ -12,6 +13,7 @@ interface Props {
 /** Compose mode : un textarea pleine page pour écrire/éditer un message
  *  multi-ligne. À l'envoi : on écrit dans le PTY actif avec \r entre lignes. */
 export function ComposeDialog({ open, session, onClose }: Props): JSX.Element | null {
+  const t = useT();
   const [text, setText] = useState('');
   const [target, setTarget] = useState<string>('');
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -62,22 +64,23 @@ export function ComposeDialog({ open, session, onClose }: Props): JSX.Element | 
       <div className="compose" onClick={(e) => e.stopPropagation()}>
         <div className="compose-header">
           <div className="compose-title">
-            <AlignLeft size={14} /> Compose — message multi-ligne
+            <AlignLeft size={14} /> Compose
           </div>
-          <button className="btn-icon" onClick={onClose} aria-label="Fermer">
+          <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
             <X size={14} />
           </button>
         </div>
         <div className="compose-target">
-          <span className="field-label">Envoyer à</span>
+          <span className="field-label">{t('composeSendTo')}</span>
           <select
             className="select"
             value={target}
             onChange={(e) => setTarget(e.target.value)}
           >
-            {targets.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label || t.agentId} {t.id === session.activePaneId ? '(actif)' : ''}
+            {targets.map((tp) => (
+              <option key={tp.id} value={tp.id}>
+                {tp.label || tp.agentId}{' '}
+                {tp.id === session.activePaneId ? `(${t('statusActive')})` : ''}
               </option>
             ))}
           </select>
@@ -88,15 +91,16 @@ export function ComposeDialog({ open, session, onClose }: Props): JSX.Element | 
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKey}
-          placeholder="Tape ton message — édite, supprime, copie/colle librement.&#10;Ctrl+Entrée pour envoyer."
+          placeholder={t('composePlaceholder')}
           spellCheck={false}
         />
         <div className="compose-footer">
           <span className="hint">
-            <kbd>Ctrl+Entrée</kbd> envoyer · <kbd>Esc</kbd> annuler
+            <kbd>Ctrl+Enter</kbd> {t('composeSendHint')} · <kbd>Esc</kbd>{' '}
+            {t('composeCancelHint')}
           </span>
           <button className="btn primary" onClick={send} disabled={!text.trim() || !target}>
-            <Send size={13} /> Envoyer
+            <Send size={13} /> {t('composeSendHint')}
           </button>
         </div>
       </div>

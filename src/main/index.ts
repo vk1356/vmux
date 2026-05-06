@@ -11,6 +11,7 @@ import { ptyManager } from './pty-manager';
 import { IPC, type WindowState } from '@shared/types';
 import {
   getGracefulShutdown,
+  getSettings,
   getWindowState,
   saveWindowState,
   setGracefulShutdown
@@ -59,7 +60,7 @@ if (initialCliCommand.kind === 'help') {
 /** Exécute une commande CLI une fois l'app prête. Crée une session via
  *  ptyManager si kind='new'. Idempotent : focus la window dans tous les cas. */
 async function executeCliCommand(cmd: CliCommand): Promise<void> {
-  if (cmd.kind === 'none' || cmd.kind === 'help') return;
+  if (cmd.kind === 'none' || cmd.kind === 'help' || cmd.kind === 'hidden') return;
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -130,7 +131,11 @@ function createWindow(): BrowserWindow {
 
   win.on('ready-to-show', () => {
     if (saved.isMaximized) win.maximize();
-    win.show();
+    // Si vMux est lancé avec --hidden (auto-launch Windows), on ne montre pas
+    // la window — l'user peut la rouvrir via le tray ou la barre des tâches.
+    if (initialCliCommand.kind !== 'hidden') {
+      win.show();
+    }
   });
   win.on('maximize', () => win.webContents.send(IPC.windowMaximizedChanged, true));
   win.on('unmaximize', () => win.webContents.send(IPC.windowMaximizedChanged, false));
@@ -164,8 +169,77 @@ function createWindow(): BrowserWindow {
   return win;
 }
 
-app.whenReady().then(() => {
+/**
+ * En dev, Windows ne livre pas les toasts natifs si l'AppUserModel.ID n'est
+ * pas associé à un raccourci dans le Start Menu. En prod, electron-builder
+ * pose automatiquement le bon AUMID sur le `.lnk` créé par NSIS — donc rien
+ * à faire. Pour le dev mode, on génère un raccourci `vMux (Dev).lnk` une
+ * seule fois via PowerShell. Idempotent : si le fichier existe déjà, on skip.
+ *
+ * Échec silencieux : si PowerShell est bloqué (ExecPolicy, AV…), on continue
+ * — les notifs ne marcheront pas en dev mais l'app fonctionne quand même.
+ */
+async function ensureDevShortcutForNotifications(aumid: string): Promise<void> {
+  if (process.platform !== 'win32') return;
+  if (!is.dev) return;
+  const startMenu = path.join(
+    app.getPath('appData'),
+    'Microsoft',
+    'Windows',
+    'Start Menu',
+    'Programs'
+  );
+  const shortcutPath = path.join(startMenu, 'vMux (Dev).lnk');
+  try {
+    await fs.promises.mkdir(startMenu, { recursive: true });
+    if (fs.existsSync(shortcutPath)) return;
+    // Script PowerShell : crée un .lnk avec WScript.Shell + définit la
+    // propriété System.AppUserModel.ID (PKEY 9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3).
+    // C'est le pattern documenté par Microsoft pour associer l'AUMID au shortcut.
+    const exe = process.execPath;
+    const script = [
+      "$ErrorActionPreference = 'Stop'",
+      `$ws = New-Object -ComObject WScript.Shell`,
+      `$shortcut = $ws.CreateShortcut('${shortcutPath.replace(/'/g, "''")}')`,
+      `$shortcut.TargetPath = '${exe.replace(/'/g, "''")}'`,
+      `$shortcut.IconLocation = '${exe.replace(/'/g, "''")}'`,
+      `$shortcut.Save()`
+    ].join('; ');
+    await new Promise<void>((resolve) => {
+      const child = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+        { windowsHide: true }
+      );
+      child.on('exit', () => resolve());
+      child.on('error', () => resolve());
+    });
+    log.info(`[notif] dev shortcut prepared at ${shortcutPath} (aumid=${aumid})`);
+  } catch (err) {
+    log.warn('[notif] dev shortcut creation failed (notifs may not appear in dev)', err);
+  }
+}
+
+/** Synchronise `app.setLoginItemSettings` avec la valeur du setting autoLaunch.
+ *  En dev mode on ne touche à rien (le path est electron.exe, pas vMux.exe). */
+function syncAutoLaunch(enabled: boolean): void {
+  if (process.platform !== 'win32') return;
+  if (is.dev) return;
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      path: process.execPath,
+      args: ['--hidden']
+    });
+    log.info(`[autolaunch] openAtLogin=${enabled}`);
+  } catch (err) {
+    log.warn('[autolaunch] failed to set login item', err);
+  }
+}
+
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.vmux.app');
+  await ensureDevShortcutForNotifications('com.vmux.app');
   app.on('browser-window-created', (_e, w) => {
     optimizer.watchWindowShortcuts(w);
   });
@@ -193,6 +267,15 @@ app.whenReady().then(() => {
   }
 
   registerIpc(() => mainWindow);
+
+  // Au boot, applique l'état d'auto-launch correspondant à la valeur du setting.
+  // Ainsi, si l'user re-installe ou si Windows perd l'entrée registry, on reste
+  // cohérent. Pas d'effet en dev.
+  try {
+    syncAutoLaunch(getSettings().autoLaunch);
+  } catch (err) {
+    log.warn('[autolaunch] initial sync failed', err);
+  }
 
   mainWindow = createWindow();
 

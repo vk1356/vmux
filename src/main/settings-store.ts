@@ -27,6 +27,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   previewToastEnabled: true,
   previewAutoOpen: true,
   notificationsEnabled: true,
+  notificationSound: 'default',
+  autoLaunch: false,
   previewDefaultSplit: 60,
   agentOverrides: {}
 };

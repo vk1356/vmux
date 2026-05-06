@@ -2,6 +2,8 @@ import { useEffect, type JSX } from 'react';
 import { Globe, Rocket, CheckCircle2, XCircle, FlaskConical, Sparkles, X } from 'lucide-react';
 import type { DetectedEventKind } from '@shared/types';
 import { useSessionStore, type ToastItem } from '../store/sessions';
+import { translate, useT } from '../i18n';
+import type { Lang } from '@shared/types';
 
 const TOAST_TIMEOUT = 6000;
 
@@ -24,6 +26,7 @@ interface Props {
 }
 
 function Toast({ toast, onClose }: Props): JSX.Element {
+  const t = useT();
   useEffect(() => {
     const handle = window.setTimeout(onClose, TOAST_TIMEOUT);
     return () => window.clearTimeout(handle);
@@ -45,7 +48,7 @@ function Toast({ toast, onClose }: Props): JSX.Element {
                 onClose();
               }}
             >
-              Ouvrir le preview
+              {t('toastOpenPreview')}
             </button>
             <button
               className="btn ghost"
@@ -54,12 +57,12 @@ function Toast({ toast, onClose }: Props): JSX.Element {
                 onClose();
               }}
             >
-              Dans le navigateur
+              {t('toastInBrowser')}
             </button>
           </div>
         )}
       </div>
-      <button className="btn-icon toast-close" onClick={onClose} aria-label="Fermer">
+      <button className="btn-icon toast-close" onClick={onClose} aria-label={t('toastClose')}>
         <X size={12} />
       </button>
     </div>
@@ -68,27 +71,36 @@ function Toast({ toast, onClose }: Props): JSX.Element {
 
 function iconFor(t: ToastItem): JSX.Element {
   if (t.kind === 'url') return <Globe size={16} />;
-  // Pour les events, on encode le kind dans le `body` ou via une convention.
-  // Ici on infère via le title.
-  const title = t.title.toLowerCase();
-  if (title.includes('serveur')) return <Rocket size={16} color="#22c55e" />;
-  if (title.includes('build réussi') || title.includes('terminé')) return <CheckCircle2 size={16} color="#22c55e" />;
-  if (title.includes('erreur') || title.includes('failed')) return <XCircle size={16} color="#ef4444" />;
-  if (title.includes('test')) return <FlaskConical size={16} color="#3b82f6" />;
-  return <Sparkles size={16} />;
+  // Pour les events, on utilise `eventKind` (fiable, language-agnostic) plutôt
+  // qu'inférer via le texte du titre traduit.
+  switch (t.eventKind) {
+    case 'server-ready':
+      return <Rocket size={16} color="#22c55e" />;
+    case 'build-success':
+    case 'agent-done':
+      return <CheckCircle2 size={16} color="#22c55e" />;
+    case 'build-error':
+      return <XCircle size={16} color="#ef4444" />;
+    case 'test-results':
+      return <FlaskConical size={16} color="#3b82f6" />;
+    default:
+      return <Sparkles size={16} />;
+  }
 }
 
-export function eventTitleFor(kind: DetectedEventKind): string {
+/** Renvoie le titre traduit d'un event détecté. Appelé depuis App.tsx au moment
+ *  où on push un toast — la lang est lue dans le store via translate(). */
+export function eventTitleFor(kind: DetectedEventKind, lang: Lang = 'en'): string {
   switch (kind) {
     case 'server-ready':
-      return '🚀 Serveur prêt';
+      return `🚀 ${translate(lang, 'notifKindServerReady')}`;
     case 'build-success':
-      return '✓ Build réussi';
+      return `✓ ${translate(lang, 'notifKindBuildSuccess')}`;
     case 'build-error':
-      return '✗ Build en erreur';
+      return `✗ ${translate(lang, 'notifKindBuildError')}`;
     case 'test-results':
-      return '🧪 Tests terminés';
+      return `🧪 ${translate(lang, 'notifKindTests')}`;
     case 'agent-done':
-      return '✓ Agent terminé';
+      return `✓ ${translate(lang, 'notifKindAgentDone')}`;
   }
 }
