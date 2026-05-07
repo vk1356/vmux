@@ -2,6 +2,9 @@ import { memo, useEffect, useRef, type JSX } from 'react';
 import { Cpu, MemoryStick } from 'lucide-react';
 import { useSessionStore, STATS_WINDOW } from '../store/sessions';
 
+/** Float32Array vide partagé pour les renders sans data — évite une alloc par render. */
+const EMPTY_F32 = new Float32Array(0);
+
 interface Props {
   paneId: string;
   /** Format compact (header de pane) vs étendu (status bar). */
@@ -19,8 +22,8 @@ function PaneStatsImpl({ paneId, compact = false }: Props): JSX.Element | null {
   const canvasMemRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    drawSparkline(canvasCpuRef.current, stats?.cpu ?? [], '#f97316', { min: 0, softMax: 100 });
-    drawSparkline(canvasMemRef.current, stats?.memory ?? [], '#3b82f6', {
+    drawSparkline(canvasCpuRef.current, stats?.cpu ?? EMPTY_F32, '#f97316', { min: 0, softMax: 100 });
+    drawSparkline(canvasMemRef.current, stats?.memory ?? EMPTY_F32, '#3b82f6', {
       min: 0,
       softMax: 256 * 1024 * 1024
     });
@@ -88,10 +91,12 @@ interface DrawOpts {
   softMax: number;
 }
 
-/** Dessine une sparkline + dernière valeur en point. Aucun lib externe — canvas raw. */
+/** Dessine une sparkline + dernière valeur en point. Aucun lib externe — canvas raw.
+ *  Accepte Float32Array OU number[] (le store nous passe Float32Array, mais on
+ *  reste compatible pour les call-sites externes éventuels). */
 function drawSparkline(
   canvas: HTMLCanvasElement | null,
-  values: number[],
+  values: ArrayLike<number>,
   color: string,
   opts: DrawOpts
 ): void {
@@ -111,9 +116,9 @@ function drawSparkline(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
 
-  if (values.length < 2) {
-    // Une seule valeur : un point au centre droit, rien d'autre.
-    if (values.length === 1) {
+  const len = values.length;
+  if (len < 2) {
+    if (len === 1) {
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.arc(cssW - 2, cssH / 2, 1.5, 0, Math.PI * 2);
@@ -122,26 +127,32 @@ function drawSparkline(
     return;
   }
 
-  const max = Math.max(opts.softMax, ...values);
+  // Compute max manuellement — Math.max(...values) sur un gros array spread
+  // peut throw "too many arguments" et est plus lent qu'une boucle.
+  let max = opts.softMax;
+  for (let i = 0; i < len; i++) {
+    const v = values[i];
+    if (v > max) max = v;
+  }
   const range = Math.max(1, max - opts.min);
   const stepX = cssW / (STATS_WINDOW - 1);
-  const startX = cssW - (values.length - 1) * stepX;
+  const startX = cssW - (len - 1) * stepX;
 
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.25;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.beginPath();
-  values.forEach((v, i) => {
+  for (let i = 0; i < len; i++) {
     const x = startX + i * stepX;
-    const y = cssH - ((v - opts.min) / range) * (cssH - 2) - 1;
+    const y = cssH - ((values[i] - opts.min) / range) * (cssH - 2) - 1;
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
-  });
+  }
   ctx.stroke();
 
   // Point sur la dernière valeur.
-  const lastV = values[values.length - 1];
+  const lastV = values[len - 1];
   const lastY = cssH - ((lastV - opts.min) / range) * (cssH - 2) - 1;
   ctx.fillStyle = color;
   ctx.beginPath();

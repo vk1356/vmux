@@ -12,6 +12,7 @@ import {
   ChevronUp
 } from 'lucide-react';
 import type { PreviewPane as PreviewPaneT, TerminalPane } from '@shared/types';
+import { uuid } from '@shared/utils';
 import { useSessionStore } from '../store/sessions';
 import { useT } from '../i18n';
 
@@ -172,10 +173,7 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
   // Helper qui push un log et cap la taille à MAX_LOGS (FIFO).
   const pushLog = useCallback((entry: Omit<ConsoleLog, 'id' | 'ts'>): void => {
     setLogs((cur) => {
-      const id =
-        typeof crypto !== 'undefined' && 'randomUUID' in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const id = uuid();
       const next = [...cur, { ...entry, id, ts: Date.now() }];
       if (next.length > MAX_LOGS) next.splice(0, next.length - MAX_LOGS);
       return next;

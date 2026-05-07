@@ -1,0 +1,80 @@
+import type { JSX } from 'react';
+import type { AppSettings } from '@shared/types';
+import { useLocale, useT } from '../../i18n';
+
+interface Props {
+  settings: AppSettings;
+  apply: (patch: Partial<AppSettings>) => Promise<void>;
+}
+
+const SHELL_PRESETS = [
+  { value: 'pwsh', label: 'PowerShell 7+ (pwsh)' },
+  { value: 'powershell', label: 'Windows PowerShell 5 (powershell)' },
+  { value: 'cmd', label: 'cmd.exe' },
+  { value: 'bash', label: 'Git Bash (bash)' }
+];
+
+export function SettingsTerminal({ settings, apply }: Props): JSX.Element {
+  const t = useT();
+  const locale = useLocale();
+  return (
+    <>
+      <div className="field">
+        <label className="field-label">{t('fieldShell')}</label>
+        <select
+          className="select"
+          value={settings.defaultShell}
+          onChange={(e) => void apply({ defaultShell: e.target.value })}
+        >
+          {SHELL_PRESETS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
+        <div className="hint">{t('fieldShellHint')}</div>
+      </div>
+      <div className="field">
+        <label className="field-label">
+          {t('fieldScrollback')} (
+          {new Intl.NumberFormat(locale).format(settings.scrollback)} {t('scrollbackUnit')})
+        </label>
+        <input
+          type="range"
+          min={1000}
+          max={50000}
+          step={1000}
+          value={settings.scrollback}
+          onChange={(e) => void apply({ scrollback: Number(e.target.value) })}
+        />
+      </div>
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={settings.copyOnSelection}
+          onChange={(e) => void apply({ copyOnSelection: e.target.checked })}
+        />
+        {t('fieldCopyOnSelect')}
+      </label>
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={settings.pasteOnRightClick}
+          onChange={(e) => void apply({ pasteOnRightClick: e.target.checked })}
+        />
+        {t('fieldPasteRightClick')}
+      </label>
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          checked={settings.webglRenderer}
+          onChange={(e) => void apply({ webglRenderer: e.target.checked })}
+        />
+        {t('fieldWebgl')}
+        <span className="hint" style={{ marginLeft: 8 }}>
+          {t('fieldWebglHint')}
+        </span>
+      </label>
+    </>
+  );
+}

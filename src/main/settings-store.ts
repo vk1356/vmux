@@ -1,4 +1,4 @@
-import Store from 'electron-store';
+import { Conf } from 'electron-conf/main';
 import log from 'electron-log/main';
 import type { AppSettings, Pane, PaneId, PaneTree, Session, WindowState } from '@shared/types';
 import { allPaneIds, firstLeaf } from '@shared/tree';
@@ -39,7 +39,10 @@ const DEFAULT_WINDOW_STATE: WindowState = {
   isMaximized: false
 };
 
-const store = new Store<Schema>({
+// Migration depuis electron-store : le fichier `cmux.json` est conservé tel
+// quel (electron-conf utilise le même format JSON). On conserve donc l'historique
+// utilisateur sans migration explicite — l'instance lit l'existant au boot.
+const store = new Conf<Schema>({
   name: 'cmux',
   defaults: {
     settings: DEFAULT_SETTINGS,

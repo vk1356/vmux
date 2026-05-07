@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { uuid } from '@shared/utils';
 import { clearPaneData } from './paneDataBus';
 import type {
   AgentAvailability,
@@ -17,10 +18,12 @@ import type {
 export const STATS_WINDOW = 30;
 
 export interface PaneStatsHistory {
-  /** CPU% — fenêtre circulaire ; ordre chronologique (plus ancien en [0]). */
-  cpu: number[];
+  /** CPU% — fenêtre circulaire ; ordre chronologique (plus ancien en [0]).
+   *  Float32Array : 1 allocation préallouée à la bonne taille (vs `Array` qui
+   *  alloue + grandit + slice). Réduit la pression GC pour 30 panes × 1Hz. */
+  cpu: Float32Array;
   /** RAM en octets — même fenêtre. */
-  memory: number[];
+  memory: Float32Array;
   /** Dernière valeur reçue (pratique pour l'affichage instantané). */
   last: { cpu: number; memory: number; timestamp: number } | null;
 }
@@ -206,9 +209,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
   addToast: (t) =>
     set((state) => {
-      const id = t.id ?? (typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `${t.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
+      const id = t.id ?? `${t.kind}-${uuid()}`;
       // Dédup robuste : kind + title + body + paneId. Sans body, on dédoublonnait
       // par accident des events différents qui partageaient un titre.
       const filtered = state.toasts.filter(
@@ -282,12 +283,22 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       if (samples.length === 0) return {};
       const next: Record<PaneId, PaneStatsHistory> = { ...state.paneStats };
       for (const s of samples) {
-        const cur = next[s.paneId] ?? { cpu: [], memory: [], last: null };
-        // Ring buffer : on coupe en tête si on dépasse la fenêtre.
-        const cpu = cur.cpu.length >= STATS_WINDOW ? cur.cpu.slice(1) : cur.cpu.slice();
-        const memory = cur.memory.length >= STATS_WINDOW ? cur.memory.slice(1) : cur.memory.slice();
-        cpu.push(s.cpu);
-        memory.push(s.memory);
+        const cur = next[s.paneId];
+        const curLen = cur?.cpu.length ?? 0;
+        const isFull = curLen >= STATS_WINDOW;
+        const newLen = isFull ? STATS_WINDOW : curLen + 1;
+        // Préalloue la taille finale en 1 seule allocation (vs slice + push qui
+        // en faisait 2 + un grow interne du V8).
+        const cpu = new Float32Array(newLen);
+        const memory = new Float32Array(newLen);
+        if (cur && curLen > 0) {
+          // Quand plein : on shift d'1 (drop le plus ancien). Sinon : copie tout.
+          const srcOffset = isFull ? 1 : 0;
+          cpu.set(cur.cpu.subarray(srcOffset));
+          memory.set(cur.memory.subarray(srcOffset));
+        }
+        cpu[newLen - 1] = s.cpu;
+        memory[newLen - 1] = s.memory;
         next[s.paneId] = {
           cpu,
           memory,

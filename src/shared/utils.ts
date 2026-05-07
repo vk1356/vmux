@@ -24,3 +24,13 @@ export function pathBasename(p: string): string {
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
+
+/** UUID cross-platform : utilise crypto.randomUUID() quand dispo, sinon fallback
+ *  Date+random. Côté renderer, certains contextes (iframe sandboxed, tests jsdom)
+ *  n'exposent pas randomUUID — d'où le fallback. Côté main, préférer
+ *  `randomUUID` de `node:crypto` (toujours dispo). */
+export function uuid(): string {
+  const c = (globalThis as unknown as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+}

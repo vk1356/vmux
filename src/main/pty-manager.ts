@@ -24,6 +24,8 @@ import { getSettings, loadSessions, saveSessions } from './settings-store';
 import { extractUrls, mergeUrls, stripAnsi } from './url-detector';
 import { clearDetector, detectEvents } from './event-detector';
 import { ptyStats } from './pty-stats';
+import { detectsNeedsInput } from './needs-input-detect';
+import { PaneDataBuffer } from './pane-data-buffer';
 
 interface ManagedPane {
   process?: pty.IPty;
@@ -62,54 +64,12 @@ type Events = {
   paneAttention: [paneId: PaneId, level: 'activity' | 'alert' | 'needs-input'];
 };
 
-// Patterns qui indiquent que l'agent attend une réponse de l'utilisateur.
-const NEEDS_INPUT_PATTERNS: RegExp[] = [
-  // (y/n), (yes/no), [Y/n] et variantes
-  /\((?:y\/n|yes\/no|Y\/N|yN|yn|Yn)\)/i,
-  /\[(?:Y\/n|y\/N|yes\/no)\]/i,
-  // Press any/enter key
-  /press (?:any |enter |return )key/i,
-  // Confirmations FR/EN
-  /(?:continuer|confirm|continue|proceed)\s*\??/i,
-  // Claude Code & autres TUI : prompts numérotés "Do you want to proceed?"
-  // suivis d'une liste numérotée. On match juste la phrase clé.
-  /do you want to (?:proceed|continue)/i,
-  /requires approval/i,
-  // Cursor pointer ❯ devant un choix numéroté (typique de Claude Code)
-  /❯\s+\d+\.\s/,
-  // "Select..." / "Choose..."
-  /(?:choose|select|pick) (?:an? )?(?:option|choice|value)/i,
-  /enter (?:to continue|the value|your)/i
-];
-
-function detectsNeedsInput(stripped: string): boolean {
-  // Limit la fenêtre — on regarde les 200 derniers chars seulement
-  const tail = stripped.length > 200 ? stripped.slice(-200) : stripped;
-  return NEEDS_INPUT_PATTERNS.some((re) => re.test(tail));
-}
-
 class PtyManager extends EventEmitter {
   private sessions = new Map<string, ManagedSession>();
-  /** Buffer par pane — on agrège les chunks puis on flush à intervalle court.
-   *  Réduit massivement le coût IPC quand un agent streame (ex: 100+ chunks/s). */
-  private paneBuffers = new Map<PaneId, string[]>();
-  private flushTimer: NodeJS.Timeout | null = null;
+  /** Buffer agrégateur des chunks PTY — flush 60Hz, voir pane-data-buffer.ts. */
+  private dataBuffer = new PaneDataBuffer();
   /** Dernière émission d'attention 'activity' par pane — throttle 500ms. */
   private lastActivityEmit = new Map<PaneId, number>();
-  /** ~125 Hz — assez fréquent pour rester fluide, assez lent pour batcher. */
-  private static readonly FLUSH_INTERVAL_MS = 8;
-
-  private bufferPaneData(paneId: PaneId, data: string): void {
-    let buf = this.paneBuffers.get(paneId);
-    if (!buf) {
-      buf = [];
-      this.paneBuffers.set(paneId, buf);
-    }
-    buf.push(data);
-    if (this.flushTimer === null) {
-      this.flushTimer = setTimeout(() => this.flushBuffers(), PtyManager.FLUSH_INTERVAL_MS);
-    }
-  }
 
   /** Clear tous les timers en vol pour un pane (boot, fallback, initialInput). */
   private clearPaneTimers(mp: ManagedPane): void {
@@ -127,18 +87,12 @@ class PtyManager extends EventEmitter {
     }
   }
 
-  private flushBuffers(): void {
-    this.flushTimer = null;
-    for (const [paneId, chunks] of this.paneBuffers) {
-      if (chunks.length === 0) continue;
-      const combined = chunks.length === 1 ? chunks[0] : chunks.join('');
-      this.paneBuffers.set(paneId, []);
-      this.emit('paneData', paneId, combined);
-    }
-  }
-
   constructor() {
     super();
+    // Forward des chunks agrégés du buffer vers les listeners IPC.
+    this.dataBuffer.on('flush', (paneId, combined) => {
+      this.emit('paneData', paneId, combined);
+    });
     for (const s of loadSessions()) {
       // À la restauration, marquer tous les panes terminaux en idle (pas de PTY vivant).
       const panes: Record<PaneId, (typeof s.panes)[string]> = {};
@@ -237,7 +191,7 @@ class PtyManager extends EventEmitter {
       }
       clearDetector(paneId);
       ptyStats.removePane(paneId);
-      this.paneBuffers.delete(paneId);
+      this.dataBuffer.delete(paneId);
       this.lastActivityEmit.delete(paneId);
     }
     if (m.cleanupPath && m.session.sourceRepo) {
@@ -315,7 +269,7 @@ class PtyManager extends EventEmitter {
     }
     clearDetector(paneId);
     ptyStats.removePane(paneId);
-    this.paneBuffers.delete(paneId);
+    this.dataBuffer.delete(paneId);
     const newTree = removePane(m.session.tree, paneId);
     if (!newTree) {
       // Plus de panes → on ferme la session entière.
@@ -636,7 +590,7 @@ class PtyManager extends EventEmitter {
 
     mp.dataSub = child.onData((data) => {
       // Batch côté main : agrège les chunks pour réduire l'overhead IPC.
-      this.bufferPaneData(paneId, data);
+      this.dataBuffer.push(paneId, data);
 
       // Heartbeat : tracker le dernier output pour la détection "stale".
       const cur = this.sessions.get(sessionId);
@@ -778,12 +732,8 @@ class PtyManager extends EventEmitter {
   }
 
   async shutdown(): Promise<void> {
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
+    this.dataBuffer.shutdown();
     this.flushPersist();
-    this.paneBuffers.clear();
     ptyStats.shutdown();
     for (const m of this.sessions.values()) {
       for (const mp of m.panes.values()) {

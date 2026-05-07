@@ -21,14 +21,17 @@ type Events = {
 /**
  * Collecte CPU/RAM pour les PIDs des PTY actifs et émet périodiquement
  * un batch de samples au renderer. Coût mesuré : ~3-5 ms par poll sur
- * Windows (wmic), même pour 10+ panes.
+ * Windows. pidusage v4 utilise GetProcessTimes/PSAPI via N-API natif
+ * (plus de wmic — deprecated dans Win11), donc l'overhead est constant
+ * même pour 10+ panes.
  */
 class PtyStatsCollector extends EventEmitter {
   private timer: NodeJS.Timeout | null = null;
   /** paneId → pid courant. Réécrit à chaque restart. */
   private pids = new Map<PaneId, number>();
   /** Intervalle de poll : 2s — assez réactif pour voir les pics, assez lent
-   *  pour que `wmic` n'impacte pas les perfs sur Windows. */
+   *  pour ne pas peser sur la boucle main process (chaque poll = 1 tick
+   *  microtask + N appels syscall via pidusage). */
   private static readonly POLL_INTERVAL_MS = 2000;
 
   setPid(paneId: PaneId, pid: number): void {
