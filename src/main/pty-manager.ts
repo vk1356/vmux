@@ -756,7 +756,24 @@ class PtyManager extends EventEmitter {
     this.emit('sessionUpdate', m.session);
   }
 
+  /** Debounced — coalesce les écritures rapprochées (drag de split, rename,
+   *  url detection, etc.). Évite de bloquer le main thread sur des sync writes
+   *  de electron-store quand des events arrivent en rafale. */
+  private persistTimer: NodeJS.Timeout | null = null;
+  private static readonly PERSIST_DEBOUNCE_MS = 250;
   private persist(): void {
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      saveSessions(this.list());
+    }, PtyManager.PERSIST_DEBOUNCE_MS);
+  }
+  /** Force le flush — appelé au shutdown pour ne rien perdre. */
+  private flushPersist(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
     saveSessions(this.list());
   }
 
@@ -765,6 +782,7 @@ class PtyManager extends EventEmitter {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
+    this.flushPersist();
     this.paneBuffers.clear();
     ptyStats.shutdown();
     for (const m of this.sessions.values()) {

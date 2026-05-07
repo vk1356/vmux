@@ -44,6 +44,9 @@ function safe<T>(name: string, fn: () => Promise<T> | T): Promise<IpcResult<T>> 
 }
 
 export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
+  // Résolution async de l'icône de notif — non bloquant.
+  void resolveIconPathOnce();
+
   /** Envoi protégé : ignore si la window est fermée/détruite (évite l'exception
    *  "Object has been destroyed" quand un event ptyManager arrive après quit). */
   const safeSend = (channel: string, ...args: unknown[]): void => {
@@ -372,25 +375,28 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
 }
 
 /** Renvoie le path de l'icône vMux pour les notifications système.
- *  En prod : extraResources/icon.png. En dev : build/icon.png. */
-let cachedIconPath: string | null | undefined;
-function getNotificationIcon(): Electron.NativeImage | undefined {
-  if (cachedIconPath === undefined) {
-    const candidates = [
-      path.join(process.resourcesPath, 'icon.png'),
-      path.join(app.getAppPath(), 'build', 'icon.png'),
-      path.join(app.getAppPath(), '..', 'build', 'icon.png')
-    ];
-    cachedIconPath = candidates.find((p) => {
-      try {
-        require('node:fs').accessSync(p);
-        return true;
-      } catch {
-        return false;
-      }
-    }) ?? null;
+ *  En prod : extraResources/icon.png. En dev : build/icon.png.
+ *  Résolu une fois en async dès `registerIpc` — évite l'accessSync en hot path. */
+let cachedNativeIcon: Electron.NativeImage | undefined;
+
+async function resolveIconPathOnce(): Promise<void> {
+  const candidates = [
+    path.join(process.resourcesPath, 'icon.png'),
+    path.join(app.getAppPath(), 'build', 'icon.png'),
+    path.join(app.getAppPath(), '..', 'build', 'icon.png')
+  ];
+  for (const p of candidates) {
+    try {
+      await fsp.access(p);
+      cachedNativeIcon = nativeImage.createFromPath(p);
+      return;
+    } catch {
+      /* candidate absent, try next */
+    }
   }
-  if (!cachedIconPath) return undefined;
-  return nativeImage.createFromPath(cachedIconPath);
+}
+
+function getNotificationIcon(): Electron.NativeImage | undefined {
+  return cachedNativeIcon;
 }
 

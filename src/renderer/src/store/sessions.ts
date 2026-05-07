@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { clearPaneData } from './paneDataBus';
 import type {
   AgentAvailability,
   AgentPreset,
@@ -181,6 +182,10 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
   removeSession: (id) =>
     set((state) => {
+      const target = state.sessions.find((s) => s.id === id);
+      if (target) {
+        for (const paneId of Object.keys(target.panes)) clearPaneData(paneId);
+      }
       const sessions = state.sessions.filter((s) => s.id !== id);
       return {
         sessions,
@@ -201,7 +206,9 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
   addToast: (t) =>
     set((state) => {
-      const id = t.id ?? `${t.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const id = t.id ?? (typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `${t.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
       // Dédup robuste : kind + title + body + paneId. Sans body, on dédoublonnait
       // par accident des events différents qui partageaient un titre.
       const filtered = state.toasts.filter(

@@ -18,7 +18,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontFamily: '"JetBrains Mono", "Cascadia Code", Consolas, monospace',
   fontSize: 13,
   defaultShell: 'pwsh',
-  scrollback: 5000,
+  scrollback: 50000,
   cursorBlink: true,
   copyOnSelection: true,
   pasteOnRightClick: true,

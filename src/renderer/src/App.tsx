@@ -32,6 +32,7 @@ const ConfirmDialog = lazy(() =>
   import('./components/ConfirmDialog').then((m) => ({ default: m.ConfirmDialog }))
 );
 import { useSessionStore } from './store/sessions';
+import { useShallow } from 'zustand/react/shallow';
 import { translate } from './i18n';
 import type { PaneAttention } from '@shared/types';
 import { neighborInDirection } from '@shared/tree';
@@ -42,6 +43,8 @@ const MAX_SIDEBAR = 480;
 const DEFAULT_SIDEBAR = 280;
 
 export function App(): JSX.Element {
+  // useShallow : on ne re-render que si une des clés sélectionnées change.
+  // Avant : useSessionStore() destructurait 18 champs → re-render à chaque set.
   const {
     sessions,
     activeSessionId,
@@ -59,7 +62,26 @@ export function App(): JSX.Element {
     bumpAttention,
     clearAttention,
     pushStatSamples
-  } = useSessionStore();
+  } = useSessionStore(
+    useShallow((s) => ({
+      sessions: s.sessions,
+      activeSessionId: s.activeSessionId,
+      settings: s.settings,
+      setSessions: s.setSessions,
+      setAgents: s.setAgents,
+      setAgentAvailability: s.setAgentAvailability,
+      setSettings: s.setSettings,
+      upsertSession: s.upsertSession,
+      removeSession: s.removeSession,
+      addToast: s.addToast,
+      recordEvent: s.recordEvent,
+      patchPane: s.patchPane,
+      toggleSync: s.toggleSync,
+      bumpAttention: s.bumpAttention,
+      clearAttention: s.clearAttention,
+      pushStatSamples: s.pushStatSamples
+    }))
+  );
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   /** Cwd transmis à NewSessionDialog quand on ouvre via drag-drop d'un dossier. */
   const [newSessionDefaultCwd, setNewSessionDefaultCwd] = useState<string | undefined>(undefined);

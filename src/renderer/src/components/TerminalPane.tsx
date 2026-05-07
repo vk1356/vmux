@@ -15,10 +15,13 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
+import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { ChevronDown, ChevronUp, X as XIcon, Play } from 'lucide-react';
 import type { TerminalPane as TerminalPaneT } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { useSessionStore } from '../store/sessions';
+import { subscribePaneData } from '../store/paneDataBus';
 import { useT } from '../i18n';
 
 interface Props {
@@ -26,6 +29,28 @@ interface Props {
   pane: TerminalPaneT;
   active: boolean;
   visible: boolean;
+}
+
+/**
+ * Exécute `fn` (typiquement `fit.fit()`) tout en préservant la position de
+ * lecture si l'user est scrolled-up. Le `Terminal.resize()` interne à fit
+ * peut snapper la viewport au bottom — on capture le delta `baseY - viewportY`
+ * avant et on restore via `term.scrollLines(-delta)` après.
+ *
+ * Sans ça, drag d'un splitter ou changement de font ramènent la vue en bas
+ * et on perd la position de lecture.
+ */
+function withPreservedScroll(term: Terminal, fn: () => void): void {
+  const buf = term.buffer.active;
+  const delta = buf.baseY - buf.viewportY; // > 0 si scrolled up
+  fn();
+  if (delta > 0) {
+    try {
+      term.scrollLines(-delta);
+    } catch {
+      /* ignore — viewport peut avoir disparu pendant fn() (cleanup race) */
+    }
+  }
 }
 
 const THEME = {
@@ -59,6 +84,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
+  const ligaturesRef = useRef<LigaturesAddon | null>(null);
   const pendingRef = useRef<string[]>([]);
   const settings = useSessionStore((s) => s.settings);
   const isSync = useSessionStore((s) => s.syncSessions.has(sessionId));
@@ -82,15 +108,14 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     }
   }, [sessionId, pane.id]);
 
-  // Listener IPC enregistré dès le mount.
+  // Souscription via le bus unique — 1 seul listener IPC global pour tous les
+  // panes (cf. store/paneDataBus.ts).
   useEffect(() => {
-    const off = window.cmux.panes.onData((paneId, data) => {
-      if (paneId !== pane.id) return;
+    return subscribePaneData(pane.id, (data) => {
       const t = termRef.current;
       if (t) t.write(data);
       else pendingRef.current.push(data);
     });
-    return off;
   }, [pane.id]);
 
   // Init xterm — lazy, premier active ou visible.
@@ -132,6 +157,13 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
     term.loadAddon(search);
+    // ClipboardAddon : gère OSC 52 (les agents qui veulent copier dans le
+    // clipboard via la séquence ANSI standard, e.g. tmux/nvim/agents TUI).
+    try {
+      term.loadAddon(new ClipboardAddon());
+    } catch (err) {
+      console.warn('[term] ClipboardAddon load failed', err);
+    }
     term.open(hostRef.current);
 
     if (settings.webglRenderer) {
@@ -143,13 +175,23 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         });
         term.loadAddon(webgl);
         webglRef.current = webgl;
+        // LigaturesAddon ne marche qu'avec un renderer canvas/webgl. JetBrains
+        // Mono / Cascadia Code / Fira Code ont des ligatures de programmation
+        // (=>, !=, ===, etc.) — sans cet addon elles sont rendues lettre-par-lettre.
+        try {
+          const lig = new LigaturesAddon();
+          term.loadAddon(lig);
+          ligaturesRef.current = lig;
+        } catch (err) {
+          console.warn('[term] LigaturesAddon load failed', err);
+        }
       } catch (err) {
         console.warn('[term] WebGL indisponible, fallback DOM', err);
       }
     }
 
     try {
-      fit.fit();
+      withPreservedScroll(term, () => fit.fit());
     } catch {
       /* ignore */
     }
@@ -198,7 +240,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         const fit = fitRef.current;
         if (!term || !fit) return;
         try {
-          fit.fit();
+          withPreservedScroll(term, () => fit.fit());
           if (term.cols !== lastCols || term.rows !== lastRows) {
             lastCols = term.cols;
             lastRows = term.rows;
@@ -231,7 +273,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     if (!t || !f) return;
     requestAnimationFrame(() => {
       try {
-        f.fit();
+        withPreservedScroll(t, () => f.fit());
         const ae = document.activeElement;
         const isFreeFocus =
           !ae || ae === document.body || (ae as HTMLElement).tagName === 'CANVAS';
@@ -254,7 +296,8 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     t.options.cursorBlink = settings.cursorBlink;
     t.options.scrollback = settings.scrollback;
     try {
-      fitRef.current?.fit();
+      const fit = fitRef.current;
+      if (fit) withPreservedScroll(t, () => fit.fit());
     } catch {
       /* ignore */
     }
@@ -263,6 +306,11 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   // Cleanup au démontage.
   useEffect(() => {
     return () => {
+      try {
+        ligaturesRef.current?.dispose();
+      } catch {
+        /* ignore */
+      }
       try {
         webglRef.current?.dispose();
       } catch {
@@ -277,6 +325,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       fitRef.current = null;
       searchRef.current = null;
       webglRef.current = null;
+      ligaturesRef.current = null;
     };
   }, []);
 

@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react';
 import { FolderOpen, X, GitBranch, MessageSquare, AlertCircle, ExternalLink } from 'lucide-react';
 import type { AgentPreset, GitRepoInfo } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
+import { useShallow } from 'zustand/react/shallow';
 import { useT } from '../i18n';
 
 interface Props {
@@ -13,7 +14,13 @@ interface Props {
 
 export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Element | null {
   const t = useT();
-  const { agents, agentAvailability, upsertSession } = useSessionStore();
+  const { agents, agentAvailability, upsertSession } = useSessionStore(
+    useShallow((s) => ({
+      agents: s.agents,
+      agentAvailability: s.agentAvailability,
+      upsertSession: s.upsertSession
+    }))
+  );
   const [agentId, setAgentId] = useState<string>('claude-code');
   const [name, setName] = useState('');
   const [cwd, setCwd] = useState('');

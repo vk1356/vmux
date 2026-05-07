@@ -342,6 +342,27 @@ app.on('before-quit', async (event) => {
 /** Stocké au scope module pour pouvoir clearer l'interval au shutdown. */
 let updateRecheckInterval: NodeJS.Timeout | null = null;
 
+/** Lit owner/repo depuis app-update.yml (prod) ou retombe sur les valeurs du
+ *  build config bundlé. Renvoie sous forme `owner/repo` pour l'API GitHub. */
+async function readRepoFromUpdateConfig(): Promise<string> {
+  // En prod, electron-builder pose app-update.yml dans process.resourcesPath.
+  const candidates = [
+    path.join(process.resourcesPath, 'app-update.yml'),
+    path.join(process.resourcesPath, 'app', 'app-update.yml')
+  ];
+  for (const p of candidates) {
+    try {
+      const yml = await fs.promises.readFile(p, 'utf-8');
+      const owner = yml.match(/^owner:\s*(\S+)/m)?.[1];
+      const repo = yml.match(/^repo:\s*(\S+)/m)?.[1];
+      if (owner && repo) return `${owner}/${repo}`;
+    } catch {
+      /* try next */
+    }
+  }
+  throw new Error('app-update.yml not found');
+}
+
 /**
  * Stratégie auto-update :
  * - Check primaire = API GitHub direct (rapide, fiable, fonctionne en dev).
@@ -366,7 +387,11 @@ async function setupAutoUpdater(): Promise<void> {
     send(s);
   };
 
-  const REPO = 'vk1356/vmux';
+  // Source de vérité unique : la conf publish dans package.json. Évite la
+  // désynchronisation si on transfère le repo. En prod, electron-builder copie
+  // ces infos dans `app-update.yml` (lu par electron-updater) — on lit via
+  // import dynamique pour rester en sync. Fallback hardcodé en dev.
+  const REPO = await readRepoFromUpdateConfig().catch(() => 'vk1356/vmux');
   type GhRelease = {
     tag_name: string;
     name?: string;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type JSX } from 'react';
 import { Activity, Folder, GitBranch, Cpu, Bell, AlertCircle } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
+import { useShallow } from 'zustand/react/shallow';
 import { allPaneIds } from '@shared/tree';
 import type { TerminalPane } from '@shared/types';
 import { useT } from '../i18n';
@@ -13,7 +14,15 @@ interface Props {
 export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
   const t = useT();
   const { sessions, activeSessionId, eventHistory, paneActivity, setActiveSession } =
-    useSessionStore();
+    useSessionStore(
+      useShallow((s) => ({
+        sessions: s.sessions,
+        activeSessionId: s.activeSessionId,
+        eventHistory: s.eventHistory,
+        paneActivity: s.paneActivity,
+        setActiveSession: s.setActiveSession
+      }))
+    );
   const [version, setVersion] = useState<string>('');
   useEffect(() => {
     void window.cmux.app?.version().then(setVersion);

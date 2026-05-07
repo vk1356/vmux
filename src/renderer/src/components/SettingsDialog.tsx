@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { AgentId, AppSettings, Lang, UpdateStatus } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
+import { useShallow } from 'zustand/react/shallow';
 import { LANG_LABELS, useLocale, useT } from '../i18n';
 
 interface Props {
@@ -41,7 +42,14 @@ const SHELL_PRESETS = [
 ];
 
 export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
-  const { settings, agents, agentAvailability, patchSettings } = useSessionStore();
+  const { settings, agents, agentAvailability, patchSettings } = useSessionStore(
+    useShallow((s) => ({
+      settings: s.settings,
+      agents: s.agents,
+      agentAvailability: s.agentAvailability,
+      patchSettings: s.patchSettings
+    }))
+  );
   const [tab, setTab] = useState<Tab>('apparence');
   const [saving, setSaving] = useState(false);
   const t = useT();

@@ -69,7 +69,9 @@ export function detectEvents(paneId: PaneId, chunk: string): DetectedEvent[] {
   const now = Date.now();
   const out: DetectedEvent[] = [];
   for (const { kind, re } of MATCHERS) {
-    re.lastIndex = 0;
+    // Pas de `re.lastIndex = 0` nécessaire : aucun pattern ne porte le flag /g
+    // ou /y, donc String.match est non-stateful. Si on ajoute /g un jour il
+    // faudra repasser à `re.exec(text)` après reset.
     const m = text.match(re);
     if (!m) continue;
     const message = m[0].trim().slice(0, 160);

@@ -21,6 +21,7 @@ import {
   Bot
 } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
+import { useShallow } from 'zustand/react/shallow';
 import type { Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { pathBasename } from '@shared/utils';
@@ -75,7 +76,19 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
     removeSession,
     upsertSession,
     reorderSessions
-  } = useSessionStore();
+  } = useSessionStore(
+    useShallow((s) => ({
+      sessions: s.sessions,
+      agents: s.agents,
+      activeSessionId: s.activeSessionId,
+      lastEventBySession: s.lastEventBySession,
+      paneActivity: s.paneActivity,
+      setActiveSession: s.setActiveSession,
+      removeSession: s.removeSession,
+      upsertSession: s.upsertSession,
+      reorderSessions: s.reorderSessions
+    }))
+  );
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [filter, setFilter] = useState('');
