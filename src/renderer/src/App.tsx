@@ -97,22 +97,17 @@ export function App(): JSX.Element {
       patchPane(sessionId, paneId, pane);
     });
     const offUrls = window.cmux.panes.onUrls((paneId, urls) => {
+      // NB : on n'auto-ouvre PLUS de preview ici. Une URL détectée dans le PTY
+      // peut venir d'une simple réponse de l'agent (ex: Claude qui mentionne
+      // http://localhost:3000 dans une explication). L'auto-open n'est déclenché
+      // QUE par l'event 'server-ready' (ci-dessous), qui matche réellement le
+      // démarrage d'un dev server (vite ready, listening on, etc.).
       const state = useSessionStore.getState();
       const session = state.sessions.find((s) => paneId in s.panes);
       if (!session) return;
       const latest = urls[urls.length - 1];
       if (!latest) return;
 
-      // Auto-open : si la session n'a pas encore de preview pane ET que le user
-      // n'a pas explicitement fermé un preview, on ouvre.
-      const hasPreview = Object.values(session.panes).some((p) => p.kind === 'preview');
-      const wasDismissed = state.dismissedPreviewSessions.has(session.id);
-      if (state.settings?.previewAutoOpen && !hasPreview && !wasDismissed) {
-        void window.cmux.panes.openPreview(session.id, paneId, latest);
-        return; // pas de toast nécessaire — le preview s'ouvre tout seul.
-      }
-
-      // Sinon : toast (l'utilisateur peut décider d'ouvrir manuellement).
       if (!state.settings?.previewToastEnabled) return;
       const lang = state.settings?.language ?? 'en';
       addToast({
@@ -130,7 +125,8 @@ export function App(): JSX.Element {
     const offStats = window.cmux.panes.onStats(pushStatSamples);
     // Single handler — précédemment 2 abonnements distincts (onEvent x2)
     // créaient un doublon : chaque event était traité 2 fois et bumpAttention
-    // pouvait flasher le badge. On centralise ici toast + attention.
+    // pouvait flasher le badge. On centralise ici toast + attention + auto-open
+    // preview (uniquement sur server-ready, pas sur toute URL détectée).
     const offEvents = window.cmux.panes.onEvent((event) => {
       const state = useSessionStore.getState();
       const session = state.sessions.find((s) => event.paneId in s.panes);
@@ -149,6 +145,24 @@ export function App(): JSX.Element {
       const level: PaneAttention =
         event.kind === 'build-error' ? 'needs-input' : 'alert';
       bumpAttention(event.paneId, level);
+
+      // Auto-open du preview : UNIQUEMENT si l'event est un vrai démarrage de
+      // serveur. event.url est extrait de la ligne matchée ; sinon on retombe
+      // sur la dernière URL localhost détectée par le pane (recentUrls). Ne
+      // s'ouvre que si pas déjà de preview ouvert et pas dismissed.
+      if (event.kind !== 'server-ready') return;
+      if (!state.settings?.previewAutoOpen) return;
+      const hasPreview = Object.values(session.panes).some((p) => p.kind === 'preview');
+      if (hasPreview) return;
+      if (state.dismissedPreviewSessions.has(session.id)) return;
+      const pane = session.panes[event.paneId];
+      const fallbackUrl =
+        pane?.kind === 'terminal' && pane.recentUrls?.length
+          ? pane.recentUrls[pane.recentUrls.length - 1]
+          : undefined;
+      const url = event.url ?? fallbackUrl;
+      if (!url) return;
+      void window.cmux.panes.openPreview(session.id, event.paneId, url);
     });
     // Custom notification sound — main demande au renderer de jouer un .wav/.mp3.
     // Le main passe le path absolu ; on le sert via file:// (ok car renderer

@@ -107,7 +107,13 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       scrollback: settings.scrollback,
       allowProposedApi: true,
       allowTransparency: true,
-      smoothScrollDuration: 80,
+      // smoothScrollDuration interagit mal avec WebglAddon sur certaines
+      // configs : la wheel se "fige" temporairement à mi-animation. 0 = scroll
+      // immédiat, beaucoup plus fiable pour parcourir l'historique.
+      smoothScrollDuration: 0,
+      // Ne PAS forcer le scroll en bas quand l'utilisateur tape ailleurs (ex:
+      // dans la search bar) — on veut pouvoir lire l'historique tranquillement.
+      scrollOnUserInput: false,
       theme: THEME,
       windowsPty: { backend: 'conpty' }
     });
@@ -215,6 +221,9 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   // bootLine de l'agent à la bonne taille, même après un restart).
   // On NE vole PAS le focus si l'utilisateur est dans un input/textarea
   // (e.g. dialog ouvert, address bar du preview, command palette…).
+  // ⚠️ On ne refocus pas non plus si l'utilisateur est en train de lire le
+  // scrollback (viewportY < baseY) : `term.focus()` ramène la viewport en bas
+  // et fait perdre la position de lecture.
   useEffect(() => {
     if (!active) return;
     const t = termRef.current;
@@ -226,7 +235,9 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         const ae = document.activeElement;
         const isFreeFocus =
           !ae || ae === document.body || (ae as HTMLElement).tagName === 'CANVAS';
-        if (isFreeFocus) t.focus();
+        const buf = t.buffer.active;
+        const isScrolledUp = buf.viewportY < buf.baseY;
+        if (isFreeFocus && !isScrolledUp) t.focus();
         window.cmux.panes.resize(pane.id, { cols: t.cols, rows: t.rows });
       } catch {
         /* ignore */
