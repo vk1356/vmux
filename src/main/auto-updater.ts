@@ -14,8 +14,7 @@ export { isNewer };
 
 /**
  * Auto-update extrait de main/index.ts pour cloisonner ~350 lignes de logique
- * réseau / installer. L'orchestrateur principal n'a plus qu'à appeler
- * `setupAutoUpdater(getMainWindow)` au boot et `stopAutoUpdater()` au shutdown.
+ * réseau / installer.
  *
  * Stratégie :
  * - Check primaire = API GitHub direct (rapide, fiable, fonctionne en dev).
@@ -55,6 +54,201 @@ async function readRepoFromUpdateConfig(): Promise<string> {
   throw new Error('app-update.yml not found');
 }
 
+type GhRelease = {
+  tag_name: string;
+  name?: string;
+  body?: string;
+  assets?: { name: string; browser_download_url: string }[];
+};
+
+interface LatestInfo {
+  version: string;
+  notes?: string;
+  installerUrl?: string;
+}
+
+type SendStatus = (s: UpdateStatus) => void;
+
+/** Asset matching par plateforme : NSIS (Windows), DMG (macOS), AppImage (Linux). */
+function matchInstallerAsset(name: string): boolean {
+  if (name.endsWith('.blockmap')) return false;
+  if (process.platform === 'win32') return /Setup.*\.exe$/i.test(name);
+  if (process.platform === 'darwin') {
+    const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+    return new RegExp(`-${arch}\\.dmg$`, 'i').test(name) || /\.dmg$/i.test(name);
+  }
+  return /\.AppImage$/i.test(name);
+}
+
+/** Fetch JSON avec timeout dur via AbortController. Throw en cas d'erreur. */
+async function ghFetchLatest(repo: string, timeoutMs = 8000): Promise<LatestInfo> {
+  log.info(
+    `[updater] fetch https://api.github.com/repos/${repo}/releases/latest (timeout=${timeoutMs}ms)`
+  );
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'vMux-updater'
+      },
+      signal: ctrl.signal
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(
+        `GitHub API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ''}`
+      );
+    }
+    const data = (await res.json()) as GhRelease;
+    const version = (data.tag_name || '').replace(/^v/, '');
+    if (!version) throw new Error('Empty tag_name in GitHub release');
+    const installer = data.assets?.find((a) => matchInstallerAsset(a.name));
+    log.info(`[updater] latest tag=${version} installer=${installer?.name ?? 'none'}`);
+    return {
+      version,
+      notes: data.body,
+      installerUrl: installer?.browser_download_url
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Télécharge l'installer dans le dossier temp avec progress.
+ *  Extension dérivée de la plateforme pour rester correcte sur win/mac/linux. */
+async function manualDownloadAndPrepare(
+  installerUrl: string,
+  version: string,
+  sendStatus: SendStatus
+): Promise<string> {
+  const tmpDir = path.join(app.getPath('temp'), 'vmux-updater');
+  await fs.promises.mkdir(tmpDir, { recursive: true });
+  const ext =
+    process.platform === 'win32' ? 'exe' : process.platform === 'darwin' ? 'dmg' : 'AppImage';
+  const tmpPath = path.join(tmpDir, `vMux-Setup-${version}.${ext}`);
+
+  log.info(`[updater] manual download from ${installerUrl} → ${tmpPath}`);
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 10 * 60 * 1000);
+  try {
+    const res = await fetch(installerUrl, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: { 'User-Agent': 'vMux-updater' }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    if (!res.body) throw new Error('Empty response body');
+
+    const total = Number(res.headers.get('content-length') ?? 0);
+    let transferred = 0;
+    let lastSentTs = 0;
+    const startTs = Date.now();
+
+    const nodeStream = Readable.fromWeb(res.body as never);
+    nodeStream.on('data', (chunk: Buffer) => {
+      transferred += chunk.length;
+      const now = Date.now();
+      if (now - lastSentTs > 200) {
+        const elapsed = (now - startTs) / 1000;
+        sendStatus({
+          kind: 'downloading',
+          percent: total > 0 ? (transferred / total) * 100 : 0,
+          bytesPerSecond: elapsed > 0 ? transferred / elapsed : 0,
+          transferred,
+          total
+        });
+        lastSentTs = now;
+      }
+    });
+
+    await pipeline(nodeStream, fs.createWriteStream(tmpPath));
+    log.info(`[updater] download complete: ${tmpPath} (${transferred} bytes)`);
+    return tmpPath;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Lance l'installer (NSIS sur Win, DMG mounté sur macOS, AppImage sur Linux)
+ *  et quitte l'app. Sur macOS/Linux la procédure se limite à ouvrir le fichier
+ *  dans le Finder/Files — l'user installe à la main. */
+function runInstallerAndQuit(installerPath: string, sendStatus: SendStatus): void {
+  log.info(`[updater] launching ${installerPath}`);
+  try {
+    if (process.platform === 'win32') {
+      const child = spawn(installerPath, ['/S', '--force-run'], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      child.unref();
+    } else {
+      // Ouvre le DMG/AppImage dans le file manager — pas d'install silencieuse
+      // possible sans privilèges sur macOS/Linux pour des apps non-MAS.
+      void import('electron').then(({ shell }) => shell.showItemInFolder(installerPath));
+    }
+  } catch (err) {
+    log.error('[updater] failed to spawn installer', err);
+    sendStatus({
+      kind: 'error',
+      code: 'install-no-download',
+      message: `Failed to start installer: ${(err as Error).message}`
+    });
+    return;
+  }
+  setTimeout(() => app.exit(0), 800);
+}
+
+/**
+ * Le flow "manual download" complet : fetch latest → download → status downloaded.
+ * Retourne le path de l'installer si succès, null sinon (en plus de cleanly
+ * sendStatus(error)). Factorise un pattern qui apparaissait à 3 endroits.
+ */
+async function runManualUpdateFlow(
+  repo: string,
+  sendStatus: SendStatus
+): Promise<string | null> {
+  try {
+    const latest = await ghFetchLatest(repo);
+    if (!latest.installerUrl) {
+      sendStatus({
+        kind: 'error',
+        code: 'no-installer-url',
+        message: 'Installer URL not found in latest release.'
+      });
+      return null;
+    }
+    sendStatus({
+      kind: 'downloading',
+      percent: 0,
+      bytesPerSecond: 0,
+      transferred: 0,
+      total: 0
+    });
+    const tmpPath = await manualDownloadAndPrepare(
+      latest.installerUrl,
+      latest.version,
+      sendStatus
+    );
+    sendStatus({
+      kind: 'downloaded',
+      version: latest.version,
+      releaseNotes: latest.notes
+    });
+    return tmpPath;
+  } catch (err) {
+    sendStatus({
+      kind: 'error',
+      code: 'github-api-failed',
+      message: (err as Error).message
+    });
+    return null;
+  }
+}
+
 export async function setupAutoUpdater(
   getMainWindow: () => BrowserWindow | null
 ): Promise<void> {
@@ -65,7 +259,7 @@ export async function setupAutoUpdater(
   };
 
   let lastSentStatus: UpdateStatus['kind'] = 'idle';
-  const sendStatus = (s: UpdateStatus): void => {
+  const sendStatus: SendStatus = (s) => {
     lastSentStatus = s.kind;
     send(s);
   };
@@ -73,151 +267,9 @@ export async function setupAutoUpdater(
   // Source de vérité unique : la conf publish dans package.json. Évite la
   // désynchronisation si on transfère le repo. Fallback hardcodé en dev.
   const REPO = await readRepoFromUpdateConfig().catch(() => 'vk1356/vmux');
-  type GhRelease = {
-    tag_name: string;
-    name?: string;
-    body?: string;
-    assets?: { name: string; browser_download_url: string }[];
-  };
-
-  /** Fetch JSON avec timeout dur via AbortController. Throw en cas d'erreur. */
-  async function ghFetchLatest(timeoutMs = 8000): Promise<{
-    version: string;
-    notes?: string;
-    installerUrl?: string;
-  }> {
-    log.info(
-      `[updater] fetch https://api.github.com/repos/${REPO}/releases/latest (timeout=${timeoutMs}ms)`
-    );
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-        headers: {
-          Accept: 'application/vnd.github+json',
-          'User-Agent': 'vMux-updater'
-        },
-        signal: ctrl.signal
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(
-          `GitHub API ${res.status} ${res.statusText}${body ? `: ${body.slice(0, 200)}` : ''}`
-        );
-      }
-      const data = (await res.json()) as GhRelease;
-      const version = (data.tag_name || '').replace(/^v/, '');
-      if (!version) throw new Error('Empty tag_name in GitHub release');
-      // Asset matching par plateforme : NSIS (Windows), DMG (macOS), AppImage (Linux).
-      // electron-updater gère le download différentiel sur win/mac mais pas Linux.
-      const matchAsset = (a: { name: string }): boolean => {
-        if (a.name.endsWith('.blockmap')) return false;
-        if (process.platform === 'win32') return /Setup.*\.exe$/i.test(a.name);
-        if (process.platform === 'darwin') {
-          const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
-          return new RegExp(`-${arch}\\.dmg$`, 'i').test(a.name) || /\.dmg$/i.test(a.name);
-        }
-        return /\.AppImage$/i.test(a.name);
-      };
-      const installer = data.assets?.find(matchAsset);
-      log.info(`[updater] latest tag=${version} installer=${installer?.name ?? 'none'}`);
-      return {
-        version,
-        notes: data.body,
-        installerUrl: installer?.browser_download_url
-      };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
 
   /** Path du dernier installer téléchargé manuellement, prêt à être lancé. */
   let pendingManualInstaller: string | null = null;
-
-  /** Télécharge l'installer dans le dossier temp avec progress.
-   *  Extension dérivée de l'URL pour rester correcte sur win/mac/linux. */
-  async function manualDownloadAndPrepare(
-    installerUrl: string,
-    version: string
-  ): Promise<string> {
-    const tmpDir = path.join(app.getPath('temp'), 'vmux-updater');
-    await fs.promises.mkdir(tmpDir, { recursive: true });
-    const ext =
-      process.platform === 'win32' ? 'exe' : process.platform === 'darwin' ? 'dmg' : 'AppImage';
-    const tmpPath = path.join(tmpDir, `vMux-Setup-${version}.${ext}`);
-
-    log.info(`[updater] manual download from ${installerUrl} → ${tmpPath}`);
-
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 10 * 60 * 1000);
-    try {
-      const res = await fetch(installerUrl, {
-        signal: ctrl.signal,
-        redirect: 'follow',
-        headers: { 'User-Agent': 'vMux-updater' }
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-      if (!res.body) throw new Error('Empty response body');
-
-      const total = Number(res.headers.get('content-length') ?? 0);
-      let transferred = 0;
-      let lastSentTs = 0;
-      const startTs = Date.now();
-
-      const nodeStream = Readable.fromWeb(res.body as never);
-      nodeStream.on('data', (chunk: Buffer) => {
-        transferred += chunk.length;
-        const now = Date.now();
-        if (now - lastSentTs > 200) {
-          const elapsed = (now - startTs) / 1000;
-          sendStatus({
-            kind: 'downloading',
-            percent: total > 0 ? (transferred / total) * 100 : 0,
-            bytesPerSecond: elapsed > 0 ? transferred / elapsed : 0,
-            transferred,
-            total
-          });
-          lastSentTs = now;
-        }
-      });
-
-      await pipeline(nodeStream, fs.createWriteStream(tmpPath));
-      log.info(`[updater] download complete: ${tmpPath} (${transferred} bytes)`);
-      return tmpPath;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  /** Lance l'installer (NSIS sur Win, DMG mounté sur macOS, AppImage sur Linux)
-   *  et quitte l'app. Sur macOS/Linux la procédure se limite à ouvrir le fichier
-   *  dans le Finder/Files — l'user installe à la main. */
-  function runInstallerAndQuit(installerPath: string): void {
-    log.info(`[updater] launching ${installerPath}`);
-    try {
-      if (process.platform === 'win32') {
-        const child = spawn(installerPath, ['/S', '--force-run'], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true
-        });
-        child.unref();
-      } else {
-        // Ouvre le DMG/AppImage dans le file manager — pas d'install silencieuse
-        // possible sans privilèges sur macOS/Linux pour des apps non-MAS / non-flatpak.
-        void import('electron').then(({ shell }) => shell.showItemInFolder(installerPath));
-      }
-    } catch (err) {
-      log.error('[updater] failed to spawn installer', err);
-      sendStatus({
-        kind: 'error',
-        code: 'install-no-download',
-        message: `Failed to start installer: ${(err as Error).message}`
-      });
-      return;
-    }
-    setTimeout(() => app.exit(0), 800);
-  }
 
   /** Check primaire : API GitHub. Aucun hang possible (timeout 8s strict). */
   async function checkUpdates(): Promise<void> {
@@ -225,7 +277,7 @@ export async function setupAutoUpdater(
     sendStatus({ kind: 'checking' });
     const local = app.getVersion();
     try {
-      const latest = await ghFetchLatest();
+      const latest = await ghFetchLatest(REPO);
       log.info(`[updater] local=${local} remote=${latest.version}`);
       if (isNewer(latest.version, local)) {
         sendStatus({
@@ -257,39 +309,7 @@ export async function setupAutoUpdater(
   if (is.dev) {
     log.info('[updater] dev mode — manual download only, no install');
     ipcMain.handle(IPC.updateDownload, async () => {
-      try {
-        const latest = await ghFetchLatest();
-        if (!latest.installerUrl) {
-          sendStatus({
-            kind: 'error',
-            code: 'no-installer-url',
-            message: 'Installer URL not found in latest release.'
-          });
-          return;
-        }
-        sendStatus({
-          kind: 'downloading',
-          percent: 0,
-          bytesPerSecond: 0,
-          transferred: 0,
-          total: 0
-        });
-        pendingManualInstaller = await manualDownloadAndPrepare(
-          latest.installerUrl,
-          latest.version
-        );
-        sendStatus({
-          kind: 'downloaded',
-          version: latest.version,
-          releaseNotes: latest.notes
-        });
-      } catch (err) {
-        sendStatus({
-          kind: 'error',
-          code: 'github-api-failed',
-          message: (err as Error).message
-        });
-      }
+      pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
     });
     ipcMain.handle(IPC.updateInstall, () => {
       sendStatus({
@@ -302,7 +322,8 @@ export async function setupAutoUpdater(
     return;
   }
 
-  // Mode prod : electron-updater pour le download différentiel via blockmap.
+  // Mode prod : tente electron-updater pour le download différentiel via blockmap,
+  // fallback sur le manual flow si indisponible (CI build sans deps, etc.).
   try {
     const { autoUpdater } = await import('electron-updater');
     autoUpdater.logger = log;
@@ -336,45 +357,13 @@ export async function setupAutoUpdater(
         await autoUpdater.downloadUpdate();
       } catch (err) {
         log.warn('[updater] electron-updater download failed, manual fallback', err);
-        try {
-          const latest = await ghFetchLatest();
-          if (!latest.installerUrl) {
-            sendStatus({
-              kind: 'error',
-              code: 'no-installer-url',
-              message: 'Installer URL not found in latest release.'
-            });
-            return;
-          }
-          sendStatus({
-            kind: 'downloading',
-            percent: 0,
-            bytesPerSecond: 0,
-            transferred: 0,
-            total: 0
-          });
-          pendingManualInstaller = await manualDownloadAndPrepare(
-            latest.installerUrl,
-            latest.version
-          );
-          sendStatus({
-            kind: 'downloaded',
-            version: latest.version,
-            releaseNotes: latest.notes
-          });
-        } catch (err2) {
-          sendStatus({
-            kind: 'error',
-            code: 'github-api-failed',
-            message: (err2 as Error).message
-          });
-        }
+        pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
       }
     });
 
     ipcMain.handle(IPC.updateInstall, () => {
       if (pendingManualInstaller) {
-        runInstallerAndQuit(pendingManualInstaller);
+        runInstallerAndQuit(pendingManualInstaller, sendStatus);
         return;
       }
       if (lastSentStatus === 'downloaded') {
@@ -394,43 +383,11 @@ export async function setupAutoUpdater(
   } catch (err) {
     log.warn('[updater] electron-updater unavailable, manual download only', err);
     ipcMain.handle(IPC.updateDownload, async () => {
-      try {
-        const latest = await ghFetchLatest();
-        if (!latest.installerUrl) {
-          sendStatus({
-            kind: 'error',
-            code: 'no-installer-url',
-            message: 'Installer URL not found in latest release.'
-          });
-          return;
-        }
-        sendStatus({
-          kind: 'downloading',
-          percent: 0,
-          bytesPerSecond: 0,
-          transferred: 0,
-          total: 0
-        });
-        pendingManualInstaller = await manualDownloadAndPrepare(
-          latest.installerUrl,
-          latest.version
-        );
-        sendStatus({
-          kind: 'downloaded',
-          version: latest.version,
-          releaseNotes: latest.notes
-        });
-      } catch (err2) {
-        sendStatus({
-          kind: 'error',
-          code: 'github-api-failed',
-          message: (err2 as Error).message
-        });
-      }
+      pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
     });
     ipcMain.handle(IPC.updateInstall, () => {
       if (pendingManualInstaller) {
-        runInstallerAndQuit(pendingManualInstaller);
+        runInstallerAndQuit(pendingManualInstaller, sendStatus);
         return;
       }
       sendStatus({

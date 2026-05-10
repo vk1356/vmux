@@ -1,4 +1,4 @@
-import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, nativeImage, shell } from 'electron';
+import { BrowserWindow, app, clipboard, dialog, ipcMain, shell } from 'electron';
 import log from 'electron-log/main';
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
@@ -28,9 +28,10 @@ import {
 import type { Snippet } from '@shared/types';
 import { defaultDiagnosticFilename, saveDiagnosticTo } from './diagnostic';
 import { checkAgents } from './agent-check';
-import { attentionBody, notifBundle } from '@shared/notif-i18n';
+import { notifBundle } from '@shared/notif-i18n';
 import type { TreePath } from '@shared/tree';
 import type { LayoutPreset } from '@shared/layouts';
+import { createNotificationService, preloadNotificationIcon } from './notification-service';
 
 function safe<T>(name: string, fn: () => Promise<T> | T): Promise<IpcResult<T>> {
   return Promise.resolve()
@@ -45,7 +46,7 @@ function safe<T>(name: string, fn: () => Promise<T> | T): Promise<IpcResult<T>> 
 
 export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   // Résolution async de l'icône de notif — non bloquant.
-  void resolveIconPathOnce();
+  void preloadNotificationIcon();
 
   /** Envoi protégé : ignore si la window est fermée/détruite (évite l'exception
    *  "Object has been destroyed" quand un event ptyManager arrive après quit). */
@@ -54,6 +55,8 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return;
     w.webContents.send(channel, ...args);
   };
+
+  const notifService = createNotificationService(getMainWindow, safeSend);
 
 
   // ---------- App ----------
@@ -164,96 +167,11 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   });
   ptyManager.on('paneAttention', (paneId, level) => {
     safeSend(IPC.paneAttention, paneId, level);
-
-    // needs-input → notification push Windows (avec icône vMux) + flashFrame
-    // pour faire clignoter l'icône dans la barre des tâches.
-    if (level !== 'needs-input') return;
-    const w = getMainWindow();
-    const settings = getSettings();
-    if (!settings.notificationsEnabled) return;
-    const lang = settings.language as Lang;
-    const bundle = notifBundle(lang);
-
-    // Trouve la session/pane pour donner du contexte dans la notif.
-    const all = ptyManager.list();
-    let sessionName = 'Agent';
-    let agentLabel = '';
-    for (const s of all) {
-      const p = s.panes[paneId];
-      if (p) {
-        sessionName = s.name;
-        if (p.kind === 'terminal') {
-          agentLabel = DEFAULT_AGENTS.find((a) => a.id === p.agentId)?.label ?? p.agentId;
-        }
-        break;
-      }
-    }
-
-    if (w && !w.isFocused()) {
-      // flashFrame : Windows fait clignoter l'icône dans la barre des tâches
-      // jusqu'à ce que l'user clique. No-op sur autres OS.
-      try {
-        w.flashFrame(true);
-      } catch (err) {
-        log.debug('[notif] flashFrame failed', err);
-      }
-    }
-
-    if (Notification.isSupported()) {
-      try {
-        const silent = settings.notificationSound !== 'default';
-        const notif = new Notification({
-          title: `${bundle.attentionTitlePrefix} — ${sessionName}`,
-          body: attentionBody(lang, agentLabel || undefined),
-          icon: getNotificationIcon(),
-          urgency: 'critical',
-          silent
-        });
-        notif.on('click', () => {
-          if (!w || w.isDestroyed()) return;
-          if (w.isMinimized()) w.restore();
-          w.show();
-          w.focus();
-          try {
-            w.flashFrame(false);
-          } catch {
-            /* ignore */
-          }
-        });
-        notif.show();
-        // Custom sound : on demande au renderer de jouer le .wav/.mp3 choisi.
-        if (settings.notificationSound === 'custom' && settings.notificationSoundPath) {
-          safeSend(IPC.notifPlaySound, settings.notificationSoundPath);
-        }
-      } catch (err) {
-        log.warn('[notif] paneAttention show failed', err);
-      }
-    }
+    notifService.notifyAttention(paneId, level);
   });
   ptyManager.on('eventDetected', (event: DetectedEvent) => {
-    const w = getMainWindow();
     safeSend(IPC.eventDetected, event);
-    // Notification système si fenêtre en arrière-plan ET activée dans les settings.
-    const settings = getSettings();
-    if (settings.notificationsEnabled && w && !w.isFocused() && Notification.isSupported()) {
-      const lang = settings.language as Lang;
-      const bundle = notifBundle(lang);
-      const title = bundle.eventTitle[event.kind];
-      try {
-        const silent = settings.notificationSound !== 'default';
-        new Notification({
-          title,
-          body: event.message,
-          icon: getNotificationIcon(),
-          silent
-        }).show();
-        if (settings.notificationSound === 'custom' && settings.notificationSoundPath) {
-          safeSend(IPC.notifPlaySound, settings.notificationSoundPath);
-        }
-      } catch (err) {
-        log.warn('[notif] failed to show', err);
-      }
-    }
+    notifService.notifyEvent(event);
   });
 
   // ---------- Git ----------
@@ -381,31 +299,5 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
       return r.filePath;
     })
   );
-}
-
-/** Renvoie le path de l'icône vMux pour les notifications système.
- *  En prod : extraResources/icon.png. En dev : build/icon.png.
- *  Résolu une fois en async dès `registerIpc` — évite l'accessSync en hot path. */
-let cachedNativeIcon: Electron.NativeImage | undefined;
-
-async function resolveIconPathOnce(): Promise<void> {
-  const candidates = [
-    path.join(process.resourcesPath, 'icon.png'),
-    path.join(app.getAppPath(), 'build', 'icon.png'),
-    path.join(app.getAppPath(), '..', 'build', 'icon.png')
-  ];
-  for (const p of candidates) {
-    try {
-      await fsp.access(p);
-      cachedNativeIcon = nativeImage.createFromPath(p);
-      return;
-    } catch {
-      /* candidate absent, try next */
-    }
-  }
-}
-
-function getNotificationIcon(): Electron.NativeImage | undefined {
-  return cachedNativeIcon;
 }
 

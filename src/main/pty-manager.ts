@@ -610,73 +610,16 @@ class PtyManager extends EventEmitter {
       // Batch côté main : agrège les chunks pour réduire l'overhead IPC.
       this.dataBuffer.push(paneId, data);
 
-      // Heartbeat : tracker le dernier output pour la détection "stale".
       const cur = this.sessions.get(sessionId);
-      const cp0 = cur?.session.panes[paneId];
-      if (cur && cp0 && cp0.kind === 'terminal') {
-        cur.session.panes = {
-          ...cur.session.panes,
-          [paneId]: { ...cp0, lastOutputAt: Date.now() }
-        };
-        // Pas de persist ici (trop fréquent) — le sessionUpdate fire ailleurs.
-      }
       if (!cur) return;
+      this.updateHeartbeat(cur, paneId);
       const curMp = cur.panes.get(paneId);
       if (!curMp) return;
 
-      // Détection d'attention (style tmux) — émise pour que le renderer
-      // mette un indicator visuel sur le pane si non focusé.
-      const stripped = stripAnsi(data);
-      const isBell = data.includes('\x07');
-      const needsInput = detectsNeedsInput(stripped);
-      if (needsInput) {
-        this.emit('paneAttention', paneId, 'needs-input');
-      } else if (isBell) {
-        this.emit('paneAttention', paneId, 'alert');
-      } else {
-        // Activity throttlé à 500ms — sinon on flood quand l'agent stream.
-        const now = Date.now();
-        const last = this.lastActivityEmit.get(paneId) ?? 0;
-        if (now - last > 500) {
-          this.lastActivityEmit.set(paneId, now);
-          this.emit('paneAttention', paneId, 'activity');
-        }
-      }
-
-      // Détection d'URLs
-      const fresh = extractUrls(data);
-      if (fresh.length > 0) {
-        const cp = cur.session.panes[paneId];
-        if (cp && cp.kind === 'terminal') {
-          const { merged, added } = mergeUrls(cp.recentUrls, fresh);
-          if (added.length > 0) {
-            cur.session.panes = { ...cur.session.panes, [paneId]: { ...cp, recentUrls: merged } };
-            this.persist();
-            this.emit('sessionUpdate', cur.session);
-            this.emit('urlsDetected', paneId, added);
-          }
-        }
-      }
-
-      // Détection d'événements
-      const events = detectEvents(paneId, data);
-      for (const ev of events) this.emit('eventDetected', ev);
-
-      // initialInput écrit après le bootLine et un délai pour laisser
-      // l'agent s'initialiser.
-      if (!curMp.bootSent && curMp.bootWritten && curMp.pendingInitialInput) {
-        curMp.bootSent = true;
-        const text = curMp.pendingInitialInput;
-        curMp.pendingInitialInput = undefined;
-        curMp.inputTimer = setTimeout(() => {
-          curMp.inputTimer = undefined;
-          try {
-            curMp.process?.write(`${text}\r`);
-          } catch (err) {
-            log.debug('[pty] initialInput write failed', err);
-          }
-        }, 800);
-      }
+      this.emitAttention(paneId, data);
+      this.processNewUrls(cur, paneId, data);
+      for (const ev of detectEvents(paneId, data)) this.emit('eventDetected', ev);
+      this.maybeWriteInitialInput(curMp);
     });
 
     mp.exitSub = child.onExit(({ exitCode }) => {
@@ -696,6 +639,69 @@ class PtyManager extends EventEmitter {
         exitCode
       });
     });
+  }
+
+  /** Heartbeat : tracker le dernier output pour la détection "stale".
+   *  Pas de persist ici (trop fréquent) — le sessionUpdate fire ailleurs. */
+  private updateHeartbeat(cur: ManagedSession, paneId: PaneId): void {
+    const cp0 = cur.session.panes[paneId];
+    if (!cp0 || cp0.kind !== 'terminal') return;
+    cur.session.panes = {
+      ...cur.session.panes,
+      [paneId]: { ...cp0, lastOutputAt: Date.now() }
+    };
+  }
+
+  /** Détection d'attention (style tmux) — needs-input > alert (bell) > activity.
+   *  Activity throttlé à 500ms — sinon on flood quand l'agent stream. */
+  private emitAttention(paneId: PaneId, data: string): void {
+    const stripped = stripAnsi(data);
+    const isBell = data.includes('\x07');
+    if (detectsNeedsInput(stripped)) {
+      this.emit('paneAttention', paneId, 'needs-input');
+      return;
+    }
+    if (isBell) {
+      this.emit('paneAttention', paneId, 'alert');
+      return;
+    }
+    const now = Date.now();
+    const last = this.lastActivityEmit.get(paneId) ?? 0;
+    if (now - last > 500) {
+      this.lastActivityEmit.set(paneId, now);
+      this.emit('paneAttention', paneId, 'activity');
+    }
+  }
+
+  /** Détection d'URLs — merge dans recentUrls du pane et émet urlsDetected. */
+  private processNewUrls(cur: ManagedSession, paneId: PaneId, data: string): void {
+    const fresh = extractUrls(data);
+    if (fresh.length === 0) return;
+    const cp = cur.session.panes[paneId];
+    if (!cp || cp.kind !== 'terminal') return;
+    const { merged, added } = mergeUrls(cp.recentUrls, fresh);
+    if (added.length === 0) return;
+    cur.session.panes = { ...cur.session.panes, [paneId]: { ...cp, recentUrls: merged } };
+    this.persist();
+    this.emit('sessionUpdate', cur.session);
+    this.emit('urlsDetected', paneId, added);
+  }
+
+  /** initialInput écrit après le bootLine et un délai pour laisser l'agent
+   *  s'initialiser. Idempotent : guard sur bootSent. */
+  private maybeWriteInitialInput(mp: ManagedPane): void {
+    if (mp.bootSent || !mp.bootWritten || !mp.pendingInitialInput) return;
+    mp.bootSent = true;
+    const text = mp.pendingInitialInput;
+    mp.pendingInitialInput = undefined;
+    mp.inputTimer = setTimeout(() => {
+      mp.inputTimer = undefined;
+      try {
+        mp.process?.write(`${text}\r`);
+      } catch (err) {
+        log.debug('[pty] initialInput write failed', err);
+      }
+    }, 800);
   }
 
   /** Dispose les listeners onData/onExit du child PTY avant un kill manuel.
