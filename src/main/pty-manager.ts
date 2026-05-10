@@ -66,6 +66,10 @@ type Events = {
 
 class PtyManager extends EventEmitter {
   private sessions = new Map<string, ManagedSession>();
+  /** Index inversé pane→session pour O(1) lookups dans writePane/resizePane (hot
+   *  paths : fire à chaque keystroke / resize). Avant cet index, findSessionByPane
+   *  itérait toutes les sessions × tous les panes — O(N×P) à chaque touche. */
+  private paneToSession = new Map<PaneId, string>();
   /** Buffer agrégateur des chunks PTY — flush 60Hz, voir pane-data-buffer.ts. */
   private dataBuffer = new PaneDataBuffer();
   /** Dernière émission d'attention 'activity' par pane — throttle 500ms. */
@@ -98,6 +102,7 @@ class PtyManager extends EventEmitter {
       const panes: Record<PaneId, (typeof s.panes)[string]> = {};
       for (const [pid, p] of Object.entries(s.panes)) {
         panes[pid] = p.kind === 'terminal' ? { ...p, status: 'idle', pid: undefined } : p;
+        this.paneToSession.set(pid, s.id);
       }
       const session: Session = { ...s, panes };
       const managed: ManagedSession = { session, panes: new Map() };
@@ -172,6 +177,7 @@ class PtyManager extends EventEmitter {
       panes: new Map([[paneId, { pendingInitialInput: input.initialInput }]])
     };
     this.sessions.set(sessionId, managed);
+    this.paneToSession.set(paneId, sessionId);
     this.persist();
     this.emit('sessionUpdate', session);
 
@@ -193,6 +199,11 @@ class PtyManager extends EventEmitter {
       ptyStats.removePane(paneId);
       this.dataBuffer.delete(paneId);
       this.lastActivityEmit.delete(paneId);
+    }
+    // Drop tous les paneId de cette session de l'index inversé. On itère sur
+    // session.panes (et pas managed.panes) pour couvrir aussi les preview panes.
+    for (const paneId of Object.keys(m.session.panes)) {
+      this.paneToSession.delete(paneId);
     }
     if (m.cleanupPath && m.session.sourceRepo) {
       try {
@@ -244,6 +255,7 @@ class PtyManager extends EventEmitter {
     if (newPane.kind === 'terminal') {
       m.panes.set(newPaneId, {});
     }
+    this.paneToSession.set(newPaneId, input.sessionId);
     this.persist();
     this.emit('sessionUpdate', m.session);
 
@@ -270,6 +282,7 @@ class PtyManager extends EventEmitter {
     clearDetector(paneId);
     ptyStats.removePane(paneId);
     this.dataBuffer.delete(paneId);
+    this.paneToSession.delete(paneId);
     const newTree = removePane(m.session.tree, paneId);
     if (!newTree) {
       // Plus de panes → on ferme la session entière.
@@ -441,9 +454,10 @@ class PtyManager extends EventEmitter {
   // ============================================================
 
   writePane(paneId: PaneId, data: string): void {
-    const session = this.findSessionByPane(paneId);
-    if (!session) return;
-    const mp = this.sessions.get(session.id)?.panes.get(paneId);
+    // Hot path : O(1) via index inversé. Avant : findSessionByPane scan O(N×P).
+    const sessionId = this.paneToSession.get(paneId);
+    if (!sessionId) return;
+    const mp = this.sessions.get(sessionId)?.panes.get(paneId);
     try {
       mp?.process?.write(data);
     } catch (err) {
@@ -452,9 +466,9 @@ class PtyManager extends EventEmitter {
   }
 
   resizePane(paneId: PaneId, size: PtySize): void {
-    const session = this.findSessionByPane(paneId);
-    if (!session) return;
-    const m = this.sessions.get(session.id);
+    const sessionId = this.paneToSession.get(paneId);
+    if (!sessionId) return;
+    const m = this.sessions.get(sessionId);
     const mp = m?.panes.get(paneId);
     if (!mp) return;
     const cols = Math.max(2, Math.floor(size.cols));
@@ -480,7 +494,9 @@ class PtyManager extends EventEmitter {
         mp.bootTimer = undefined;
         try {
           // \x0c = Form Feed (Ctrl+L) → efface le prompt pwsh pré-resize.
-          mp.process?.write(`\x0c${cmd}\r`);
+          // Sur POSIX bash/zsh on n'envoie pas ce préfixe (insère un littéral).
+          const prefix = process.platform === 'win32' ? '\x0c' : '';
+          mp.process?.write(`${prefix}${cmd}\r`);
         } catch (err) {
           log.debug('[pty] write bootLine failed', err);
         }
@@ -496,13 +512,6 @@ class PtyManager extends EventEmitter {
     for (const id of allPaneIds(m.session.tree)) {
       const p = m.session.panes[id];
       if (p && p.kind === 'terminal') return p.agentId;
-    }
-    return null;
-  }
-
-  private findSessionByPane(paneId: PaneId): Session | null {
-    for (const m of this.sessions.values()) {
-      if (m.session.panes[paneId]) return m.session;
     }
     return null;
   }
@@ -533,16 +542,24 @@ class PtyManager extends EventEmitter {
 
     let child: pty.IPty;
     try {
+      // ConPTY-specific options : ignorées sur macOS/Linux par node-pty mais on
+      // ne les passe que sur win32 pour la propreté du contrat de spawn.
+      const winOpts =
+        process.platform === 'win32'
+          ? {
+              // node-pty 1.1+ : conpty.dll bundlé, plus stable que celui de l'OS
+              // sur certaines builds Windows 10 < 22H2.
+              useConptyDll: true,
+              conptyInheritCursor: false
+            }
+          : {};
       child = pty.spawn(shell.exe, shell.args, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: pane.cwd,
         env,
-        // node-pty 1.1+ : conpty.dll bundlé, plus stable que celui de l'OS
-        // sur certaines builds Windows 10 < 22H2.
-        useConptyDll: true,
-        conptyInheritCursor: false
+        ...winOpts
       });
     } catch (err) {
       log.error('[pty] spawn failed', err);
@@ -580,7 +597,8 @@ class PtyManager extends EventEmitter {
           const cmd = curMp.pendingBootLine;
           curMp.pendingBootLine = undefined;
           try {
-            curMp.process?.write(`\x0c${cmd}\r`);
+            const prefix = process.platform === 'win32' ? '\x0c' : '';
+            curMp.process?.write(`${prefix}${cmd}\r`);
           } catch (err) {
             log.error('[pty] fallback bootLine failed', err);
           }

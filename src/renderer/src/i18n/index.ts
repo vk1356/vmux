@@ -368,7 +368,32 @@ const EN = {
   'agentDesc.cursor-agent': 'Cursor CLI agent',
   'agentDesc.aider': 'AI pair programmer in your CLI',
   'agentDesc.gemini': 'Google Gemini CLI',
-  'agentDesc.shell': 'Raw PowerShell, no agent'
+  'agentDesc.shell': 'Raw PowerShell, no agent',
+
+  // Onboarding (first-launch tutorial)
+  fieldReplayTutorial: 'Tutorial',
+  replayTutorialBtn: 'Replay onboarding',
+  replayTutorialHint: 'Re-runs the first-launch tour. The window reloads.',
+  onboardingSkip: 'Skip',
+  onboardingNext: 'Next',
+  onboardingPrev: 'Back',
+  onboardingFinish: 'Get started',
+  onboardingStepCount: 'Step {current} of {total}',
+  onboardingWelcomeTitle: 'Welcome to vMux',
+  onboardingWelcomeBody:
+    "Run multiple AI coding agents side by side, each in its own git worktree. Two minutes — let's tour the basics.",
+  onboardingAgentsTitle: 'Pick your agents',
+  onboardingAgentsBody:
+    'Claude Code, Codex, Cursor CLI, Aider, Gemini, or plain PowerShell. Each new session spawns one agent in an isolated workspace. Press Ctrl+N to start.',
+  onboardingSplitsTitle: 'Split panes anywhere',
+  onboardingSplitsBody:
+    'Ctrl+Shift+D adds a pane and auto-tiles. Ctrl+Shift+E splits manually. Alt+arrows jump between panes. You can have a 2D grid of agents in one window.',
+  onboardingPreviewTitle: 'Localhost preview, free',
+  onboardingPreviewBody:
+    'When an agent starts a dev server, vMux detects the URL and opens an embedded preview pane next to the terminal. No alt-tabbing.',
+  onboardingShortcutsTitle: 'Discover shortcuts anytime',
+  onboardingShortcutsBody:
+    "Press ? to see all shortcuts. Ctrl+K opens the command palette. Ctrl+, opens settings. You're set — happy hacking."
 } as const;
 
 const FR: Partial<Record<TKey, string>> = {
@@ -670,7 +695,32 @@ const FR: Partial<Record<TKey, string>> = {
   'agentDesc.cursor-agent': 'Agent CLI Cursor',
   'agentDesc.aider': 'Pair-programmer IA en CLI',
   'agentDesc.gemini': 'Google Gemini CLI',
-  'agentDesc.shell': 'PowerShell brut, sans agent'
+  'agentDesc.shell': 'PowerShell brut, sans agent',
+
+  // Onboarding
+  fieldReplayTutorial: 'Tutoriel',
+  replayTutorialBtn: 'Relancer le tutoriel',
+  replayTutorialHint: 'Relance la visite guidée. La fenêtre se recharge.',
+  onboardingSkip: 'Passer',
+  onboardingNext: 'Suivant',
+  onboardingPrev: 'Retour',
+  onboardingFinish: 'Commencer',
+  onboardingStepCount: 'Étape {current} sur {total}',
+  onboardingWelcomeTitle: 'Bienvenue dans vMux',
+  onboardingWelcomeBody:
+    "Lance plusieurs agents IA en parallèle, chacun dans son worktree git. Deux minutes — on fait le tour de l'essentiel.",
+  onboardingAgentsTitle: 'Choisis tes agents',
+  onboardingAgentsBody:
+    "Claude Code, Codex, Cursor CLI, Aider, Gemini, ou PowerShell brut. Chaque session lance un agent dans un workspace isolé. Tape Ctrl+N pour démarrer.",
+  onboardingSplitsTitle: 'Splits où tu veux',
+  onboardingSplitsBody:
+    "Ctrl+Shift+D ajoute un pane et auto-tile. Ctrl+Shift+E split manuellement. Alt+flèches navigue entre panes. Une grille 2D d'agents dans une seule fenêtre.",
+  onboardingPreviewTitle: 'Preview localhost, gratos',
+  onboardingPreviewBody:
+    "Quand un agent lance un dev server, vMux détecte l'URL et ouvre un preview embarqué à côté du terminal. Plus d'alt-tab.",
+  onboardingShortcutsTitle: 'Découvre les raccourcis',
+  onboardingShortcutsBody:
+    'Tape ? pour voir tous les raccourcis. Ctrl+K ouvre la palette. Ctrl+, ouvre les paramètres. À toi de jouer.'
 };
 
 const DE: Partial<Record<TKey, string>> = {

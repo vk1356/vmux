@@ -8,6 +8,7 @@ import { StatusBar } from './components/StatusBar';
 import { ToastContainer, eventTitleFor } from './components/Toast';
 import { UrlChips } from './components/UrlChips';
 import { TabBar } from './components/TabBar';
+import { OnboardingOverlay } from './components/OnboardingOverlay';
 
 // Lazy-load des dialogs : code split, ne sont chargés que quand l'utilisateur les ouvre.
 const NewSessionDialog = lazy(() =>
@@ -98,6 +99,20 @@ export function App(): JSX.Element {
   const [closeConfirm, setCloseConfirm] = useState<{ sessionId: string; name: string } | null>(
     null
   );
+  // Onboarding : affiché tant que settings.onboardingCompleted !== true. On
+  // attend que les settings soient chargés (settings === null au boot) pour
+  // éviter un flash de l'overlay si l'user a déjà skip.
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  useEffect(() => {
+    if (settings && settings.onboardingCompleted !== true) {
+      setOnboardingOpen(true);
+    }
+  }, [settings]);
+  const closeOnboarding = useCallback((completed: boolean): void => {
+    setOnboardingOpen(false);
+    void window.cmux.settings.set({ onboardingCompleted: true });
+    void completed; // skip vs finish : même résultat persisté ; on ne re-affiche jamais.
+  }, []);
   const [sidebarPx, setSidebarPx] = useState<number>(DEFAULT_SIDEBAR);
   const draggingRef = useRef(false);
 
@@ -314,7 +329,8 @@ export function App(): JSX.Element {
         shortcutsOpen ||
         notifsOpen ||
         snippetsOpen ||
-        closeConfirm !== null;
+        closeConfirm !== null ||
+        onboardingOpen;
       if (aDialogIsOpen && e.key !== 'Escape') return;
 
       const ctrl = e.ctrlKey || e.metaKey;
@@ -435,6 +451,7 @@ export function App(): JSX.Element {
     notifsOpen,
     snippetsOpen,
     closeConfirm,
+    onboardingOpen,
     removeSession,
     toggleSync
   ]);
@@ -549,6 +566,7 @@ export function App(): JSX.Element {
 
       <StatusBar onOpenNotifications={openNotifs} />
       <ToastContainer />
+      <OnboardingOverlay open={onboardingOpen} onClose={closeOnboarding} />
       <Suspense fallback={null}>
         {newSessionOpen && (
           <NewSessionDialog

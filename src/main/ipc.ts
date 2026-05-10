@@ -336,13 +336,19 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     const next = updateSettings(patch);
     // Si autoLaunch a changé dans ce patch, applique le LoginItemSetting.
     // Pas en dev (le path serait electron.exe, ce qui n'a pas de sens).
-    if (Object.prototype.hasOwnProperty.call(patch, 'autoLaunch') && process.platform === 'win32') {
+    if (Object.prototype.hasOwnProperty.call(patch, 'autoLaunch')) {
       try {
-        app.setLoginItemSettings({
-          openAtLogin: next.autoLaunch,
-          path: process.execPath,
-          args: ['--hidden']
-        });
+        if (process.platform === 'win32') {
+          app.setLoginItemSettings({
+            openAtLogin: next.autoLaunch,
+            path: process.execPath,
+            args: ['--hidden']
+          });
+        } else if (process.platform === 'darwin') {
+          app.setLoginItemSettings({ openAtLogin: next.autoLaunch, openAsHidden: true });
+        } else if (process.platform === 'linux') {
+          app.setLoginItemSettings({ openAtLogin: next.autoLaunch });
+        }
       } catch (err) {
         log.warn('[autolaunch] sync failed', err);
       }

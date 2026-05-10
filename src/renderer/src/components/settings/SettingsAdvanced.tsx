@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, RotateCw } from 'lucide-react';
 import type { AppSettings } from '@shared/types';
 import { useT } from '../../i18n';
 
@@ -35,6 +35,22 @@ export function SettingsAdvanced({ settings, apply }: Props): JSX.Element {
           {t('diagnosticBtn')}
         </button>
         <div className="hint">{t('diagnosticHint')}</div>
+      </div>
+      <div className="field">
+        <label className="field-label">{t('fieldReplayTutorial')}</label>
+        <button
+          className="btn"
+          onClick={async () => {
+            await apply({ onboardingCompleted: false });
+            // Reload pour redéclencher l'overlay (le useEffect de App.tsx
+            // se base sur le settings — le re-trigger est plus fiable
+            // qu'un setState manuel cross-component).
+            window.location.reload();
+          }}
+        >
+          <RotateCw size={11} /> {t('replayTutorialBtn')}
+        </button>
+        <div className="hint">{t('replayTutorialHint')}</div>
       </div>
       <div className="field">
         <label className="field-label">{t('fieldSource')}</label>

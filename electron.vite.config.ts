@@ -1,13 +1,15 @@
 import { resolve } from 'node:path';
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { visualizer } from 'rollup-plugin-visualizer';
 
 const ANALYZE = process.env.ANALYZE === '1';
 
+// electron-vite v5 : `build.externalizeDeps` activé par défaut → plus besoin
+// d'`externalizeDepsPlugin`. Les natifs (node-pty, pidusage) restent externalisés
+// automatiquement via la lecture de package.json.
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')
@@ -15,12 +17,13 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        external: ['node-pty', 'electron-store', 'pidusage']
+        // node-pty et pidusage ont du natif (.node) → on garde la garantie
+        // d'externalisation explicite, indépendante du parsing de package.json.
+        external: ['node-pty', 'pidusage']
       }
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')

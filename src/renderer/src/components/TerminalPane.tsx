@@ -140,7 +140,11 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       // dans la search bar) — on veut pouvoir lire l'historique tranquillement.
       scrollOnUserInput: false,
       theme: THEME,
-      windowsPty: { backend: 'conpty' }
+      // windowsPty est ignoré sur macOS/Linux par xterm.js — on ne le pose que
+      // si on tourne sur Windows pour rester propre.
+      ...(navigator.platform.toLowerCase().includes('win')
+        ? { windowsPty: { backend: 'conpty' as const } }
+        : {})
     });
     const fit = new FitAddon();
     const search = new SearchAddon();
@@ -302,6 +306,47 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       /* ignore */
     }
   }, [settings?.fontFamily, settings?.fontSize, settings?.cursorBlink, settings?.scrollback]);
+
+  // Live toggle WebGL renderer : avant ce useEffect, basculer le setting
+  // n'avait aucun effet tant que le terminal n'était pas re-créé (close+reopen
+  // du pane). On gère le mount/unmount à chaud — fallback DOM en cas d'échec.
+  useEffect(() => {
+    const t = termRef.current;
+    if (!t || !settings) return;
+    if (settings.webglRenderer && !webglRef.current) {
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          webgl.dispose();
+          webglRef.current = null;
+        });
+        t.loadAddon(webgl);
+        webglRef.current = webgl;
+        try {
+          const lig = new LigaturesAddon();
+          t.loadAddon(lig);
+          ligaturesRef.current = lig;
+        } catch (err) {
+          console.warn('[term] LigaturesAddon load failed', err);
+        }
+      } catch (err) {
+        console.warn('[term] WebGL enable failed', err);
+      }
+    } else if (!settings.webglRenderer && webglRef.current) {
+      try {
+        ligaturesRef.current?.dispose();
+      } catch {
+        /* ignore */
+      }
+      ligaturesRef.current = null;
+      try {
+        webglRef.current.dispose();
+      } catch {
+        /* ignore */
+      }
+      webglRef.current = null;
+    }
+  }, [settings?.webglRenderer]);
 
   // Cleanup au démontage.
   useEffect(() => {

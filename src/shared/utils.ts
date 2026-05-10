@@ -6,6 +6,15 @@ export function quotePsLiteral(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** Quote pour un shell POSIX (bash/zsh/sh) : single-quote enveloppant + escape
+ *  des single-quotes via la séquence `'\''`. Utilisé sur macOS/Linux pour le
+ *  bootLine des agents. */
+export function quoteShLiteral(value: string): string {
+  if (!value) return "''";
+  if (/^[A-Za-z0-9_./:=+-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 /** Polyfill cross-platform pour requestIdleCallback (renderer-only en pratique). */
 export function whenIdle(cb: () => void, fallbackMs = 200): void {
   const g = globalThis as unknown as { requestIdleCallback?: (cb: () => void) => void };

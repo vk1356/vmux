@@ -22,6 +22,9 @@ export function stripAnsi(text: string): string {
 }
 
 export function extractUrls(chunk: string): string[] {
+  // Hot path PTY (chaque chunk traverse cette fonction). 99% des chunks d'agent
+  // n'ont pas d'URL — bail-out trivial avant le coûteux replace ANSI.
+  if (chunk.indexOf('http') < 0) return [];
   const clean = stripAnsi(chunk);
   const matches = clean.match(URL_RE);
   if (!matches) return [];

@@ -30,7 +30,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notificationSound: 'default',
   autoLaunch: false,
   previewDefaultSplit: 60,
-  agentOverrides: {}
+  agentOverrides: {},
+  onboardingCompleted: false
 };
 
 const DEFAULT_WINDOW_STATE: WindowState = {

@@ -183,6 +183,9 @@ export interface AppSettings {
   /** Pourcentage du split quand on ouvre un preview (terminal | preview). */
   previewDefaultSplit: number;
   agentOverrides: Partial<Record<AgentId, Partial<Pick<AgentPreset, 'command' | 'args' | 'env'>>>>;
+  /** True quand l'utilisateur a complété (ou skip) le tutoriel de premier lancement.
+   *  False/undefined → l'overlay onboarding s'affiche au boot. */
+  onboardingCompleted?: boolean;
 }
 
 // ============================================================

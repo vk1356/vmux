@@ -30,6 +30,16 @@ interface CreateWindowOptions {
 
 export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
   const saved = clampToScreens(getWindowState());
+
+  // Plateformes :
+  // - Windows / Linux : frameless complet, on dessine notre TitleBar custom.
+  // - macOS : on garde les traffic lights natifs (`hiddenInset`) pour respecter
+  //   les conventions macOS — sinon le user perd close/minimize/zoom.
+  const isDarwin = process.platform === 'darwin';
+  const titleBarOpts: Electron.BrowserWindowConstructorOptions = isDarwin
+    ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 12 } }
+    : { frame: false, titleBarStyle: 'hidden' };
+
   const win = new BrowserWindow({
     x: saved.x,
     y: saved.y,
@@ -40,9 +50,8 @@ export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
     show: false,
     backgroundColor: '#0a0a0b',
     title: 'vMux',
-    frame: false,
-    titleBarStyle: 'hidden',
     autoHideMenuBar: true,
+    ...titleBarOpts,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -136,16 +145,24 @@ export async function ensureDevShortcutForNotifications(aumid: string): Promise<
 }
 
 /** Synchronise `app.setLoginItemSettings` avec la valeur du setting autoLaunch.
- *  En dev mode on ne touche à rien (le path est electron.exe, pas vMux.exe). */
+ *  En dev mode on ne touche à rien (le path est electron.exe, pas vMux.exe).
+ *  Linux : Electron 41+ supporte setLoginItemSettings via les .desktop files. */
 export function syncAutoLaunch(enabled: boolean): void {
-  if (process.platform !== 'win32') return;
   if (is.dev) return;
   try {
-    app.setLoginItemSettings({
-      openAtLogin: enabled,
-      path: process.execPath,
-      args: ['--hidden']
-    });
+    if (process.platform === 'win32') {
+      app.setLoginItemSettings({
+        openAtLogin: enabled,
+        path: process.execPath,
+        args: ['--hidden']
+      });
+    } else if (process.platform === 'darwin') {
+      app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true });
+    } else if (process.platform === 'linux') {
+      // Electron pose un .desktop dans ~/.config/autostart. Pas de --hidden ici
+      // car les WMs Linux ne le proposent pas uniformément.
+      app.setLoginItemSettings({ openAtLogin: enabled });
+    }
     log.info(`[autolaunch] openAtLogin=${enabled}`);
   } catch (err) {
     log.warn('[autolaunch] failed to set login item', err);

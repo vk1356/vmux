@@ -7,6 +7,10 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import log from 'electron-log/main';
 import { IPC, type UpdateStatus } from '@shared/types';
+import { isNewer } from './version-compare';
+
+// Re-export pour compat ascendante (l'API publique du module reste identique).
+export { isNewer };
 
 /**
  * Auto-update extrait de main/index.ts pour cloisonner ~350 lignes de logique
@@ -104,9 +108,18 @@ export async function setupAutoUpdater(
       const data = (await res.json()) as GhRelease;
       const version = (data.tag_name || '').replace(/^v/, '');
       if (!version) throw new Error('Empty tag_name in GitHub release');
-      const installer = data.assets?.find(
-        (a) => /Setup.*\.exe$/i.test(a.name) && !a.name.endsWith('.blockmap')
-      );
+      // Asset matching par plateforme : NSIS (Windows), DMG (macOS), AppImage (Linux).
+      // electron-updater gère le download différentiel sur win/mac mais pas Linux.
+      const matchAsset = (a: { name: string }): boolean => {
+        if (a.name.endsWith('.blockmap')) return false;
+        if (process.platform === 'win32') return /Setup.*\.exe$/i.test(a.name);
+        if (process.platform === 'darwin') {
+          const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+          return new RegExp(`-${arch}\\.dmg$`, 'i').test(a.name) || /\.dmg$/i.test(a.name);
+        }
+        return /\.AppImage$/i.test(a.name);
+      };
+      const installer = data.assets?.find(matchAsset);
       log.info(`[updater] latest tag=${version} installer=${installer?.name ?? 'none'}`);
       return {
         version,
@@ -118,31 +131,20 @@ export async function setupAutoUpdater(
     }
   }
 
-  function isNewer(remote: string, local: string): boolean {
-    const parse = (v: string): number[] =>
-      v.split(/[.-]/).map((n) => parseInt(n, 10) || 0);
-    const r = parse(remote);
-    const l = parse(local);
-    for (let i = 0; i < Math.max(r.length, l.length); i++) {
-      const a = r[i] ?? 0;
-      const b = l[i] ?? 0;
-      if (a > b) return true;
-      if (a < b) return false;
-    }
-    return false;
-  }
-
   /** Path du dernier installer téléchargé manuellement, prêt à être lancé. */
   let pendingManualInstaller: string | null = null;
 
-  /** Télécharge l'installer NSIS dans le dossier temp avec progress. */
+  /** Télécharge l'installer dans le dossier temp avec progress.
+   *  Extension dérivée de l'URL pour rester correcte sur win/mac/linux. */
   async function manualDownloadAndPrepare(
     installerUrl: string,
     version: string
   ): Promise<string> {
     const tmpDir = path.join(app.getPath('temp'), 'vmux-updater');
     await fs.promises.mkdir(tmpDir, { recursive: true });
-    const tmpPath = path.join(tmpDir, `vMux-Setup-${version}.exe`);
+    const ext =
+      process.platform === 'win32' ? 'exe' : process.platform === 'darwin' ? 'dmg' : 'AppImage';
+    const tmpPath = path.join(tmpDir, `vMux-Setup-${version}.${ext}`);
 
     log.info(`[updater] manual download from ${installerUrl} → ${tmpPath}`);
 
@@ -187,16 +189,24 @@ export async function setupAutoUpdater(
     }
   }
 
-  /** Lance l'installer NSIS en silencieux et quitte l'app. */
+  /** Lance l'installer (NSIS sur Win, DMG mounté sur macOS, AppImage sur Linux)
+   *  et quitte l'app. Sur macOS/Linux la procédure se limite à ouvrir le fichier
+   *  dans le Finder/Files — l'user installe à la main. */
   function runInstallerAndQuit(installerPath: string): void {
-    log.info(`[updater] spawning installer ${installerPath} /S --force-run`);
+    log.info(`[updater] launching ${installerPath}`);
     try {
-      const child = spawn(installerPath, ['/S', '--force-run'], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true
-      });
-      child.unref();
+      if (process.platform === 'win32') {
+        const child = spawn(installerPath, ['/S', '--force-run'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        });
+        child.unref();
+      } else {
+        // Ouvre le DMG/AppImage dans le file manager — pas d'install silencieuse
+        // possible sans privilèges sur macOS/Linux pour des apps non-MAS / non-flatpak.
+        void import('electron').then(({ shell }) => shell.showItemInFolder(installerPath));
+      }
     } catch (err) {
       log.error('[updater] failed to spawn installer', err);
       sendStatus({

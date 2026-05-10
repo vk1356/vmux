@@ -45,6 +45,9 @@ export interface ToastItem {
 
 interface SessionStore {
   sessions: Session[];
+  /** Index dérivé sessionId → Session — maintenu en parallèle de `sessions`.
+   *  Évite les `.find()` O(N) répétés dans App.tsx, Sidebar, PreviewPane. */
+  sessionsById: Record<string, Session>;
   agents: AgentPreset[];
   agentAvailability: Record<string, AgentAvailability>;
   settings: AppSettings | null;
@@ -104,8 +107,16 @@ const ATTENTION_LEVEL: Record<PaneAttention, number> = {
 // Zustand v5 : la forme curried `create<T>()(...)` est requise pour bénéficier
 // de l'inférence de types et rester compatible avec les middlewares (cf. docs
 // Zustand v5 — migrating to v5).
+/** Reconstruit l'index sessionsById depuis un array. */
+function indexSessions(arr: Session[]): Record<string, Session> {
+  const idx: Record<string, Session> = {};
+  for (const s of arr) idx[s.id] = s;
+  return idx;
+}
+
 export const useSessionStore = create<SessionStore>()((set) => ({
   sessions: [],
+  sessionsById: {},
   agents: [],
   agentAvailability: {},
   settings: null,
@@ -121,6 +132,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
   setSessions: (sessions) =>
     set((state) => ({
       sessions,
+      sessionsById: indexSessions(sessions),
       activeSessionId:
         state.activeSessionId && sessions.some((s) => s.id === state.activeSessionId)
           ? state.activeSessionId
@@ -147,6 +159,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       if (sIdx === -1 || tIdx === -1) return {};
       const [moved] = arr.splice(sIdx, 1);
       arr.splice(tIdx, 0, moved);
+      // sessionsById n'est pas affecté par un reorder (mêmes refs).
       return { sessions: arr };
     }),
 
@@ -179,33 +192,43 @@ export const useSessionStore = create<SessionStore>()((set) => ({
         idx === -1 ? [...state.sessions, s] : state.sessions.map((x) => (x.id === s.id ? s : x));
       return {
         sessions,
+        sessionsById: { ...state.sessionsById, [s.id]: s },
         activeSessionId: state.activeSessionId ?? s.id
       };
     }),
 
   removeSession: (id) =>
     set((state) => {
-      const target = state.sessions.find((s) => s.id === id);
+      const target = state.sessionsById[id];
       if (target) {
         for (const paneId of Object.keys(target.panes)) clearPaneData(paneId);
       }
       const sessions = state.sessions.filter((s) => s.id !== id);
+      const { [id]: _drop, ...sessionsById } = state.sessionsById;
+      void _drop;
       return {
         sessions,
+        sessionsById,
         activeSessionId:
           state.activeSessionId === id ? sessions[0]?.id ?? null : state.activeSessionId
       };
     }),
 
   patchPane: (sessionId, paneId, patch) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) => {
-        if (s.id !== sessionId) return s;
-        const cur = s.panes[paneId];
-        if (!cur || cur.kind !== 'terminal') return s;
-        return { ...s, panes: { ...s.panes, [paneId]: { ...cur, ...patch } } };
-      })
-    })),
+    set((state) => {
+      const target = state.sessionsById[sessionId];
+      if (!target) return {};
+      const cur = target.panes[paneId];
+      if (!cur || cur.kind !== 'terminal') return {};
+      const updated: Session = {
+        ...target,
+        panes: { ...target.panes, [paneId]: { ...cur, ...patch } }
+      };
+      return {
+        sessions: state.sessions.map((s) => (s.id === sessionId ? updated : s)),
+        sessionsById: { ...state.sessionsById, [sessionId]: updated }
+      };
+    }),
 
   addToast: (t) =>
     set((state) => {
@@ -230,7 +253,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
   recordEvent: (sessionId, event) =>
     set((state) => {
-      const sess = state.sessions.find((s) => s.id === sessionId);
+      const sess = state.sessionsById[sessionId];
       const entry = {
         event,
         sessionId,
@@ -261,7 +284,9 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       // un feedback visuel que vMux a détecté l'événement, surtout utile
       // quand il n'a qu'une seule session ouverte).
       if (level === 'activity') {
-        const activeSess = state.sessions.find((s) => s.id === state.activeSessionId);
+        const activeSess = state.activeSessionId
+          ? state.sessionsById[state.activeSessionId]
+          : undefined;
         if (activeSess?.activePaneId === paneId) return {};
       }
       const cur = state.paneActivity[paneId] ?? 'idle';
