@@ -15,7 +15,7 @@ Run Claude Code, Codex, Aider, Cursor Agent and Gemini side by side — each iso
 
 [Download](https://github.com/vk1356/vmux/releases/latest) ·
 [Features](#features) ·
-[vs cmux](#vmux-vs-cmux-vs-wmux-vs-raw-tmux) ·
+[vs cmux](#vmux-vs-cmux) ·
 [Quick start](#installation) ·
 [Architecture](#architecture)
 
@@ -23,35 +23,31 @@ Run Claude Code, Codex, Aider, Cursor Agent and Gemini side by side — each iso
 
 ---
 
-## vMux vs cmux vs wmux vs raw tmux
+## vMux vs cmux
 
-The agent-multiplexer space exploded in 2025–2026. Here's where vMux fits.
+[cmux](https://github.com/manaflow-ai/cmux) nailed multi-agent orchestration on macOS. vMux brings the same idea — natively — to Windows. Here's how they compare.
 
-| | **vMux** | cmux | wmux | tmux + scripts |
-|---|---|---|---|---|
-| **Platform** | Windows 10/11 native | macOS only | Windows | Linux/macOS (WSL on Windows) |
-| **Stack** | Electron 41 + React 19 | Swift / AppKit + libghostty | Windows-native port | Bash + shell glue |
-| **Terminal backend** | node-pty + **ConPTY** | libghostty | ConPTY | native PTY |
-| **Install** | NSIS installer, one click | DMG / brew | manual | package manager |
-| **Auto-update** | ✅ differential (blockmap, ~few MB) | manual / brew | ❌ | n/a |
-| **Multi-agent presets** | 6 built-in + custom overrides | works with any CLI | works with any CLI | manual |
-| **Git worktree isolation** | ✅ per-session | ✅ per-workspace | ✅ | manual |
-| **Tmux-style splits + auto-tile** | ✅ 2D / even-h / even-v / main-stack | ✅ | ✅ | ✅ (manual) |
-| **Embedded localhost preview** | ✅ webview + DevTools console | ✅ scriptable browser | ❓ | ❌ |
-| **Event detection** | server-ready / build / test / agent-done | OSC 9/99/777 | partial | ❌ |
-| **Native OS notifications** | Windows toast + taskbar flash + custom sound | macOS Notification Center | ? | ❌ |
-| **Sync-input broadcast** | ✅ `Ctrl+Shift+S` | ❌ | ❌ | ✅ |
-| **Command palette** | ✅ `Ctrl+K` fuzzy search | ❌ | ❌ | ❌ |
-| **i18n** | 🇬🇧🇫🇷🇩🇪🇪🇸🇨🇳🇯🇵🇹🇷 **7 languages** | English only | English only | n/a |
-| **Live CPU/RAM per pane** | ✅ pidusage | ❌ | ❌ | manual |
-| **CLI launcher** | `vmux new --agent claude-code --prompt "..."` | `cmux` | yes | tmux |
-| **License** | MIT | MIT | MIT | ISC |
+| | **vMux** | cmux |
+|---|---|---|
+| **Platform** | Windows 10/11 native | macOS only |
+| **Stack** | Electron 41 + React 19 + TypeScript | Swift / AppKit + libghostty |
+| **Terminal backend** | node-pty + **ConPTY** | libghostty |
+| **Install** | NSIS installer, one click | DMG / brew |
+| **Auto-update** | ✅ differential blockmap (~few MB) | manual / brew |
+| **Multi-agent presets** | 6 built-in + custom overrides | works with any CLI |
+| **Git worktree isolation** | ✅ per-session | ✅ per-workspace |
+| **Tmux-style splits + auto-tile** | ✅ 2D / even-h / even-v / main-stack | ✅ |
+| **Embedded localhost preview** | ✅ webview + DevTools console | ✅ scriptable browser |
+| **Event detection** | server-ready / build / test / agent-done | OSC 9/99/777 |
+| **Native OS notifications** | Windows toast + taskbar flash + custom sound | macOS Notification Center |
+| **Sync-input broadcast** | ✅ `Ctrl+Shift+S` | ❌ |
+| **Command palette** | ✅ `Ctrl+K` fuzzy search | ❌ |
+| **i18n** | 🇬🇧🇫🇷🇩🇪🇪🇸🇨🇳🇯🇵🇹🇷 **7 languages** | English only |
+| **Live CPU/RAM per pane** | ✅ pidusage | ❌ |
+| **CLI launcher** | `vmux new --agent claude-code --prompt "..."` | `cmux` |
+| **License** | MIT | MIT |
 
-**TL;DR**
-- You're on **macOS** → use [**cmux**](https://github.com/manaflow-ai/cmux). It's the original, native, and excellent.
-- You're on **Linux** → raw tmux is still king for headless servers; cmux works in a VM.
-- You're on **Windows** and want a polished desktop app with i18n, auto-update and an embedded preview → **vMux**.
-- You're on **Windows** and want cmux socket-protocol compatibility → look at [wmux](https://github.com/amirlehmam/wmux).
+**TL;DR** — on **macOS** use cmux, it's the original and excellent. On **Windows**, vMux is the equivalent native experience: no WSL, no Docker, no browser tab, just a desktop app that knows ConPTY.
 
 vMux is **not** a port of cmux — it's a from-scratch Windows-first redesign with different defaults (Electron + React, built-in DevTools console, 7-language UI, differential auto-update). The two tools share a philosophy, not a codebase.
 
