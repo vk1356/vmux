@@ -68,6 +68,17 @@ const api = {
       return (): void => {
         ipcRenderer.off(IPC.sessionUpdate, listener);
       };
+    },
+    /** Subscribe à une demande de focus venant du main (ex. clic sur une notif
+     *  natif). Le renderer doit switcher activeSessionId puis focus le pane. */
+    onFocusRequest: (
+      cb: (sessionId: string, paneId: PaneId) => void
+    ): (() => void) => {
+      const listener = (_: unknown, sId: string, pId: PaneId): void => cb(sId, pId);
+      ipcRenderer.on(IPC.sessionFocusRequest, listener);
+      return (): void => {
+        ipcRenderer.off(IPC.sessionFocusRequest, listener);
+      };
     }
   },
 

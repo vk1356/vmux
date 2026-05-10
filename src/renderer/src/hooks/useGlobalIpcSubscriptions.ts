@@ -77,9 +77,15 @@ export function useGlobalIpcSubscriptions(): void {
       if (!session) return;
       recordEvent(session.id, event);
       const lang = state.settings?.language ?? 'en';
+      // Pour les events `notify` (OSC), l'agent fournit son propre titre via
+      // event.title — on l'utilise tel quel plutôt que le label i18n hardcodé.
+      const toastTitle =
+        event.kind === 'notify' && event.title
+          ? `🔔 ${event.title}`
+          : eventTitleFor(event.kind, lang);
       addToast({
         kind: 'event',
-        title: eventTitleFor(event.kind, lang),
+        title: toastTitle,
         body: event.message,
         paneId: event.paneId,
         sessionId: session.id,
@@ -106,6 +112,14 @@ export function useGlobalIpcSubscriptions(): void {
       if (!url) return;
       void window.cmux.panes.openPreview(session.id, event.paneId, url);
     });
+    // Focus request émis par le main (clic sur une notif système). On switche
+    // activeSessionId via le store, puis on focus le pane via IPC. Sans ça,
+    // l'user atterrit sur la session active courante et pas celle qui a crié
+    // — UX inacceptable en multi-agent.
+    const offFocusRequest = window.cmux.sessions.onFocusRequest((sessionId, paneId) => {
+      useSessionStore.getState().setActiveSession(sessionId);
+      void window.cmux.panes.focus(sessionId, paneId);
+    });
     // Custom notification sound — main demande au renderer de jouer un .wav/.mp3.
     const offNotifSound = window.cmux.notif.onPlaySound((path) => {
       try {
@@ -128,6 +142,7 @@ export function useGlobalIpcSubscriptions(): void {
       offEvents();
       offAttention();
       offAgentState();
+      offFocusRequest();
       offNotifSound();
     };
   }, [

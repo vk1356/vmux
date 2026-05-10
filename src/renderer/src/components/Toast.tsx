@@ -1,5 +1,5 @@
 import { useEffect, type JSX } from 'react';
-import { Globe, Rocket, CheckCircle2, XCircle, FlaskConical, Sparkles, X } from 'lucide-react';
+import { Globe, Rocket, CheckCircle2, XCircle, FlaskConical, Sparkles, Bell, X } from 'lucide-react';
 import type { DetectedEventKind } from '@shared/types';
 import { useSessionStore, type ToastItem } from '../store/sessions';
 import { translate, useT } from '../i18n';
@@ -83,6 +83,8 @@ function iconFor(t: ToastItem): JSX.Element {
       return <XCircle size={16} color="#ef4444" />;
     case 'test-results':
       return <FlaskConical size={16} color="#3b82f6" />;
+    case 'notify':
+      return <Bell size={16} color="#f97316" />;
     default:
       return <Sparkles size={16} />;
   }
@@ -102,5 +104,7 @@ export function eventTitleFor(kind: DetectedEventKind, lang: Lang = 'en'): strin
       return `🧪 ${translate(lang, 'notifKindTests')}`;
     case 'agent-done':
       return `✓ ${translate(lang, 'notifKindAgentDone')}`;
+    case 'notify':
+      return `🔔 ${translate(lang, 'notifKindNotify')}`;
   }
 }

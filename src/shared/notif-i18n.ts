@@ -26,7 +26,8 @@ const EN: NotifBundle = {
     'build-success': '✓ Build successful',
     'build-error': '✗ Build failed',
     'test-results': '🧪 Tests finished',
-    'agent-done': '✓ Agent done'
+    'agent-done': '✓ Agent done',
+    notify: '🔔 Notification'
   },
   attentionWithAgent: '{agent} needs an action',
   attentionGeneric: 'Agent needs an action',
@@ -43,7 +44,8 @@ const FR: NotifBundle = {
     'build-success': '✓ Build réussi',
     'build-error': '✗ Build en erreur',
     'test-results': '🧪 Tests terminés',
-    'agent-done': '✓ Agent terminé'
+    'agent-done': '✓ Agent terminé',
+    notify: '🔔 Notification'
   },
   attentionWithAgent: '{agent} demande une action',
   attentionGeneric: "L'agent demande une action",
@@ -60,7 +62,8 @@ const DE: NotifBundle = {
     'build-success': '✓ Build erfolgreich',
     'build-error': '✗ Build fehlgeschlagen',
     'test-results': '🧪 Tests abgeschlossen',
-    'agent-done': '✓ Agent fertig'
+    'agent-done': '✓ Agent fertig',
+    notify: '🔔 Benachrichtigung'
   },
   attentionWithAgent: '{agent} benötigt eine Aktion',
   attentionGeneric: 'Der Agent benötigt eine Aktion',
@@ -77,7 +80,8 @@ const ES: NotifBundle = {
     'build-success': '✓ Build correcto',
     'build-error': '✗ Build con errores',
     'test-results': '🧪 Tests finalizados',
-    'agent-done': '✓ Agente completado'
+    'agent-done': '✓ Agente completado',
+    notify: '🔔 Notificación'
   },
   attentionWithAgent: '{agent} necesita una acción',
   attentionGeneric: 'El agente necesita una acción',
@@ -94,7 +98,8 @@ const ZH: NotifBundle = {
     'build-success': '✓ 构建成功',
     'build-error': '✗ 构建失败',
     'test-results': '🧪 测试完成',
-    'agent-done': '✓ 代理完成'
+    'agent-done': '✓ 代理完成',
+    notify: '🔔 通知'
   },
   attentionWithAgent: '{agent} 需要操作',
   attentionGeneric: '代理需要操作',
@@ -111,7 +116,8 @@ const JA: NotifBundle = {
     'build-success': '✓ ビルド成功',
     'build-error': '✗ ビルド失敗',
     'test-results': '🧪 テスト完了',
-    'agent-done': '✓ エージェント完了'
+    'agent-done': '✓ エージェント完了',
+    notify: '🔔 通知'
   },
   attentionWithAgent: '{agent} がアクションを要求しています',
   attentionGeneric: 'エージェントがアクションを要求しています',
@@ -128,7 +134,8 @@ const TR: NotifBundle = {
     'build-success': '✓ Derleme başarılı',
     'build-error': '✗ Derleme başarısız',
     'test-results': '🧪 Testler tamamlandı',
-    'agent-done': '✓ Ajan tamamlandı'
+    'agent-done': '✓ Ajan tamamlandı',
+    notify: '🔔 Bildirim'
   },
   attentionWithAgent: '{agent} bir eylem istiyor',
   attentionGeneric: 'Ajan bir eylem istiyor',

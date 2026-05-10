@@ -3,6 +3,11 @@ out/
 dist/
 release/
 *.log
+# Binaires search-tools téléchargés par scripts/fetch-search-tools.ps1 — pas
+# committés (téléchargés on-demand avant `npm run release`). Le dossier reste
+# en git via .gitkeep pour que electron-builder n'échoue pas sur extraResources.
+build/bin-win/*
+!build/bin-win/.gitkeep
 .DS_Store
 .vscode/
 .idea/

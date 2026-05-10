@@ -337,6 +337,7 @@ const EN = {
   notifKindBuildError: 'Build error',
   notifKindTests: 'Tests',
   notifKindAgentDone: 'Agent done',
+  notifKindNotify: 'Notification',
 
   // ComposeDialog
   composeSendTo: 'Send to',
@@ -688,6 +689,7 @@ const FR: Partial<Record<TKey, string>> = {
   notifKindBuildError: 'Build erreur',
   notifKindTests: 'Tests',
   notifKindAgentDone: 'Agent terminé',
+  notifKindNotify: 'Notification',
   composeSendTo: 'Envoyer à',
   composePlaceholder:
     'Tape ton message — édite, supprime, copie/colle librement.\nCtrl+Entrée pour envoyer.',
@@ -980,6 +982,7 @@ const DE: Partial<Record<TKey, string>> = {
   notifKindBuildError: 'Build-Fehler',
   notifKindTests: 'Tests',
   notifKindAgentDone: 'Agent fertig',
+  notifKindNotify: 'Benachrichtigung',
   composeSendTo: 'Senden an',
   composePlaceholder:
     'Schreibe deine Nachricht — bearbeite, lösche, kopiere/füge frei ein.\nStrg+Eingabe zum Senden.',
@@ -1246,6 +1249,7 @@ const ES: Partial<Record<TKey, string>> = {
   notifKindBuildError: 'Error de build',
   notifKindTests: 'Tests',
   notifKindAgentDone: 'Agente completado',
+  notifKindNotify: 'Notificación',
   composeSendTo: 'Enviar a',
   composePlaceholder:
     'Escribe tu mensaje — edita, borra, copia/pega libremente.\nCtrl+Enter para enviar.',
@@ -1502,6 +1506,7 @@ const ZH: Partial<Record<TKey, string>> = {
   notifKindBuildError: '构建错误',
   notifKindTests: '测试',
   notifKindAgentDone: '代理完成',
+  notifKindNotify: '通知',
   composeSendTo: '发送到',
   composePlaceholder:
     '输入你的消息 — 自由编辑、删除、复制/粘贴。\nCtrl+Enter 发送。',
@@ -1763,6 +1768,7 @@ const JA: Partial<Record<TKey, string>> = {
   notifKindBuildError: 'ビルドエラー',
   notifKindTests: 'テスト',
   notifKindAgentDone: 'エージェント完了',
+  notifKindNotify: '通知',
   composeSendTo: '送信先',
   composePlaceholder:
     'メッセージを入力 — 自由に編集、削除、コピー/貼り付けできます。\nCtrl+Enter で送信。',
@@ -2027,6 +2033,7 @@ const TR: Partial<Record<TKey, string>> = {
   notifKindBuildError: 'Build hatası',
   notifKindTests: 'Testler',
   notifKindAgentDone: 'Ajan tamamlandı',
+  notifKindNotify: 'Bildirim',
   composeSendTo: 'Şuraya gönder',
   composePlaceholder:
     'Mesajını yaz — özgürce düzenle, sil, kopyala/yapıştır.\nGöndermek için Ctrl+Enter.',

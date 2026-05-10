@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
-import { Bell, X, Trash2, CheckCircle2, XCircle, Rocket, FlaskConical, Sparkles } from 'lucide-react';
+import { Bell, BellRing, X, Trash2, CheckCircle2, XCircle, Rocket, FlaskConical, Sparkles } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import type { DetectedEventKind } from '@shared/types';
 import { useLocale, useT, type TKey } from '../i18n';
@@ -15,7 +15,8 @@ const KIND_LABEL_KEY: Record<DetectedEventKind, TKey> = {
   'build-success': 'notifKindBuildSuccess',
   'build-error': 'notifKindBuildError',
   'test-results': 'notifKindTests',
-  'agent-done': 'notifKindAgentDone'
+  'agent-done': 'notifKindAgentDone',
+  notify: 'notifKindNotify'
 };
 
 export function NotificationCenter({ open, onClose }: Props): JSX.Element | null {
@@ -165,6 +166,8 @@ function iconForKind(kind: DetectedEventKind): JSX.Element {
       return <XCircle size={14} color="#ef4444" />;
     case 'test-results':
       return <FlaskConical size={14} color="#3b82f6" />;
+    case 'notify':
+      return <BellRing size={14} color="#f97316" />;
   }
 }
 

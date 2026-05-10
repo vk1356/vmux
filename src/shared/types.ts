@@ -197,7 +197,11 @@ export type DetectedEventKind =
   | 'build-success'
   | 'build-error'
   | 'test-results'
-  | 'agent-done';
+  | 'agent-done'
+  /** Notification explicite émise par l'agent/CLI via OSC escape sequence
+   *  (OSC 9 iTerm, OSC 777 urxvt). Le `title` du DetectedEvent porte le
+   *  texte fourni par l'agent ; le `message` peut être un body séparé. */
+  | 'notify';
 
 /** Niveau d'attention requis sur un pane non-actif (style tmux monitor-activity). */
 export type PaneAttention = 'idle' | 'activity' | 'alert' | 'needs-input';
@@ -246,6 +250,10 @@ export interface DetectedEvent {
   kind: DetectedEventKind;
   message: string;
   url?: string;
+  /** Titre custom — utilisé par les events `notify` (OSC) où l'agent fournit
+   *  son propre titre. Si absent, le notif-service retombe sur le titre i18n
+   *  pour le `kind`. */
+  title?: string;
   timestamp: number;
 }
 
@@ -277,6 +285,10 @@ export const IPC = {
   sessionCreate: 'session:create',
   sessionRemove: 'session:remove',
   sessionUpdate: 'session:update',
+  /** Main → renderer : demande au renderer de focuser la session+pane spécifiés
+   *  (ex. clic sur une notif système). Le renderer met à jour activeSessionId
+   *  puis appelle `panes.focus`. */
+  sessionFocusRequest: 'session:focus-request',
 
   // Panes
   paneSplit: 'pane:split',

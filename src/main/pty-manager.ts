@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import * as pty from 'node-pty';
+import { app } from 'electron';
 import log from 'electron-log/main';
 import type {
   AgentPreset,
@@ -24,6 +27,7 @@ import { createWorktree, removeWorktree } from './worktree-manager';
 import { getSettings, loadSessions, saveSessions } from './settings-store';
 import { extractUrls, mergeUrls, stripAnsi } from './url-detector';
 import { clearDetector, detectEvents } from './event-detector';
+import { detectOscEvents } from './osc-detector';
 import { ptyStats } from './pty-stats';
 import { detectsNeedsInput } from './needs-input-detect';
 import { deriveAgentState, IDLE_AFTER_MS } from './agent-state-detect';
@@ -557,6 +561,27 @@ class PtyManager extends EventEmitter {
       PYTHONIOENCODING: 'utf-8'
     } as Record<string, string>;
 
+    // Prepend les search-tools bundlés (rg, fd) au PATH du PTY. Sur Windows,
+    // ça donne aux agents (Claude Code, Codex, Aider…) accès à ripgrep et fd
+    // sans que l'user ait à les installer — parité avec ce que macOS offre via
+    // bfs/ugrep dans les builds natifs Claude Code.
+    //
+    // Le dossier peut être absent si l'user n'a pas lancé `npm run fetch-tools`
+    // avant la build — dans ce cas no-op silencieux.
+    if (process.platform === 'win32') {
+      const bundledBin = app.isPackaged
+        ? path.join(process.resourcesPath, 'bin')
+        : path.join(app.getAppPath(), 'build', 'bin-win');
+      if (existsSync(bundledBin)) {
+        const sep = ';'; // win32 PATH separator
+        const curPath = env.Path ?? env.PATH ?? '';
+        // On utilise `Path` (mixed-case) car c'est ce que ConPTY/cmd voient ;
+        // sinon Powershell pourrait avoir une dup `PATH` qui shadow `Path`.
+        env.Path = `${bundledBin}${sep}${curPath}`;
+        delete env.PATH;
+      }
+    }
+
     const cols = mp.lastSize?.cols ?? 120;
     const rows = mp.lastSize?.rows ?? 30;
 
@@ -640,6 +665,9 @@ class PtyManager extends EventEmitter {
       this.updateAgentState(paneId, curMp, data);
       this.processNewUrls(cur, paneId, data);
       for (const ev of detectEvents(paneId, data)) this.emit('eventDetected', ev);
+      // OSC notifications (\x1b]9;... / \x1b]777;...) — émises explicitement par
+      // l'agent, donc indépendantes des heuristiques de detectEvents.
+      for (const ev of detectOscEvents(paneId, data)) this.emit('eventDetected', ev);
       this.maybeWriteInitialInput(curMp);
     });
 
