@@ -37,7 +37,10 @@ Run Claude Code, Codex, Aider, Cursor Agent and Gemini side by side — each iso
 | **Multi-agent presets** | 6 built-in + custom overrides | works with any CLI |
 | **Git worktree isolation** | ✅ per-session | ✅ per-workspace |
 | **Tmux-style splits + auto-tile** | ✅ 2D / even-h / even-v / main-stack | ✅ |
-| **Embedded localhost preview** | ✅ webview + DevTools console | ✅ scriptable browser |
+| **Embedded localhost preview** | ✅ webview + DevTools console + CDP on `:9222` | ✅ scriptable browser |
+| **Chrome DevTools Protocol bridge** | ✅ exposed at boot for `chrome-devtools-mcp` | ✅ CDP proxy |
+| **Image clipboard paste** | ✅ Ctrl+V on screenshot → temp PNG path injected | ✅ |
+| **Claude Code slash command** | ✅ `/vmux:orchestrate` auto-installed | ✅ |
 | **Event detection** | server-ready / build / test / agent-done | OSC 9/99/777 |
 | **Native OS notifications** | Windows toast + taskbar flash + custom sound | macOS Notification Center |
 | **Sync-input broadcast** | ✅ `Ctrl+Shift+S` | ❌ |
@@ -75,6 +78,12 @@ On macOS, [cmux](https://github.com/manaflow-ai/cmux) already solved this elegan
 - **Isolated sessions** — each agent runs inside its own dedicated git worktree, no branch collisions
 - **PATH detection** with availability checking + install hints if an agent isn't found
 - **Per-agent overrides** — remap commands/args/env from Settings without touching code
+- **`/vmux:orchestrate` Claude Code slash command** auto-installed in `~/.claude/commands/vmux/` — decomposes a task into independent units and spawns one Claude Code pane per unit via the vMux CLI
+
+### Native AI-agent integrations
+- **CDP browser bridge on `localhost:9222`** — Chrome DevTools Protocol exposed at boot so `chrome-devtools-mcp` (or any DevTools-aware tool) can drive the embedded `<webview>` preview pane: click, type, snapshot the accessibility tree, evaluate JS
+- **Image paste (Ctrl+V on a screenshot)** — clipboard image is auto-saved to a temp PNG and its absolute path is pasted into the terminal. Kills the "screenshot → save → drag" flow for Claude/Codex vision prompts
+- Both togglable from Settings (`cdpEnabled`, `claudeCommandsEnabled`)
 
 ### Tmux-style splits + auto-tile
 - `Ctrl+Shift+D` — add a pane → auto-tile in a balanced 2D grid

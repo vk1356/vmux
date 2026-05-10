@@ -13,10 +13,28 @@ import { cleanupPasteTempFiles } from './temp-cleanup';
 import { parseCliArgs, CLI_HELP, type CliCommand } from './cli-args';
 import { createWindow, ensureDevShortcutForNotifications, syncAutoLaunch } from './window';
 import { setupAutoUpdater, stopAutoUpdater } from './auto-updater';
+import { installClaudeOrchestrateCommand } from './claude-commands';
 
 log.initialize();
 log.transports.file.level = 'info';
 log.transports.console.level = is.dev ? 'debug' : 'warn';
+
+// Chrome DevTools Protocol bridge : doit être posé AVANT que l'app initialise
+// son `BrowserWindow` (sinon le switch est ignoré). Permet à
+// `chrome-devtools-mcp` (Claude Code, Codex CLI, etc.) de driver les <webview>
+// embarquées dans vMux — clic, type, snapshot a11y tree, JS eval. Lecture du
+// setting synchrone via electron-conf, défaut ON sur 9222.
+try {
+  const { cdpEnabled, cdpPort } = getSettings();
+  if (cdpEnabled && Number.isFinite(cdpPort) && cdpPort > 0 && cdpPort < 65536) {
+    app.commandLine.appendSwitch('remote-debugging-port', String(cdpPort));
+    log.info(`[cdp] DevTools Protocol enabled on localhost:${cdpPort}`);
+  } else {
+    log.info('[cdp] disabled');
+  }
+} catch (err) {
+  log.warn('[cdp] failed to apply remote-debugging-port', err);
+}
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -127,6 +145,13 @@ app.whenReady().then(async () => {
 
   // Nettoyage des fichiers temp paste > 24h (en background, non bloquant).
   void cleanupPasteTempFiles();
+
+  // Slash-command `/vmux:orchestrate` pour Claude Code — installé dans
+  // ~/.claude/commands/vmux/. Idempotent, ne touche pas un fichier édité à la
+  // main par l'user. Non bloquant.
+  if (getSettings().claudeCommandsEnabled) {
+    void installClaudeOrchestrateCommand();
+  }
 
   // Détection de crash : si le flag gracefulShutdown est false au boot, c'est
   // que l'app est crashée précédemment sans pouvoir le set.

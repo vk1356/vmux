@@ -193,6 +193,18 @@ export interface AppSettings {
   /** Dernière session active — restaurée comme `activeSessionId` au boot.
    *  null si l'user n'a jamais ouvert de session ou si elle a été supprimée. */
   lastActiveSessionId: string | null;
+  /** Expose le Chrome DevTools Protocol sur localhost (port `cdpPort`) au boot.
+   *  Permet à chrome-devtools-mcp et tout autre outil DevTools de driver le
+   *  <webview> (preview pane) embarqué — clic, type, snapshot, JS eval.
+   *  Désactiver si tu n'utilises pas ces intégrations. Default: true. */
+  cdpEnabled: boolean;
+  /** Port d'écoute du Chrome DevTools Protocol. Default: 9222 (standard). */
+  cdpPort: number;
+  /** Installer automatiquement le slash-command `/vmux:orchestrate` dans
+   *  `~/.claude/commands/vmux/orchestrate.md` au premier lancement. Décompose
+   *  une tâche et spawn N panes Claude Code en parallèle via le CLI vmux.
+   *  Default: true. L'install est idempotente (overwrite si version vMux plus récente). */
+  claudeCommandsEnabled: boolean;
 }
 
 // ============================================================

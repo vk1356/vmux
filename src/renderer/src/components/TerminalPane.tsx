@@ -219,6 +219,35 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       window.cmux.panes.write(pane.id, data);
     });
 
+    // Rich paste (Ctrl+V / Ctrl+Shift+V / Cmd+V) : si le clipboard contient
+    // une image, on la sauve en PNG temporaire et on colle son chemin. Sinon
+    // texte normal. Tue le besoin de "screenshot → save → drag" pour Claude
+    // vision / Codex / etc.
+    term.attachCustomKeyEventHandler((event) => {
+      if (
+        event.type === 'keydown' &&
+        (event.ctrlKey || event.metaKey) &&
+        event.key.toLowerCase() === 'v'
+      ) {
+        event.preventDefault();
+        void (async () => {
+          try {
+            const r = await window.cmux.clipboard.readRich();
+            if (r.kind === 'image') {
+              const p = /\s/.test(r.path) ? `"${r.path.replace(/"/g, '\\"')}"` : r.path;
+              term.paste(p);
+            } else if (r.text) {
+              term.paste(r.text);
+            }
+          } catch (err) {
+            console.warn('[term] rich paste failed', err);
+          }
+        })();
+        return false;
+      }
+      return true;
+    });
+
     if (settings.copyOnSelection) {
       term.onSelectionChange(() => {
         const sel = term.getSelection();
@@ -380,8 +409,14 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       e.preventDefault();
       const t = termRef.current;
       if (!t) return;
-      const text = await window.cmux.clipboard.read();
-      if (text) t.paste(text);
+      // Rich paste : image clipboard → temp file path, sinon text.
+      const r = await window.cmux.clipboard.readRich();
+      if (r.kind === 'image') {
+        const p = /\s/.test(r.path) ? `"${r.path.replace(/"/g, '\\"')}"` : r.path;
+        t.paste(p);
+      } else if (r.text) {
+        t.paste(r.text);
+      }
     },
     [settings?.pasteOnRightClick]
   );

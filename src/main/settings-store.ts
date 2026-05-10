@@ -33,7 +33,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   agentOverrides: {},
   onboardingCompleted: false,
   autoRestoreOnBoot: true,
-  lastActiveSessionId: null
+  lastActiveSessionId: null,
+  cdpEnabled: true,
+  cdpPort: 9222,
+  claudeCommandsEnabled: true
 };
 
 const DEFAULT_WINDOW_STATE: WindowState = {
