@@ -32,6 +32,9 @@ const SnippetsPicker = lazy(() =>
 const ConfirmDialog = lazy(() =>
   import('./components/ConfirmDialog').then((m) => ({ default: m.ConfirmDialog }))
 );
+const McpManagerDialog = lazy(() =>
+  import('./components/McpManagerDialog').then((m) => ({ default: m.McpManagerDialog }))
+);
 import { useSessionStore } from './store/sessions';
 import { useShallow } from 'zustand/react/shallow';
 import { clamp } from '@shared/utils';
@@ -67,6 +70,7 @@ export function App(): JSX.Element {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [notifsOpen, setNotifsOpen] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
   const [closeConfirm, setCloseConfirm] = useState<{ sessionId: string; name: string } | null>(
     null
   );
@@ -177,6 +181,8 @@ export function App(): JSX.Element {
   const openNotifs = useCallback(() => setNotifsOpen(true), []);
   const closeNotifs = useCallback(() => setNotifsOpen(false), []);
   const closeSnippets = useCallback(() => setSnippetsOpen(false), []);
+  const openMcp = useCallback(() => setMcpOpen(true), []);
+  const closeMcp = useCallback(() => setMcpOpen(false), []);
 
   const active = sessions.find((s) => s.id === activeSessionId);
 
@@ -252,8 +258,10 @@ export function App(): JSX.Element {
             onClose={closePalette}
             onNewSession={openNewSession}
             onOpenSettings={openSettings}
+            onOpenMcp={openMcp}
           />
         )}
+        {mcpOpen && <McpManagerDialog open={mcpOpen} onClose={closeMcp} />}
         {shortcutsOpen && <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} />}
         {notifsOpen && <NotificationCenter open={notifsOpen} onClose={closeNotifs} />}
         {snippetsOpen && (

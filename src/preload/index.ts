@@ -10,6 +10,7 @@ import {
   type DetectedEvent,
   type GitRepoInfo,
   type IpcResult,
+  type McpServer,
   type PaneId,
   type PaneStatSample,
   type PtySize,
@@ -271,6 +272,16 @@ const api = {
 
   app: {
     version: (): Promise<string> => ipcRenderer.invoke(IPC.appVersion)
+  },
+
+  mcp: {
+    list: (): Promise<IpcResult<McpServer[]>> => ipcRenderer.invoke(IPC.mcpList),
+    add: (s: McpServer): Promise<IpcResult<McpServer[]>> => ipcRenderer.invoke(IPC.mcpAdd, s),
+    remove: (name: string): Promise<IpcResult<McpServer[]>> =>
+      ipcRenderer.invoke(IPC.mcpRemove, name),
+    toggle: (name: string): Promise<IpcResult<McpServer[]>> =>
+      ipcRenderer.invoke(IPC.mcpToggle, name),
+    configPath: (): Promise<string> => ipcRenderer.invoke(IPC.mcpConfigPath)
   }
 };
 

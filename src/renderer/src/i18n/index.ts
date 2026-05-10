@@ -409,7 +409,43 @@ const EN = {
     'When an agent starts a dev server, vMux detects the URL and opens an embedded preview pane next to the terminal. No alt-tabbing.',
   onboardingShortcutsTitle: 'Discover shortcuts anytime',
   onboardingShortcutsBody:
-    "Press ? to see all shortcuts. Ctrl+K opens the command palette. Ctrl+, opens settings. You're set — happy hacking."
+    "Press ? to see all shortcuts. Ctrl+K opens the command palette. Ctrl+, opens settings. You're set — happy hacking.",
+
+  // Workspace persistence (Settings → Advanced)
+  fieldAutoRestore: 'Restore sessions on startup',
+  fieldAutoRestoreHint:
+    'When enabled, vMux relaunches the PTY of each open session on startup, and restores the last active session.',
+
+  // MCP manager
+  mcpTitle: 'MCP servers',
+  mcpHint:
+    'Configure Model Context Protocol servers used by Claude Code. Changes are saved to your user config.',
+  mcpEmpty: 'No MCP server configured',
+  mcpEmptyHint: 'Add a server to extend Claude Code with new tools.',
+  mcpAdd: 'Add server',
+  mcpAddTitle: 'Add an MCP server',
+  mcpEditTitle: 'Edit MCP server',
+  mcpEdit: 'Edit',
+  mcpRemove: 'Remove',
+  mcpToggleEnable: 'Enable',
+  mcpToggleDisable: 'Disable',
+  mcpDisabledLabel: 'Disabled',
+  mcpFieldName: 'Name',
+  mcpFieldType: 'Type',
+  mcpFieldCommand: 'Command',
+  mcpFieldArgs: 'Arguments',
+  mcpFieldArgsHint: 'Space-separated. Use the Claude CLI for arguments containing spaces.',
+  mcpFieldEnv: 'Environment variables',
+  mcpFieldEnvHint: 'One per line, format KEY=value.',
+  mcpFieldUrl: 'URL',
+  mcpTypeStdio: 'Local process (stdio)',
+  mcpTypeHttp: 'Remote (HTTP)',
+  mcpTypeSse: 'Remote (SSE)',
+  mcpSave: 'Save',
+  mcpCancel: 'Cancel',
+  mcpConfigPathLabel: 'Config:',
+  mcpFooterHint: 'Restart your agents to pick up the changes.',
+  cmdMcpServers: 'Manage MCP servers'
 } as const;
 
 const FR: Partial<Record<TKey, string>> = {
@@ -750,7 +786,41 @@ const FR: Partial<Record<TKey, string>> = {
     "Quand un agent lance un dev server, vMux détecte l'URL et ouvre un preview embarqué à côté du terminal. Plus d'alt-tab.",
   onboardingShortcutsTitle: 'Découvre les raccourcis',
   onboardingShortcutsBody:
-    'Tape ? pour voir tous les raccourcis. Ctrl+K ouvre la palette. Ctrl+, ouvre les paramètres. À toi de jouer.'
+    'Tape ? pour voir tous les raccourcis. Ctrl+K ouvre la palette. Ctrl+, ouvre les paramètres. À toi de jouer.',
+
+  fieldAutoRestore: 'Restaurer les sessions au démarrage',
+  fieldAutoRestoreHint:
+    'Quand activé, vMux relance le PTY de chaque session ouverte au démarrage et restaure la dernière session active.',
+
+  mcpTitle: 'Serveurs MCP',
+  mcpHint:
+    'Configure les serveurs Model Context Protocol utilisés par Claude Code. Les modifications sont sauvegardées dans ta config utilisateur.',
+  mcpEmpty: 'Aucun serveur MCP configuré',
+  mcpEmptyHint: 'Ajoute un serveur pour étendre Claude Code avec de nouveaux outils.',
+  mcpAdd: 'Ajouter un serveur',
+  mcpAddTitle: 'Ajouter un serveur MCP',
+  mcpEditTitle: 'Modifier le serveur MCP',
+  mcpEdit: 'Modifier',
+  mcpRemove: 'Supprimer',
+  mcpToggleEnable: 'Activer',
+  mcpToggleDisable: 'Désactiver',
+  mcpDisabledLabel: 'Désactivé',
+  mcpFieldName: 'Nom',
+  mcpFieldType: 'Type',
+  mcpFieldCommand: 'Commande',
+  mcpFieldArgs: 'Arguments',
+  mcpFieldArgsHint: "Séparés par des espaces. Utilise la CLI Claude pour les args avec espaces.",
+  mcpFieldEnv: "Variables d'environnement",
+  mcpFieldEnvHint: 'Une par ligne, format CLE=valeur.',
+  mcpFieldUrl: 'URL',
+  mcpTypeStdio: 'Process local (stdio)',
+  mcpTypeHttp: 'Distant (HTTP)',
+  mcpTypeSse: 'Distant (SSE)',
+  mcpSave: 'Enregistrer',
+  mcpCancel: 'Annuler',
+  mcpConfigPathLabel: 'Config :',
+  mcpFooterHint: 'Relance tes agents pour qu\'ils prennent en compte les changements.',
+  cmdMcpServers: 'Gérer les serveurs MCP'
 };
 
 const DE: Partial<Record<TKey, string>> = {

@@ -25,6 +25,18 @@ export function SettingsAdvanced({ settings, apply }: Props): JSX.Element {
       </div>
 
       <div className="field">
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={settings.autoRestoreOnBoot}
+            onChange={(e) => void apply({ autoRestoreOnBoot: e.target.checked })}
+          />
+          {t('fieldAutoRestore')}
+        </label>
+        <div className="hint">{t('fieldAutoRestoreHint')}</div>
+      </div>
+
+      <div className="field">
         <label className="field-label">{t('fieldDiagnostic')}</label>
         <button
           className="btn"

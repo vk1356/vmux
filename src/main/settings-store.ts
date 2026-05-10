@@ -31,7 +31,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoLaunch: false,
   previewDefaultSplit: 60,
   agentOverrides: {},
-  onboardingCompleted: false
+  onboardingCompleted: false,
+  autoRestoreOnBoot: true,
+  lastActiveSessionId: null
 };
 
 const DEFAULT_WINDOW_STATE: WindowState = {

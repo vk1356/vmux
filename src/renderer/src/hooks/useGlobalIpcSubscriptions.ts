@@ -17,6 +17,7 @@ export function useGlobalIpcSubscriptions(): void {
   const setAgents = useSessionStore((s) => s.setAgents);
   const setAgentAvailability = useSessionStore((s) => s.setAgentAvailability);
   const setSettings = useSessionStore((s) => s.setSettings);
+  const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const upsertSession = useSessionStore((s) => s.upsertSession);
   const addToast = useSessionStore((s) => s.addToast);
   const recordEvent = useSessionStore((s) => s.recordEvent);
@@ -32,8 +33,19 @@ export function useGlobalIpcSubscriptions(): void {
     import('@shared/utils').then(({ whenIdle }) =>
       whenIdle(() => void window.cmux.agents.check().then(setAgentAvailability))
     );
-    void window.cmux.settings.get().then(setSettings);
-    void window.cmux.sessions.list().then(setSessions);
+    // Boot order : on charge settings AVANT sessions et on seed activeSessionId
+    // depuis lastActiveSessionId. Comme ça, quand setSessions fire, sa logique
+    // de fallback ("garde l'active si valide, sinon sessions[0]") va préserver
+    // la dernière session ouverte si elle existe encore. Sans ce seed, on
+    // retombait toujours sur sessions[0] au boot.
+    void window.cmux.settings.get().then(async (s) => {
+      setSettings(s);
+      if (s.lastActiveSessionId) {
+        setActiveSession(s.lastActiveSessionId);
+      }
+      const sessions = await window.cmux.sessions.list();
+      setSessions(sessions);
+    });
 
     const offSession = window.cmux.sessions.onUpdate(upsertSession);
     const offStatus = window.cmux.panes.onStatus((sessionId, paneId, pane) => {
@@ -133,6 +145,24 @@ export function useGlobalIpcSubscriptions(): void {
         /* ignore */
       }
     });
+    // Persist activeSessionId à chaque changement — utilisé au boot pour
+    // restaurer la dernière session ouverte. Subscribe via zustand.subscribe
+    // (sans re-render) ; debounce 400ms pour éviter de marteler le disque sur
+    // un drag rapide entre sessions.
+    let persistTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastPersisted: string | null = null;
+    const offActiveSubscribe = useSessionStore.subscribe((state, prev) => {
+      if (state.activeSessionId === prev.activeSessionId) return;
+      if (state.activeSessionId === lastPersisted) return;
+      if (persistTimer) clearTimeout(persistTimer);
+      persistTimer = setTimeout(() => {
+        persistTimer = null;
+        const id = useSessionStore.getState().activeSessionId;
+        if (id === lastPersisted) return;
+        lastPersisted = id;
+        void window.cmux.settings.set({ lastActiveSessionId: id });
+      }, 400);
+    });
     return () => {
       offSession();
       offStatus();
@@ -144,12 +174,15 @@ export function useGlobalIpcSubscriptions(): void {
       offAgentState();
       offFocusRequest();
       offNotifSound();
+      offActiveSubscribe();
+      if (persistTimer) clearTimeout(persistTimer);
     };
   }, [
     setSessions,
     setAgents,
     setAgentAvailability,
     setSettings,
+    setActiveSession,
     upsertSession,
     addToast,
     recordEvent,

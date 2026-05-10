@@ -7,6 +7,7 @@ import {
   Plus,
   RotateCw,
   Search,
+  Server,
   Settings as SettingsIcon,
   Sparkles,
   SquareSplitHorizontal,
@@ -26,6 +27,7 @@ interface Props {
   onClose: () => void;
   onNewSession: () => void;
   onOpenSettings: () => void;
+  onOpenMcp: () => void;
 }
 
 interface CommandItem {
@@ -45,7 +47,7 @@ interface CommandItem {
 // par famille (panes / sessions / urls / agents) localisée.
 // ============================================================
 
-function buildAppActions(t: TFunction, onClose: () => void, onNewSession: () => void, onOpenSettings: () => void): CommandItem[] {
+function buildAppActions(t: TFunction, onClose: () => void, onNewSession: () => void, onOpenSettings: () => void, onOpenMcp: () => void): CommandItem[] {
   return [
     {
       id: 'action:new-session',
@@ -67,6 +69,16 @@ function buildAppActions(t: TFunction, onClose: () => void, onNewSession: () => 
       run: () => {
         onClose();
         onOpenSettings();
+      }
+    },
+    {
+      id: 'action:mcp',
+      label: t('cmdMcpServers'),
+      group: t('cmdGroupOther'),
+      icon: <Server size={14} />,
+      run: () => {
+        onClose();
+        onOpenMcp();
       }
     }
   ];
@@ -267,7 +279,8 @@ export function CommandPalette({
   open,
   onClose,
   onNewSession,
-  onOpenSettings
+  onOpenSettings,
+  onOpenMcp
 }: Props): JSX.Element | null {
   const t = useT();
   // useShallow : un seul subscribe, un seul re-render quand l'une des clés change.
@@ -295,7 +308,7 @@ export function CommandPalette({
   const items: CommandItem[] = useMemo(() => {
     const active = sessions.find((s) => s.id === activeSessionId);
     const out: CommandItem[] = [
-      ...buildAppActions(t, onClose, onNewSession, onOpenSettings)
+      ...buildAppActions(t, onClose, onNewSession, onOpenSettings, onOpenMcp)
     ];
     if (active) {
       out.push(...buildPaneActions(t, active, onClose));
@@ -320,6 +333,7 @@ export function CommandPalette({
     onClose,
     onNewSession,
     onOpenSettings,
+    onOpenMcp,
     t
   ]);
 

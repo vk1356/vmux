@@ -135,6 +135,42 @@ class PtyManager extends EventEmitter {
     return Array.from(this.sessions.values()).map((m) => m.session);
   }
 
+  /** Auto-restore : relance les PTY de tous les terminal panes des sessions
+   *  restaurées depuis le disque. Appelé une fois au boot après registerIpc,
+   *  uniquement si AppSettings.autoRestoreOnBoot === true.
+   *
+   *  Idempotent : skip un pane qui aurait déjà un process vivant (cas où la
+   *  méthode serait appelée deux fois par erreur). Échelonne les spawns par
+   *  petits paquets pour ne pas saturer ConPTY/CPU au boot. */
+  async autoRestoreSessions(): Promise<number> {
+    let count = 0;
+    for (const m of this.sessions.values()) {
+      const ids = allPaneIds(m.session.tree);
+      for (const paneId of ids) {
+        const p = m.session.panes[paneId];
+        if (!p || p.kind !== 'terminal') continue;
+        const mp = m.panes.get(paneId);
+        // Skip si un PTY est déjà vivant (idempotence) ou si l'user avait
+        // explicitement quitté le pane (status === 'exited' || 'error') —
+        // dans ces cas-là, attendre qu'il clique "Restart" lui-même.
+        if (mp?.process) continue;
+        if (p.status === 'exited' || p.status === 'error') continue;
+        // Reset l'état pour partir propre.
+        m.panes.set(paneId, { pendingInitialInput: undefined });
+        // Met à jour le pane visible côté renderer (status 'starting') avant spawn.
+        m.session.panes = {
+          ...m.session.panes,
+          [paneId]: { ...p, status: 'starting', pid: undefined, lastStartedAt: Date.now() }
+        };
+        this.spawnPane(m.session.id, paneId);
+        count++;
+      }
+      this.emit('sessionUpdate', m.session);
+    }
+    if (count > 0) this.persist();
+    return count;
+  }
+
   override on<K extends keyof Events>(e: K, l: (...a: Events[K]) => void): this {
     return super.on(e, l as (...args: unknown[]) => void);
   }

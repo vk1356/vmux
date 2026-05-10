@@ -186,6 +186,13 @@ export interface AppSettings {
   /** True quand l'utilisateur a complété (ou skip) le tutoriel de premier lancement.
    *  False/undefined → l'overlay onboarding s'affiche au boot. */
   onboardingCompleted?: boolean;
+  /** True : au démarrage, vMux relance automatiquement les PTY de toutes les
+   *  sessions qui tournaient au shutdown précédent. False : sessions restaurées
+   *  mais en idle (l'user clique restart). Défaut: true. */
+  autoRestoreOnBoot: boolean;
+  /** Dernière session active — restaurée comme `activeSessionId` au boot.
+   *  null si l'user n'a jamais ouvert de session ou si elle a été supprimée. */
+  lastActiveSessionId: string | null;
 }
 
 // ============================================================
@@ -255,6 +262,32 @@ export interface DetectedEvent {
    *  pour le `kind`. */
   title?: string;
   timestamp: number;
+}
+
+// ============================================================
+// MCP servers (Model Context Protocol)
+// ============================================================
+
+/** Type de transport d'un serveur MCP. `stdio` = process local lancé via
+ *  command/args. `http` / `sse` = serveur distant accessible via URL. */
+export type McpServerType = 'stdio' | 'http' | 'sse';
+
+/** Définition d'un serveur MCP — stockée dans `~/.claude.json` sous
+ *  la clé `mcpServers` (servers actifs) ou `mcpServersDisabled` (gérée par
+ *  vMux pour permettre toggle on/off sans perte de config). */
+export interface McpServer {
+  name: string;
+  type: McpServerType;
+  /** stdio : exécutable. Vide pour http/sse. */
+  command?: string;
+  /** stdio : arguments. */
+  args?: string[];
+  /** Variables d'env pour le process stdio. */
+  env?: Record<string, string>;
+  /** http/sse : URL du serveur distant. */
+  url?: string;
+  /** Si true, le serveur est désactivé (déplacé dans mcpServersDisabled). */
+  disabled?: boolean;
 }
 
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -375,7 +408,14 @@ export const IPC = {
   dialogPickSoundFile: 'dialog:pick-sound-file',
 
   // Filesystem
-  fsIsDirectory: 'fs:is-directory'
+  fsIsDirectory: 'fs:is-directory',
+
+  // MCP servers
+  mcpList: 'mcp:list',
+  mcpAdd: 'mcp:add',
+  mcpRemove: 'mcp:remove',
+  mcpToggle: 'mcp:toggle',
+  mcpConfigPath: 'mcp:config-path'
 } as const;
 
 // ============================================================

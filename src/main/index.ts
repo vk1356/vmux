@@ -114,6 +114,17 @@ app.whenReady().then(async () => {
 
   mainWindow = createWindow({ startHidden: initialCliCommand.kind === 'hidden' });
 
+  // Auto-restore des PTY : relance les sessions qui tournaient au shutdown
+  // précédent. Différé de 1.2s pour laisser le renderer s'attacher aux events
+  // sessionUpdate / paneStatus — sinon l'UI raterait les premiers status.
+  if (getSettings().autoRestoreOnBoot) {
+    setTimeout(() => {
+      void ptyManager.autoRestoreSessions().then((n) => {
+        if (n > 0) log.info(`[main] auto-restored ${n} pane(s)`);
+      });
+    }, 1200);
+  }
+
   // Nettoyage des fichiers temp paste > 24h (en background, non bloquant).
   void cleanupPasteTempFiles();
 

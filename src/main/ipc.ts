@@ -33,6 +33,14 @@ import type { TreePath } from '@shared/tree';
 import type { LayoutPreset } from '@shared/layouts';
 import { createNotificationService, preloadNotificationIcon } from './notification-service';
 import { createDetachedWindow, syncAutoLaunch } from './window';
+import {
+  addServer as mcpAdd,
+  getConfigPath as mcpConfigPath,
+  listServers as mcpList,
+  removeServer as mcpRemove,
+  toggleServer as mcpToggle
+} from './mcp-manager';
+import type { McpServer } from '@shared/types';
 
 /** Validation de PtySize venu du renderer — rejette les valeurs non finies ou
  *  négatives qui feraient crasher node-pty.resize(). */
@@ -337,6 +345,13 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.snippetsList, () => listSnippets());
   ipcMain.handle(IPC.snippetsSave, (_e, s: Snippet) => saveSnippet(s));
   ipcMain.handle(IPC.snippetsDelete, (_e, id: string) => deleteSnippet(id));
+
+  // ---------- MCP servers ----------
+  ipcMain.handle(IPC.mcpList, () => safe('mcpList', () => mcpList()));
+  ipcMain.handle(IPC.mcpAdd, (_e, s: McpServer) => safe('mcpAdd', () => mcpAdd(s)));
+  ipcMain.handle(IPC.mcpRemove, (_e, name: string) => safe('mcpRemove', () => mcpRemove(name)));
+  ipcMain.handle(IPC.mcpToggle, (_e, name: string) => safe('mcpToggle', () => mcpToggle(name)));
+  ipcMain.handle(IPC.mcpConfigPath, () => mcpConfigPath());
 
   // ---------- Diagnostic ----------
   ipcMain.handle(IPC.diagnosticExport, () =>
