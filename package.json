@@ -1,7 +1,7 @@
 {
   "name": "vmux-windows",
   "private": true,
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "vMux — multi-agent AI orchestrator for Windows. Splits, localhost preview, event detection.",
   "main": "./out/main/index.js",
   "author": {

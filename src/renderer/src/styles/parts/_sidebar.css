@@ -194,12 +194,25 @@
    l'opacité pour signaler l'état. */
 .session-avatar {
   position: relative;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
   flex-shrink: 0;
-  background: var(--avatar-color, var(--text-dim));
+  background: var(--bg-elev-2);
+  display: grid;
+  place-items: center;
+  overflow: visible;
   transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+}
+.session-avatar-logo {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  border-radius: 3px;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 /* Running : pulse subtile + ring vert */
 .session-avatar.status-running {
@@ -222,10 +235,13 @@
 .session-avatar.status-error {
   box-shadow: 0 0 0 2px var(--error);
 }
-/* Exited : grisé */
+/* Exited : grisé (image désaturée + opacity) */
 .session-avatar.status-exited {
-  background: var(--text-dim);
   opacity: 0.4;
+}
+.session-avatar.status-exited .session-avatar-logo,
+.session-avatar.status-idle .session-avatar-logo {
+  filter: grayscale(0.4);
 }
 .session-item:hover .session-avatar {
   transform: scale(1.12);

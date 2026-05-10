@@ -17,6 +17,21 @@ import { allPaneIds } from '@shared/tree';
 import { pathBasename } from '@shared/utils';
 import { ATTENTION_RANK, type AttentionLevel } from '../store/sessions';
 import type { TFunction } from '../i18n';
+import claudeLogo from '../assets/agents/claude-code.png';
+import codexLogo from '../assets/agents/codex.png';
+import cursorLogo from '../assets/agents/cursor-agent.png';
+import aiderLogo from '../assets/agents/aider.png';
+import geminiLogo from '../assets/agents/gemini.png';
+import shellLogo from '../assets/agents/shell.png';
+
+const AGENT_LOGOS: Record<string, string> = {
+  'claude-code': claudeLogo,
+  codex: codexLogo,
+  'cursor-agent': cursorLogo,
+  aider: aiderLogo,
+  gemini: geminiLogo,
+  shell: shellLogo
+};
 
 const SESSION_COLORS = [
   '#f97316',
@@ -186,6 +201,17 @@ function SessionItemImpl(props: Props): JSX.Element {
           onOpenColorPicker(colorPickerOpen ? null : s.id);
         }}
       >
+        {(() => {
+          const logo = main?.agentId ? AGENT_LOGOS[main.agentId] : undefined;
+          return logo ? (
+            <img
+              className="session-avatar-logo"
+              src={logo}
+              alt=""
+              draggable={false}
+            />
+          ) : null;
+        })()}
         {s.pinned && <span className="session-pin-mark" title={t('pinnedLabel')} />}
         {attention !== 'idle' && (
           <button
