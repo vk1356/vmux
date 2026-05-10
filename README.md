@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/screenshots/hero.png" alt="vMux landing screen" width="100%"/>
+<img src="docs/screenshots/multi-panes.png" alt="vMux — 6 Claude Code agents running in parallel" width="100%"/>
 
 # vMux
 
@@ -50,11 +50,6 @@ Modern AI coding agents are powerful but **hard to orchestrate**: each one wants
 - `Alt+←/→/↑/↓` — navigate between panes
 - **Layout presets**: tiled (2D), even-horizontal, even-vertical, main+stack
 - Drag separators to resize live
-
-<div align="center">
-<img src="docs/screenshots/multi-panes.png" alt="Six Claude Code agents in a 2D auto-tile grid" width="100%"/>
-<sub><i>Six Claude Code agents running in parallel inside a single session — auto-tiled in a 2D grid. Each pane has its own PID, CPU/RAM stats, and bypass-permissions context.</i></sub>
-</div>
 
 ### Embedded localhost preview
 - **Auto-detection** of `localhost:XXXX`, `127.0.0.1:XXXX`, etc. from each pane's output (ANSI/box-drawing stripped)
