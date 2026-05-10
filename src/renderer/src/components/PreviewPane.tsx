@@ -20,6 +20,10 @@ interface Props {
   sessionId: string;
   pane: PreviewPaneT;
   active: boolean;
+  /** Visible = la session parente est l'active. Quand false, on démontre le
+   *  <webview> pour libérer le process Chrome (gros gain quand l'user a 10+
+   *  sessions empilées dans la sidebar). */
+  visible: boolean;
 }
 
 type ConsoleLevel = 'log' | 'info' | 'warn' | 'error' | 'debug';
@@ -64,10 +68,18 @@ const LEVEL_FROM_CODE: Record<number, ConsoleLevel> = {
 };
 
 const MAX_LOGS = 500;
+/** Quand on a > VISIBLE_LOGS entrées, on ne rend que les VISIBLE_LOGS dernières
+ *  pour cap le coût DOM (chaque entry = ~3-4 nodes × 500 = 2000 nodes minimum).
+ *  Le scrollback complet reste en mémoire pour le filter, juste pas peint.
+ *  Un banner "older entries hidden" laisse l'option d'augmenter au runtime. */
+const VISIBLE_LOGS = 200;
 
-function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
+function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Element {
   const t = useT();
   const ref = useRef<WebviewElement | null>(null);
+  // Lazy-mount du <webview> : invisible → on retire le webview du DOM et son
+  // process Chrome est libéré. Au retour visible, on remonte avec la dernière URL.
+  // L'addr/logs restent en React state donc rien n'est perdu côté UX.
   const [addr, setAddr] = useState(pane.url);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -98,7 +110,9 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
   }, [followingPane?.recentUrls, pane.followsPaneId, pane.url, pane.id, sessionId]);
 
   // Wire les events <webview> via DOM addEventListener (pas de React props pour ces events).
+  // Re-run quand `visible` change car la <webview> est unmount/remount.
   useEffect(() => {
+    if (!visible) return;
     const el = ref.current;
     if (!el) return;
     const onStart = (): void => {
@@ -168,7 +182,7 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
       el.removeEventListener('did-navigate-in-page', onNav);
       el.removeEventListener('console-message', onConsole as EventListener);
     };
-  }, []);
+  }, [visible]);
 
   // Helper qui push un log et cap la taille à MAX_LOGS (FIFO).
   const pushLog = useCallback((entry: Omit<ConsoleLog, 'id' | 'ts'>): void => {
@@ -212,6 +226,11 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
   );
 
   const filteredLogs = filter === 'all' ? logs : logs.filter((l) => l.level === filter);
+  // Window de rendu : dernières VISIBLE_LOGS entrées seulement. Au-delà,
+  // on aurait des centaines de nodes DOM à reconcile à chaque push.
+  const renderedLogs =
+    filteredLogs.length > VISIBLE_LOGS ? filteredLogs.slice(-VISIBLE_LOGS) : filteredLogs;
+  const hiddenLogs = filteredLogs.length - renderedLogs.length;
   const errorCount = logs.filter((l) => l.level === 'error').length;
   const warnCount = logs.filter((l) => l.level === 'warn').length;
 
@@ -298,16 +317,17 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
 
       <div className="preview-host">
         {/* eslint-disable-next-line react/no-unknown-property */}
-        {React.createElement<WebviewProps>('webview', {
-          ref: (el: HTMLElement | null) => {
-            ref.current = el as unknown as WebviewElement;
-          },
-          src: pane.url,
-          partition: 'persist:cmux-preview',
-          allowpopups: 'true',
-          webpreferences: 'contextIsolation=yes,nodeIntegration=no',
-          style: { width: '100%', height: '100%', display: 'inline-flex' }
-        })}
+        {visible &&
+          React.createElement<WebviewProps>('webview', {
+            ref: (el: HTMLElement | null) => {
+              ref.current = el as unknown as WebviewElement;
+            },
+            src: addr || pane.url,
+            partition: 'persist:cmux-preview',
+            allowpopups: 'true',
+            webpreferences: 'contextIsolation=yes,nodeIntegration=no',
+            style: { width: '100%', height: '100%', display: 'inline-flex' }
+          })}
         {failed && (
           <div className="preview-error">
             <AlertCircle size={20} />
@@ -376,7 +396,24 @@ function PreviewPaneImpl({ sessionId, pane, active }: Props): JSX.Element {
                 {logs.length === 0 ? t('previewConsoleEmpty') : t('previewConsoleEmptyFiltered')}
               </div>
             ) : (
-              filteredLogs.map((l) => <ConsoleEntry key={l.id} entry={l} />)
+              <>
+                {hiddenLogs > 0 && (
+                  <div
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: 10,
+                      color: 'var(--text-muted)',
+                      borderBottom: '1px solid var(--border)',
+                      fontStyle: 'italic'
+                    }}
+                  >
+                    {hiddenLogs} older entries hidden (showing last {renderedLogs.length})
+                  </div>
+                )}
+                {renderedLogs.map((l) => (
+                  <ConsoleEntry key={l.id} entry={l} />
+                ))}
+              </>
             )}
           </div>
         </div>

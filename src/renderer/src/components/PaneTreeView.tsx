@@ -112,7 +112,7 @@ const TreeNode = memo(function TreeNode({ tree, path }: NodeProps): JSX.Element 
           {pane.kind === 'terminal' ? (
             <TerminalPane sessionId={sessionId} pane={pane} active={isActive} visible={visible} />
           ) : (
-            <PreviewPane sessionId={sessionId} pane={pane} active={isActive} />
+            <PreviewPane sessionId={sessionId} pane={pane} active={isActive} visible={visible} />
           )}
         </div>
       </ErrorBoundary>

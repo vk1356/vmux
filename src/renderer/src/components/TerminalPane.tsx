@@ -88,6 +88,9 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   const pendingRef = useRef<string[]>([]);
   const settings = useSessionStore((s) => s.settings);
   const isSync = useSessionStore((s) => s.syncSessions.has(sessionId));
+  // Ref live de `visible` lue depuis le hot path data-bus pour décider
+  // write-direct vs queue-and-replay sans déclencher de re-subscribe.
+  const visibleRef = useRef(visible);
   // Ref live pour lire l'état sync dans des callbacks chauds (term.onData)
   // sans déclencher de re-render à chaque chunk.
   const isSyncRef = useRef(isSync);
@@ -110,13 +113,40 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
 
   // Souscription via le bus unique — 1 seul listener IPC global pour tous les
   // panes (cf. store/paneDataBus.ts).
+  // Quand le pane n'est PAS visible (session inactive), on queue les chunks
+  // dans pendingRef au lieu d'écrire à xterm. xterm garde quand même une
+  // viewport invisible coûteuse en CPU sur de gros bursts (parser ANSI,
+  // mise à jour du buffer interne) — pause complète quand off-screen.
+  // Cap du pending à 4MB pour éviter une fuite si un pane invisible reçoit
+  // 100MB de logs.
   useEffect(() => {
     return subscribePaneData(pane.id, (data) => {
       const t = termRef.current;
-      if (t) t.write(data);
-      else pendingRef.current.push(data);
+      if (t && visibleRef.current) {
+        t.write(data);
+        return;
+      }
+      pendingRef.current.push(data);
+      let total = 0;
+      for (const c of pendingRef.current) total += c.length;
+      if (total > 4_000_000) {
+        const drop = pendingRef.current.length >>> 1;
+        pendingRef.current.splice(0, drop);
+      }
     });
   }, [pane.id]);
+
+  // Sync visibleRef + replay du pending buffer quand on redevient visible.
+  useEffect(() => {
+    visibleRef.current = visible;
+    if (!visible) return;
+    const t = termRef.current;
+    if (!t) return;
+    const pending = pendingRef.current;
+    if (pending.length === 0) return;
+    pendingRef.current = [];
+    for (const chunk of pending) t.write(chunk);
+  }, [visible]);
 
   // Init xterm — lazy, premier active ou visible.
   useEffect(() => {
