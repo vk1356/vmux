@@ -267,6 +267,10 @@ export const IPC = {
   windowClose: 'window:close',
   windowIsMaximized: 'window:is-maximized',
   windowMaximizedChanged: 'window:maximized-changed',
+  /** Renderer → main : ouvre la session dans une fenêtre Electron séparée
+   *  (multi-écran, Alt+Tab natif). Idempotent : focus la fenêtre détachée
+   *  existante si déjà ouverte pour cette session. */
+  windowDetachSession: 'window:detach-session',
 
   // Sessions
   sessionList: 'session:list',

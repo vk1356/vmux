@@ -1,5 +1,5 @@
 import { useMemo, useState, type JSX, type MouseEvent } from 'react';
-import { Globe, RotateCw, X, Edit3, Layers, Keyboard } from 'lucide-react';
+import { Globe, RotateCw, X, Edit3, Layers, Keyboard, ExternalLink } from 'lucide-react';
 import type { Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { hostFromUrl } from '@shared/utils';
@@ -10,6 +10,9 @@ import { useT } from '../i18n';
 interface Props {
   session: Session;
   onShowShortcuts: () => void;
+  /** En mode détaché on masque les actions qui n'ont pas de sens (re-detach,
+   *  raccourcis pointant sur la mainWindow). */
+  detached?: boolean;
 }
 
 interface MenuState {
@@ -18,7 +21,7 @@ interface MenuState {
   y: number;
 }
 
-export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
+export function TabBar({ session, onShowShortcuts, detached = false }: Props): JSX.Element {
   const t = useT();
   const { agents, upsertSession, paneActivity, eventHistory } = useSessionStore(
     useShallow((s) => ({
@@ -158,6 +161,17 @@ export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
       </div>
 
       <div className="tab-bar-actions">
+        {!detached && (
+          <button
+            className="tab-shortcuts-btn"
+            onClick={() => void window.cmux.window.detachSession(session.id)}
+            title={t('paneDetachWindowTitle')}
+            aria-label={t('paneDetachWindowAria')}
+          >
+            <ExternalLink size={12} />
+            <span className="tab-shortcuts-btn-label">{t('paneDetachWindowLabel')}</span>
+          </button>
+        )}
         <button
           className="tab-shortcuts-btn"
           onClick={onShowShortcuts}

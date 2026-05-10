@@ -99,6 +99,59 @@ export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
 }
 
 /**
+ * Crée une fenêtre détachée qui rend une seule session (sans sidebar). Le
+ * renderer détecte le mode via le hash `#detached=<sessionId>`. La fenêtre
+ * détachée ne persiste pas sa taille (chaque ouverture utilise les défauts)
+ * et n'a pas de menu auto-hide pour ne pas interférer avec la fenêtre
+ * principale. Les events PTY sont broadcastés à toutes les BrowserWindows
+ * (cf. ipc.ts), donc les deux fenêtres restent synchronisées.
+ */
+export function createDetachedWindow(sessionId: string): BrowserWindow {
+  const isDarwin = process.platform === 'darwin';
+  const titleBarOpts: Electron.BrowserWindowConstructorOptions = isDarwin
+    ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 12 } }
+    : { frame: false, titleBarStyle: 'hidden' };
+
+  const win = new BrowserWindow({
+    width: 900,
+    height: 600,
+    minWidth: 480,
+    minHeight: 360,
+    show: false,
+    backgroundColor: '#0a0a0b',
+    title: 'vMux — Session',
+    autoHideMenuBar: true,
+    ...titleBarOpts,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webviewTag: true
+    }
+  });
+
+  win.on('ready-to-show', () => win.show());
+  win.on('maximize', () => win.webContents.send(IPC.windowMaximizedChanged, true));
+  win.on('unmaximize', () => win.webContents.send(IPC.windowMaximizedChanged, false));
+
+  win.webContents.setWindowOpenHandler((details) => {
+    void shell.openExternal(details.url);
+    return { action: 'deny' };
+  });
+
+  // Hash route — le renderer lit `window.location.hash` au boot.
+  const hash = `detached=${encodeURIComponent(sessionId)}`;
+  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
+    void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}#${hash}`);
+  } else {
+    void win.loadFile(path.join(__dirname, '../renderer/index.html'), { hash });
+  }
+
+  return win;
+}
+
+/**
  * En dev, Windows ne livre pas les toasts natifs si l'AppUserModel.ID n'est
  * pas associé à un raccourci dans le Start Menu. En prod, electron-builder
  * pose automatiquement le bon AUMID sur le `.lnk` créé par NSIS — donc rien

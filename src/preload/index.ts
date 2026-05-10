@@ -29,6 +29,11 @@ const api = {
     maximize: () => ipcRenderer.invoke(IPC.windowMaximize),
     close: () => ipcRenderer.invoke(IPC.windowClose),
     isMaximized: (): Promise<boolean> => ipcRenderer.invoke(IPC.windowIsMaximized),
+    /** Ouvre une fenêtre Electron séparée pour cette session (multi-écran).
+     *  Idempotent : si une fenêtre détachée existe déjà pour cette session,
+     *  elle sera focusée au lieu d'en créer une nouvelle. */
+    detachSession: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC.windowDetachSession, sessionId),
     onMaximizedChanged: (cb: (maximized: boolean) => void): (() => void) => {
       const listener = (_: unknown, m: boolean): void => cb(m);
       ipcRenderer.on(IPC.windowMaximizedChanged, listener);

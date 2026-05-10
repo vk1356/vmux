@@ -32,7 +32,7 @@ import { notifBundle } from '@shared/notif-i18n';
 import type { TreePath } from '@shared/tree';
 import type { LayoutPreset } from '@shared/layouts';
 import { createNotificationService, preloadNotificationIcon } from './notification-service';
-import { syncAutoLaunch } from './window';
+import { createDetachedWindow, syncAutoLaunch } from './window';
 
 /** Validation de PtySize venu du renderer — rejette les valeurs non finies ou
  *  négatives qui feraient crasher node-pty.resize(). */
@@ -64,12 +64,19 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   // Résolution async de l'icône de notif — non bloquant.
   void preloadNotificationIcon();
 
-  /** Envoi protégé : ignore si la window est fermée/détruite (évite l'exception
-   *  "Object has been destroyed" quand un event ptyManager arrive après quit). */
+  /** Map sessionId → fenêtre détachée. Multi-window : une session peut être
+   *  ouverte dans sa propre BrowserWindow en plus de la fenêtre principale.
+   *  La Map est nettoyée au close de la window. */
+  const detachedWindows = new Map<string, BrowserWindow>();
+
+  /** Broadcast IPC à toutes les fenêtres vivantes (main + détachées). Les
+   *  events PTY (paneData, paneStatus, etc.) doivent atteindre tous les
+   *  renderers pour que chaque fenêtre reflète l'état courant en live. */
   const safeSend = (channel: string, ...args: unknown[]): void => {
-    const w = getMainWindow();
-    if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return;
-    w.webContents.send(channel, ...args);
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (w.isDestroyed() || w.webContents.isDestroyed()) continue;
+      w.webContents.send(channel, ...args);
+    }
   };
 
   const notifService = createNotificationService(getMainWindow, safeSend);
@@ -79,15 +86,44 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.appVersion, () => app.getVersion());
 
   // ---------- Window ----------
-  ipcMain.handle(IPC.windowMinimize, () => getMainWindow()?.minimize());
-  ipcMain.handle(IPC.windowMaximize, () => {
-    const w = getMainWindow();
+  // Tous les handlers ciblent la fenêtre **émettrice** (sender) plutôt que la
+  // mainWindow : sinon le bouton minimize d'une fenêtre détachée minimiserait
+  // la fenêtre principale. Fallback sur mainWindow pour les invocations sans
+  // sender utilisable (rare).
+  const senderWin = (e: Electron.IpcMainInvokeEvent): BrowserWindow | null =>
+    BrowserWindow.fromWebContents(e.sender) ?? getMainWindow();
+  ipcMain.handle(IPC.windowMinimize, (e) => senderWin(e)?.minimize());
+  ipcMain.handle(IPC.windowMaximize, (e) => {
+    const w = senderWin(e);
     if (!w) return;
     if (w.isMaximized()) w.unmaximize();
     else w.maximize();
   });
-  ipcMain.handle(IPC.windowClose, () => getMainWindow()?.close());
-  ipcMain.handle(IPC.windowIsMaximized, () => getMainWindow()?.isMaximized() ?? false);
+  ipcMain.handle(IPC.windowClose, (e) => senderWin(e)?.close());
+  ipcMain.handle(IPC.windowIsMaximized, (e) => senderWin(e)?.isMaximized() ?? false);
+
+  ipcMain.handle(IPC.windowDetachSession, (_e, sessionId: string) => {
+    if (typeof sessionId !== 'string' || !sessionId) return;
+    // Refuse silencieusement si la session n'existe pas (race avec un remove).
+    const exists = ptyManager.list().some((s) => s.id === sessionId);
+    if (!exists) return;
+    // Idempotent : focus la fenêtre détachée existante au lieu d'en empiler une nouvelle.
+    const cur = detachedWindows.get(sessionId);
+    if (cur && !cur.isDestroyed()) {
+      if (cur.isMinimized()) cur.restore();
+      cur.focus();
+      return;
+    }
+    const win = createDetachedWindow(sessionId);
+    detachedWindows.set(sessionId, win);
+    win.on('closed', () => {
+      // Nettoie la map seulement si l'entrée pointe encore sur cette window
+      // (au cas où une race aurait déjà ré-attribué la slot).
+      if (detachedWindows.get(sessionId) === win) {
+        detachedWindows.delete(sessionId);
+      }
+    });
+  });
 
   // ---------- Agents ----------
   ipcMain.handle(IPC.agentsList, () => DEFAULT_AGENTS);
@@ -98,7 +134,16 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.sessionCreate, (_e, input: CreateSessionInput) =>
     safe('sessionCreate', () => ptyManager.createSession(input))
   );
-  ipcMain.handle(IPC.sessionRemove, (_e, id: string) => ptyManager.removeSession(id));
+  ipcMain.handle(IPC.sessionRemove, async (_e, id: string) => {
+    // Si la session était détachée dans une fenêtre séparée, on la ferme
+    // d'abord — sinon le renderer détaché reste sur un sessionId fantôme.
+    const detached = detachedWindows.get(id);
+    if (detached && !detached.isDestroyed()) {
+      detached.close();
+    }
+    detachedWindows.delete(id);
+    await ptyManager.removeSession(id);
+  });
 
   // ---------- Panes ----------
   ipcMain.handle(IPC.paneSplit, (_e, input: SplitPaneInput) =>
