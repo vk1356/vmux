@@ -1,9 +1,10 @@
-import { useState, type JSX } from 'react';
+import { useRef, useState, type JSX } from 'react';
 import { X, Palette, Bot, Sliders, Bell, Download } from 'lucide-react';
 import type { AppSettings } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
 import { useShallow } from 'zustand/react/shallow';
 import { useT } from '../i18n';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { SettingsAppearance } from './settings/SettingsAppearance';
 import { SettingsTerminal } from './settings/SettingsTerminal';
 import { SettingsNotifications } from './settings/SettingsNotifications';
@@ -30,6 +31,8 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
   const [tab, setTab] = useState<Tab>('apparence');
   const [saving, setSaving] = useState(false);
   const t = useT();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   if (!open || !settings) return null;
 
@@ -47,6 +50,10 @@ export function SettingsDialog({ open, onClose }: Props): JSX.Element | null {
     <div className="dialog-backdrop" onClick={onClose}>
       <div
         className="dialog"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('settingsTitle')}
         style={{ width: 'min(720px, 92vw)' }}
         onClick={(e) => e.stopPropagation()}
       >

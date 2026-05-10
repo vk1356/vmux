@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { Search, X, Plus, Trash2, Edit3 } from 'lucide-react';
 import type { Session, Snippet } from '@shared/types';
-import { allPaneIds } from '@shared/tree';
 import { pathBasename } from '@shared/utils';
 import { useT } from '../i18n';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface Props {
   open: boolean;
@@ -18,6 +18,8 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
   const [editing, setEditing] = useState<Snippet | null>(null);
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   useEffect(() => {
     if (!open) return;
@@ -107,7 +109,14 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="palette" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="palette"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('snippetsName')}
+        onClick={(e) => e.stopPropagation()}
+      >
         {editing ? (
           <>
             <div className="palette-input-row">

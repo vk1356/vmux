@@ -43,3 +43,13 @@ export function uuid(): string {
   if (c?.randomUUID) return c.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 }
+
+/** Extrait l'host d'une URL HTTP(S) pour affichage compact (TabBar, PaneHeader).
+ *  Retourne les 24 premiers chars de l'URL en fallback si parse échoue. */
+export function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url.slice(0, 24);
+  }
+}

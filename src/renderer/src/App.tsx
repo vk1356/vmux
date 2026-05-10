@@ -36,9 +36,9 @@ import { useSessionStore } from './store/sessions';
 import { useShallow } from 'zustand/react/shallow';
 import { clamp } from '@shared/utils';
 import { useGlobalIpcSubscriptions } from './hooks/useGlobalIpcSubscriptions';
-import { useGlobalKeybindings } from './hooks/useGlobalKeybindings';
-import { useFolderDragDrop } from './hooks/useFolderDragDrop';
 import { useResizableSidebar } from './hooks/useResizableSidebar';
+import { useFolderDragDrop } from './hooks/useFolderDragDrop';
+import { useGlobalKeybindings } from './hooks/useGlobalKeybindings';
 
 const MIN_SIDEBAR = 200;
 const MAX_SIDEBAR = 480;
@@ -46,19 +46,18 @@ const DEFAULT_SIDEBAR = 280;
 const SIDEBAR_AUTO_THRESHOLD = 720;
 
 export function App(): JSX.Element {
-  // Bootstrap IPC + chargement initial — entièrement délégué à ce hook.
-  useGlobalIpcSubscriptions();
-
   // useShallow : on ne re-render que si une des clés sélectionnées change.
-  const { sessions, activeSessionId, settings, removeSession, clearAttention } = useSessionStore(
-    useShallow((s) => ({
-      sessions: s.sessions,
-      activeSessionId: s.activeSessionId,
-      settings: s.settings,
-      removeSession: s.removeSession,
-      clearAttention: s.clearAttention
-    }))
-  );
+  const { sessions, activeSessionId, settings, setAgentAvailability, removeSession, clearAttention } =
+    useSessionStore(
+      useShallow((s) => ({
+        sessions: s.sessions,
+        activeSessionId: s.activeSessionId,
+        settings: s.settings,
+        setAgentAvailability: s.setAgentAvailability,
+        removeSession: s.removeSession,
+        clearAttention: s.clearAttention
+      }))
+    );
 
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   /** Cwd transmis à NewSessionDialog quand on ouvre via drag-drop d'un dossier. */
@@ -71,7 +70,9 @@ export function App(): JSX.Element {
   const [closeConfirm, setCloseConfirm] = useState<{ sessionId: string; name: string } | null>(
     null
   );
-  // Onboarding : affiché tant que settings.onboardingCompleted !== true.
+  // Onboarding : affiché tant que settings.onboardingCompleted !== true. On
+  // attend que les settings soient chargés (settings === null au boot) pour
+  // éviter un flash de l'overlay si l'user a déjà skip.
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   useEffect(() => {
     if (settings && settings.onboardingCompleted !== true) {
@@ -81,11 +82,10 @@ export function App(): JSX.Element {
   const closeOnboarding = useCallback((completed: boolean): void => {
     setOnboardingOpen(false);
     void window.cmux.settings.set({ onboardingCompleted: true });
-    void completed; // skip vs finish : même résultat persisté.
+    void completed; // skip vs finish : même résultat persisté ; on ne re-affiche jamais.
   }, []);
 
-  // Sidebar : drag, persist, auto-collapse.
-  const persistSidebarRatio = useCallback((pct: number) => {
+  const persistRatio = useCallback((pct: number) => {
     void window.cmux.settings.set({ sidebarWidth: pct });
   }, []);
   const sidebar = useResizableSidebar({
@@ -93,24 +93,29 @@ export function App(): JSX.Element {
     max: MAX_SIDEBAR,
     initial: DEFAULT_SIDEBAR,
     autoCollapseThreshold: SIDEBAR_AUTO_THRESHOLD,
-    onPersistRatio: persistSidebarRatio
+    onPersistRatio: persistRatio
   });
-  // Init de la sidebar depuis settings (px ou %).
-  useEffect(() => {
-    if (!settings) return;
-    const stored = typeof settings.sidebarWidth === 'number' ? settings.sidebarWidth : 22;
-    const px = stored <= 100 ? Math.round((stored / 100) * window.innerWidth) : stored;
-    sidebar.setWidthPx(clamp(px, MIN_SIDEBAR, MAX_SIDEBAR));
-    // Volontairement seulement à l'arrivée des settings — pas au resize.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings?.sidebarWidth]);
 
-  // Drag-drop dossier → ouvre NewSessionDialog avec ce cwd pré-rempli.
-  const handleFolderDropped = useCallback((path: string) => {
-    setNewSessionDefaultCwd(path);
+  // Init de la largeur de sidebar depuis les settings persistés.
+  const sidebarInitedRef = useRef(false);
+  useEffect(() => {
+    if (sidebarInitedRef.current || !settings) return;
+    sidebarInitedRef.current = true;
+    const stored = typeof settings.sidebarWidth === 'number' ? settings.sidebarWidth : 22;
+    const px =
+      stored <= 100 ? Math.round((stored / 100) * window.innerWidth) : stored;
+    sidebar.setWidthPx(clamp(px, MIN_SIDEBAR, MAX_SIDEBAR));
+  }, [settings, sidebar]);
+
+  // Toutes les souscriptions IPC + bootstrap initial — extrait dans un hook.
+  useGlobalIpcSubscriptions();
+
+  // Drag-drop d'un dossier sur la window → ouvre New Session.
+  const onFolderDropped = useCallback((p: string) => {
+    setNewSessionDefaultCwd(p);
     setNewSessionOpen(true);
   }, []);
-  useFolderDragDrop(handleFolderDropped);
+  useFolderDragDrop(onFolderDropped);
 
   // Clear l'attention quand le pane actif **change** (pas à chaque heartbeat).
   const prevActivePaneRef = useRef<string | null>(null);
@@ -125,13 +130,11 @@ export function App(): JSX.Element {
     }
   }, [activeSessionId, sessions, clearAttention]);
 
-  // Refresh de la check d'agents quand on ouvre le dialog NewSession.
-  const setAgentAvailability = useSessionStore((s) => s.setAgentAvailability);
   useEffect(() => {
     if (newSessionOpen) void window.cmux.agents.check().then(setAgentAvailability);
   }, [newSessionOpen, setAgentAvailability]);
 
-  // Raccourcis clavier — entièrement délégué à ce hook.
+  // Raccourcis clavier globaux — extrait dans useGlobalKeybindings.
   useGlobalKeybindings({
     sessions,
     activeSessionId,

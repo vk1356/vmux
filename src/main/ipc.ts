@@ -32,6 +32,22 @@ import { notifBundle } from '@shared/notif-i18n';
 import type { TreePath } from '@shared/tree';
 import type { LayoutPreset } from '@shared/layouts';
 import { createNotificationService, preloadNotificationIcon } from './notification-service';
+import { syncAutoLaunch } from './window';
+
+/** Validation de PtySize venu du renderer — rejette les valeurs non finies ou
+ *  négatives qui feraient crasher node-pty.resize(). */
+function isValidPtySize(s: unknown): s is PtySize {
+  if (!s || typeof s !== 'object') return false;
+  const o = s as Record<string, unknown>;
+  return (
+    typeof o.cols === 'number' &&
+    typeof o.rows === 'number' &&
+    Number.isFinite(o.cols) &&
+    Number.isFinite(o.rows) &&
+    o.cols > 0 &&
+    o.rows > 0
+  );
+}
 
 function safe<T>(name: string, fn: () => Promise<T> | T): Promise<IpcResult<T>> {
   return Promise.resolve()
@@ -142,10 +158,16 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
       )
   );
 
-  ipcMain.on(IPC.paneWrite, (_e, paneId: PaneId, data: string) => ptyManager.writePane(paneId, data));
-  ipcMain.on(IPC.paneResize, (_e, paneId: PaneId, size: PtySize) =>
-    ptyManager.resizePane(paneId, size)
-  );
+  ipcMain.on(IPC.paneWrite, (_e, paneId: unknown, data: unknown) => {
+    // Hot path (chaque keystroke) — validation minimale pour rejeter les
+    // payloads malformés sans logger (sinon flood des logs en cas de bug).
+    if (typeof paneId !== 'string' || typeof data !== 'string') return;
+    ptyManager.writePane(paneId, data);
+  });
+  ipcMain.on(IPC.paneResize, (_e, paneId: unknown, size: unknown) => {
+    if (typeof paneId !== 'string' || !isValidPtySize(size)) return;
+    ptyManager.resizePane(paneId, size);
+  });
 
   ptyManager.on('paneData', (paneId, data) => {
     safeSend(IPC.paneData, paneId, data);
@@ -255,24 +277,10 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.settingsGet, () => getSettings());
   ipcMain.handle(IPC.settingsSet, (_e, patch: Partial<import('@shared/types').AppSettings>) => {
     const next = updateSettings(patch);
-    // Si autoLaunch a changé dans ce patch, applique le LoginItemSetting.
-    // Pas en dev (le path serait electron.exe, ce qui n'a pas de sens).
+    // Si autoLaunch a changé dans ce patch, applique le LoginItemSetting via
+    // le helper centralisé (dédupliqué — la logique vivait à 2 endroits).
     if (Object.prototype.hasOwnProperty.call(patch, 'autoLaunch')) {
-      try {
-        if (process.platform === 'win32') {
-          app.setLoginItemSettings({
-            openAtLogin: next.autoLaunch,
-            path: process.execPath,
-            args: ['--hidden']
-          });
-        } else if (process.platform === 'darwin') {
-          app.setLoginItemSettings({ openAtLogin: next.autoLaunch, openAsHidden: true });
-        } else if (process.platform === 'linux') {
-          app.setLoginItemSettings({ openAtLogin: next.autoLaunch });
-        }
-      } catch (err) {
-        log.warn('[autolaunch] sync failed', err);
-      }
+      syncAutoLaunch(next.autoLaunch);
     }
     return next;
   });

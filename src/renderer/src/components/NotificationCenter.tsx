@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { Bell, X, Trash2, CheckCircle2, XCircle, Rocket, FlaskConical, Sparkles } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import type { DetectedEventKind } from '@shared/types';
 import { useLocale, useT, type TKey } from '../i18n';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface Props {
   open: boolean;
@@ -25,6 +26,8 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
   const clearEventHistory = useSessionStore((s) => s.clearEventHistory);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const [filter, setFilter] = useState<DetectedEventKind | 'all'>('all');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   // Mark all as read when drawer opens.
   useEffect(() => {
@@ -43,7 +46,14 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
 
   return (
     <div className="notif-backdrop" onClick={onClose}>
-      <div className="notif-drawer" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="notif-drawer"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('notificationsTitle')}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="notif-header">
           <div className="notif-title">
             <Bell size={14} /> {t('notificationsTitle')}

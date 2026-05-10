@@ -135,8 +135,22 @@ export async function ensureDevShortcutForNotifications(aumid: string): Promise<
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
         { windowsHide: true }
       );
-      child.on('exit', () => resolve());
-      child.on('error', () => resolve());
+      // Timeout dur 10s : sur certaines configs (profil corrompu, AV qui scanne),
+      // powershell.exe peut freezer à l'init. On préfère perdre les notifs en
+      // dev plutôt que bloquer le boot du main process.
+      const killer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          /* déjà mort */
+        }
+      }, 10_000);
+      const cleanup = (): void => {
+        clearTimeout(killer);
+        resolve();
+      };
+      child.on('exit', cleanup);
+      child.on('error', cleanup);
     });
     log.info(`[notif] dev shortcut prepared at ${shortcutPath} (aumid=${aumid})`);
   } catch (err) {

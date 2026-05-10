@@ -6,7 +6,6 @@ import {
   useState,
   type DragEvent,
   type JSX,
-  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent
 } from 'react';
 import { Terminal } from '@xterm/xterm';
@@ -17,12 +16,13 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { LigaturesAddon } from '@xterm/addon-ligatures';
-import { ChevronDown, ChevronUp, X as XIcon, Play } from 'lucide-react';
+import { Play } from 'lucide-react';
 import type { TerminalPane as TerminalPaneT } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { useSessionStore } from '../store/sessions';
 import { subscribePaneData } from '../store/paneDataBus';
 import { useT } from '../i18n';
+import { TerminalSearchBar } from './TerminalSearchBar';
 
 interface Props {
   sessionId: string;
@@ -473,73 +473,3 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
 }
 
 export const TerminalPane = memo(TerminalPaneImpl);
-
-interface SearchBarProps {
-  searchAddon: SearchAddon | null;
-  onClose: () => void;
-}
-
-function TerminalSearchBar({ searchAddon, onClose }: SearchBarProps): JSX.Element {
-  const t = useT();
-  const [query, setQuery] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  const findNext = useCallback(() => {
-    if (query)
-      searchAddon?.findNext(query, {
-        decorations: {
-          matchOverviewRuler: '#f97316',
-          activeMatchColorOverviewRuler: '#fb923c'
-        }
-      });
-  }, [query, searchAddon]);
-
-  const findPrev = useCallback(() => {
-    if (query)
-      searchAddon?.findPrevious(query, {
-        decorations: {
-          matchOverviewRuler: '#f97316',
-          activeMatchColorOverviewRuler: '#fb923c'
-        }
-      });
-  }, [query, searchAddon]);
-
-  const onKeyDown = useCallback(
-    (e: ReactKeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (e.shiftKey) findPrev();
-        else findNext();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
-    },
-    [findNext, findPrev, onClose]
-  );
-
-  return (
-    <div className="terminal-search">
-      <input
-        ref={inputRef}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={onKeyDown}
-        placeholder={t('palettePlaceholder')}
-      />
-      <button className="btn-icon" onClick={findPrev} title={t('searchPrev')}>
-        <ChevronUp size={14} />
-      </button>
-      <button className="btn-icon" onClick={findNext} title={t('searchNext')}>
-        <ChevronDown size={14} />
-      </button>
-      <button className="btn-icon" onClick={onClose} title={t('searchClose')}>
-        <XIcon size={14} />
-      </button>
-    </div>
-  );
-}

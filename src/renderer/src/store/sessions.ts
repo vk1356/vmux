@@ -113,13 +113,16 @@ interface SessionStore {
   pushSystemStats: (sample: SystemStatsSample) => void;
 }
 
-/** Ordre d'escalade des niveaux d'attention. */
-const ATTENTION_LEVEL: Record<PaneAttention, number> = {
+/** Ordre d'escalade des niveaux d'attention. Exporté pour les composants qui
+ *  doivent comparer des niveaux entre eux (sidebar agrégeant les panes). */
+export type AttentionLevel = PaneAttention;
+export const ATTENTION_RANK: Record<AttentionLevel, number> = {
   idle: 0,
   activity: 1,
   alert: 2,
   'needs-input': 3
 };
+const ATTENTION_LEVEL = ATTENTION_RANK;
 
 // Zustand v5 : la forme curried `create<T>()(...)` est requise pour bénéficier
 // de l'inférence de types et rester compatible avec les middlewares (cf. docs

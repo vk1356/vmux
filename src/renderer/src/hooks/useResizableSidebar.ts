@@ -38,21 +38,32 @@ export function useResizableSidebar(opts: Options): ResizableSidebar {
   const [collapsed, setCollapsed] = useState(false);
   const draggingRef = useRef(false);
   const userToggledRef = useRef(false);
+  // Refs live pour lire les options et la largeur courante dans onUp sans
+  // ré-attacher mousemove/mouseup à chaque pixel déplacé. Avant : `[widthPx,
+  // opts]` en deps → re-add/remove des handlers à chaque setWidthPx, soit ~1
+  // listener add+remove par pixel pendant un drag.
+  const widthRef = useRef(widthPx);
+  const optsRef = useRef(opts);
+  useEffect(() => {
+    widthRef.current = widthPx;
+  }, [widthPx]);
+  useEffect(() => {
+    optsRef.current = opts;
+  }, [opts]);
 
-  // Drag handlers globaux — re-attachés à chaque change de widthPx pour
-  // capturer la valeur courante au moment du up.
   useEffect(() => {
     const onMove = (e: MouseEvent): void => {
       if (!draggingRef.current) return;
-      const px = clamp(e.clientX, opts.min, opts.max);
+      const o = optsRef.current;
+      const px = clamp(e.clientX, o.min, o.max);
       setWidthPx(px);
     };
     const onUp = (): void => {
       if (!draggingRef.current) return;
       draggingRef.current = false;
       document.body.style.cursor = '';
-      const pct = Math.round((widthPx / window.innerWidth) * 100);
-      opts.onPersistRatio(pct);
+      const pct = Math.round((widthRef.current / window.innerWidth) * 100);
+      optsRef.current.onPersistRatio(pct);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -60,7 +71,7 @@ export function useResizableSidebar(opts: Options): ResizableSidebar {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [widthPx, opts]);
+  }, []);
 
   const startDrag = useCallback((): void => {
     draggingRef.current = true;

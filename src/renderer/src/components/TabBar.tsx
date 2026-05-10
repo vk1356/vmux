@@ -2,6 +2,7 @@ import { useMemo, useState, type JSX, type MouseEvent } from 'react';
 import { Globe, RotateCw, X, Edit3, Layers, Keyboard } from 'lucide-react';
 import type { Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
+import { hostFromUrl } from '@shared/utils';
 import { useSessionStore } from '../store/sessions';
 import { useShallow } from 'zustand/react/shallow';
 import { useT } from '../i18n';
@@ -212,11 +213,3 @@ export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
   );
 }
 
-function hostFromUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    return u.host;
-  } catch {
-    return url.slice(0, 24);
-  }
-}

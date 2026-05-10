@@ -1,9 +1,10 @@
-import { useEffect, useState, type JSX } from 'react';
+import { useEffect, useRef, useState, type JSX } from 'react';
 import { FolderOpen, X, GitBranch, MessageSquare, AlertCircle, ExternalLink } from 'lucide-react';
 import type { AgentPreset, GitRepoInfo } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
 import { useShallow } from 'zustand/react/shallow';
 import { useT } from '../i18n';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface Props {
   open: boolean;
@@ -31,6 +32,8 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
   const [initialInput, setInitialInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   useEffect(() => {
     if (!open) return;
@@ -126,7 +129,14 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="dialog"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('newSessionTitle')}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="dialog-header">
           <div className="dialog-title">{t('newSessionTitle')}</div>
           <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>

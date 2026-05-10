@@ -1,6 +1,7 @@
-import type { JSX } from 'react';
+import { useRef, type JSX } from 'react';
 import { X, Keyboard } from 'lucide-react';
 import { useT, type TKey } from '../i18n';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface Props {
   open: boolean;
@@ -61,10 +62,19 @@ const GROUPS: GroupSpec[] = [
 
 export function ShortcutsOverlay({ open, onClose }: Props): JSX.Element | null {
   const t = useT();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
   if (!open) return null;
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="shortcuts-overlay" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="shortcuts-overlay"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('shortcutsTitle')}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="dialog-header">
           <div className="dialog-title">
             <Keyboard size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />

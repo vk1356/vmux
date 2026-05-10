@@ -6,11 +6,18 @@ import type { GitRepoInfo } from '@shared/types';
 
 const execFileAsync = promisify(execFile);
 
+/** Timeout par défaut sur les appels `git` — un repo corrompu, un mount réseau
+ *  lent, ou un hook git qui freeze peut bloquer le main process indéfiniment.
+ *  30s couvre largement les `worktree add` les plus lents (clone shallow, etc.). */
+const GIT_TIMEOUT_MS = 30_000;
+
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', args, {
     cwd,
     windowsHide: true,
-    maxBuffer: 10 * 1024 * 1024
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: GIT_TIMEOUT_MS,
+    killSignal: 'SIGKILL'
   });
   return stdout;
 }

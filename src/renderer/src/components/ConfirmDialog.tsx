@@ -1,5 +1,6 @@
 import { useEffect, useRef, type JSX } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface Props {
   open: boolean;
@@ -23,6 +24,8 @@ export function ConfirmDialog({
   onCancel
 }: Props): JSX.Element | null {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   useEffect(() => {
     if (open) requestAnimationFrame(() => cancelRef.current?.focus());
@@ -49,8 +52,11 @@ export function ConfirmDialog({
     <div className="dialog-backdrop" onClick={onCancel}>
       <div
         className="dialog confirm-dialog"
+        ref={dialogRef}
         onClick={(e) => e.stopPropagation()}
         role="alertdialog"
+        aria-modal="true"
+        aria-label={title}
       >
         <div className="dialog-header">
           <div className="dialog-title">

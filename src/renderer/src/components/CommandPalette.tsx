@@ -15,9 +15,11 @@ import {
   X
 } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
+import { useShallow } from 'zustand/react/shallow';
 import { allPaneIds } from '@shared/tree';
 import type { AgentPreset, Session, TerminalPane } from '@shared/types';
 import { useT, type TFunction } from '../i18n';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface Props {
   open: boolean;
@@ -268,17 +270,27 @@ export function CommandPalette({
   onOpenSettings
 }: Props): JSX.Element | null {
   const t = useT();
-  const sessions = useSessionStore((s) => s.sessions);
-  const agents = useSessionStore((s) => s.agents);
-  const activeSessionId = useSessionStore((s) => s.activeSessionId);
-  const setActiveSession = useSessionStore((s) => s.setActiveSession);
-  const upsertSession = useSessionStore((s) => s.upsertSession);
-  const removeSession = useSessionStore((s) => s.removeSession);
+  // useShallow : un seul subscribe, un seul re-render quand l'une des clés change.
+  // Avant : 6 subscriptions séparées → re-render à chaque update du store
+  // (paneActivity, toasts, stats toutes les 2s).
+  const { sessions, agents, activeSessionId, setActiveSession, upsertSession, removeSession } =
+    useSessionStore(
+      useShallow((s) => ({
+        sessions: s.sessions,
+        agents: s.agents,
+        activeSessionId: s.activeSessionId,
+        setActiveSession: s.setActiveSession,
+        upsertSession: s.upsertSession,
+        removeSession: s.removeSession
+      }))
+    );
 
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
 
   const items: CommandItem[] = useMemo(() => {
     const active = sessions.find((s) => s.id === activeSessionId);
@@ -375,7 +387,14 @@ export function CommandPalette({
 
   return (
     <div className="dialog-backdrop" onClick={onClose}>
-      <div className="palette" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="palette"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('palettePlaceholder')}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="palette-input-row">
           <Search size={14} style={{ color: 'var(--text-dim)' }} />
           <input

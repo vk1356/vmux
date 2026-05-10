@@ -1,6 +1,7 @@
 import { memo, useEffect, useState, type JSX } from 'react';
 import { X, Globe, Terminal as TerminalIcon, Moon, Clock } from 'lucide-react';
 import type { Pane, TerminalPane as TerminalPaneT } from '@shared/types';
+import { hostFromUrl } from '@shared/utils';
 import { useSessionStore } from '../store/sessions';
 import { PaneStats } from './PaneStats';
 
@@ -85,14 +86,6 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
 }
 
 export const PaneHeader = memo(PaneHeaderImpl);
-
-function hostFromUrl(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url.slice(0, 24);
-  }
-}
 
 /** Re-render toutes les 30s pour rafraîchir l'uptime affiché. 30s = granularité
  *  utile (les minutes changent rarement, on ne perd rien à <30s). */
