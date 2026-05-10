@@ -9,18 +9,44 @@
   flex-shrink: 0;
   background: var(--bg-elev);
   border-top: 1px solid var(--border);
-  padding: 0 12px;
+  padding: 0 10px;
   font-size: 11px;
   color: var(--text-muted);
-  gap: 16px;
+  gap: 8px;
+  min-width: 0; /* permet au .statusbar-path de tronquer correctement */
+}
+.statusbar-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 .statusbar-section {
   display: flex;
   align-items: center;
   gap: 6px;
 }
+.statusbar-divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+  opacity: 0.6;
+}
 .statusbar-spacer {
   flex: 1;
+  min-width: 4px;
+}
+.statusbar-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+  min-width: 0;
+}
+.statusbar-version {
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
 }
 .statusbar-attention {
   display: inline-flex;

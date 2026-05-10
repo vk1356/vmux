@@ -98,80 +98,112 @@ function StatusBarImpl({ onOpenNotifications }: Props): JSX.Element {
     setTimeout(() => setPidCopied(false), 1200);
   };
 
+  const hasProcessGroup =
+    !!activeTerm && (activeTerm.pid !== undefined || activeTerm.status === 'running');
+  const hasLocationGroup = !!active && (!!active.branch || !!(activeTerm?.cwd ?? active.cwd));
+
   return (
     <div className="statusbar">
-      <span className="statusbar-section">
-        <Activity size={11} /> {runningPanes} {t('statusActive')} / {totalPanes}
-      </span>
-      {active && (
+      {/* Group 1 — État global */}
+      <div className="statusbar-group">
+        <span className="statusbar-section" title={`${runningPanes} pane(s) en cours sur ${totalPanes}`}>
+          <Activity size={11} /> {runningPanes} {t('statusActive')} / {totalPanes}
+        </span>
+      </div>
+
+      {/* Group 2 — Process info (PID + stats du pane actif) */}
+      {hasProcessGroup && (
         <>
-          {activeTerm && activeTerm.pid !== undefined && (
-            <button
-              className="statusbar-section statusbar-pid"
-              onClick={() => onCopyPid(activeTerm.pid as number)}
-              title="Cliquer pour copier le PID"
-            >
-              {pidCopied ? <Check size={11} /> : <Cpu size={11} />} PID&nbsp;
-              {activeTerm.pid}
-            </button>
-          )}
-          {activeTerm && activeTerm.status === 'running' && (
-            <span className="statusbar-section statusbar-stats">
-              <PaneStats paneId={activeTerm.id} />
-            </span>
-          )}
-          {active.branch && (
-            <span className="statusbar-section">
-              <GitBranch size={11} /> {active.branch}
-            </span>
-          )}
-          <span
-            className="statusbar-section"
-            title={active.cwd}
-            style={{
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              maxWidth: 360
-            }}
-          >
-            <Folder size={11} /> {activeTerm?.cwd ?? active.cwd}
-          </span>
+          <span className="statusbar-divider" aria-hidden />
+          <div className="statusbar-group">
+            {activeTerm && activeTerm.pid !== undefined && (
+              <button
+                className="statusbar-section statusbar-pid"
+                onClick={() => onCopyPid(activeTerm.pid as number)}
+                title="Cliquer pour copier le PID"
+              >
+                {pidCopied ? <Check size={11} /> : <Cpu size={11} />} PID&nbsp;
+                {activeTerm.pid}
+              </button>
+            )}
+            {activeTerm && activeTerm.status === 'running' && (
+              <span className="statusbar-section statusbar-stats">
+                <PaneStats paneId={activeTerm.id} />
+              </span>
+            )}
+          </div>
         </>
       )}
+
+      {/* Group 3 — Localisation (branch + cwd) */}
+      {hasLocationGroup && active && (
+        <>
+          <span className="statusbar-divider" aria-hidden />
+          <div className="statusbar-group">
+            {active.branch && (
+              <span className="statusbar-section" title={`Branche : ${active.branch}`}>
+                <GitBranch size={11} /> {active.branch}
+              </span>
+            )}
+            <span
+              className="statusbar-section statusbar-path"
+              title={activeTerm?.cwd ?? active.cwd}
+            >
+              <Folder size={11} /> {activeTerm?.cwd ?? active.cwd}
+            </span>
+          </div>
+        </>
+      )}
+
       <span className="statusbar-spacer" />
+
+      {/* Group 4 — Ressources système */}
       {systemStats && (
-        <SystemStatsWidget
-          stats={systemStats}
-          history={systemCpuHistory}
-        />
+        <>
+          <div className="statusbar-group">
+            <SystemStatsWidget
+              stats={systemStats}
+              history={systemCpuHistory}
+            />
+          </div>
+          <span className="statusbar-divider" aria-hidden />
+        </>
       )}
-      {needsInputCount > 0 && (
+
+      {/* Group 5 — Attention + bell */}
+      <div className="statusbar-group">
+        {needsInputCount > 0 && (
+          <button
+            className={`statusbar-attention ${hasNeedsInput ? 'urgent' : 'soft'}`}
+            onClick={() => {
+              const first = needsInputSessions[0];
+              if (first) setActiveSession(first.id);
+            }}
+            title={`${needsInputCount} session${needsInputCount > 1 ? 's' : ''} demande${needsInputCount > 1 ? 'nt' : ''} attention — clique pour aller`}
+          >
+            <AlertCircle size={11} />
+            {needsInputCount}
+          </button>
+        )}
         <button
-          className={`statusbar-attention ${hasNeedsInput ? 'urgent' : 'soft'}`}
-          onClick={() => {
-            // Cycle vers la 1ère session qui demande de l'attention.
-            const first = needsInputSessions[0];
-            if (first) setActiveSession(first.id);
-          }}
-          title={`${needsInputCount} session${needsInputCount > 1 ? 's' : ''} demande${needsInputCount > 1 ? 'nt' : ''} attention — clique pour aller`}
+          className="statusbar-bell"
+          onClick={onOpenNotifications}
+          title="Notifications"
+          aria-label="Notifications"
         >
-          <AlertCircle size={11} />
-          {needsInputCount}
+          <Bell size={12} />
+          {unreadCount > 0 && <span className="statusbar-bell-badge">{unreadCount}</span>}
         </button>
-      )}
-      <button
-        className="statusbar-bell"
-        onClick={onOpenNotifications}
-        title="Notifications"
-        aria-label="Notifications"
-      >
-        <Bell size={12} />
-        {unreadCount > 0 && <span className="statusbar-bell-badge">{unreadCount}</span>}
-      </button>
-      <span className="statusbar-section" style={{ opacity: 0.6 }}>
-        vMux {version ? `v${version}` : ''}
-      </span>
+      </div>
+
+      <span className="statusbar-divider" aria-hidden />
+
+      {/* Group 6 — Version */}
+      <div className="statusbar-group">
+        <span className="statusbar-section statusbar-version">
+          vMux {version ? `v${version}` : ''}
+        </span>
+      </div>
     </div>
   );
 }
@@ -237,12 +269,20 @@ function SystemStatsWidget({ stats, history }: SystemStatsProps): JSX.Element {
   ].join('\n');
 
   return (
-    <span className="statusbar-section statusbar-system" title={tooltip}>
+    <span
+      className="statusbar-section statusbar-system"
+      title={tooltip}
+      aria-label={`Ressources système. ${tooltip.replace(/\n/g, '. ')}`}
+    >
       <Server size={11} style={{ color: cpuColor }} />
       <span className="statusbar-system-cpu" style={{ color: cpuColor }}>
         {Math.round(stats.cpu)}%
       </span>
-      <canvas ref={canvasRef} className="statusbar-system-spark" />
+      <canvas
+        ref={canvasRef}
+        className="statusbar-system-spark"
+        aria-label={`Historique CPU 60s — actuel ${stats.cpu.toFixed(1)}%`}
+      />
       <MemoryStick size={11} style={{ marginLeft: 6, opacity: 0.7 }} />
       <span className="statusbar-system-mem">
         {memUsedGb.toFixed(1)}/{memTotalGb.toFixed(0)}G

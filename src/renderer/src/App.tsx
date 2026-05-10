@@ -207,11 +207,6 @@ export function App(): JSX.Element {
               <TabBar session={active} onShowShortcuts={openShortcuts} />
               <UrlChips session={active} />
               <div className="tab-spacer" />
-              <div className="tab-shortcuts">
-                <span className="kbd-inline">Ctrl+Shift+D</span> + pane
-                <span className="kbd-inline">Ctrl+G</span> tile
-                <span className="kbd-inline">Alt+←→↑↓</span> nav
-              </div>
             </div>
           )}
 

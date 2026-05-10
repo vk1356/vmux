@@ -1,9 +1,9 @@
 /* ============================================================
-   Responsive — sidebar compact + tab shortcuts cachés < 1100px
+   Responsive — sidebar compact en dessous de 900px
    ============================================================ */
 
 @media (max-width: 1100px) {
-  .tab-shortcuts { display: none; }
+  .tab-shortcuts-btn .kbd-key { display: none; }
 }
 @media (max-width: 900px) {
   .sidebar-search { display: none; }

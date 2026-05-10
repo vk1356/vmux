@@ -46,11 +46,15 @@
 
 /* Mobile / fenêtre minimale — 640px */
 @media (max-width: 640px) {
-  /* Cache des éléments non-essentiels du status bar */
-  .statusbar-section:not(:first-child):not(:last-child) {
+  /* Cache des éléments non-essentiels du status bar — garde compteur, bell, version */
+  .statusbar-divider,
+  .statusbar-pid,
+  .statusbar-stats,
+  .statusbar-path,
+  .statusbar-version {
     display: none;
   }
-  /* Garde le compteur sessions + bell + version */
+  .statusbar-group { gap: 8px; }
 
   /* Hero ultra compact */
   .hero-title { font-size: 22px; }
@@ -73,7 +77,7 @@
 
   /* TabBar items plus serrés */
   .tab-item { padding: 4px 8px; font-size: 11px; gap: 4px; }
-  .tab-shortcuts { display: none; }
+  .tab-shortcuts-btn-label { display: none; }
 
   /* Update banner : actions sur la ligne suivante */
   .update-banner-action { width: 100%; }
@@ -163,7 +167,7 @@
   .hero-feature-body { font-size: 10px; }
   .hero-shortcuts { padding: 4px 8px; gap: 3px 6px; }
   .hero-shortcut { font-size: 10px; }
-  .kbd-inline { padding: 1px 4px; font-size: 9px; }
+  .tab-shortcuts-btn .kbd-key { padding: 0 2px; font-size: 8px; }
 }
 
 /* Force pas d'overflow horizontal sur l'app entière */

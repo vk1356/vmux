@@ -159,12 +159,14 @@ export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
 
       <div className="tab-bar-actions">
         <button
-          className="btn-icon"
+          className="tab-shortcuts-btn"
           onClick={onShowShortcuts}
-          title="Raccourcis clavier (?)"
-          aria-label="Raccourcis"
+          title="Raccourcis clavier — appuie sur ?"
+          aria-label="Raccourcis clavier"
         >
-          <Keyboard size={13} />
+          <Keyboard size={12} />
+          <span className="tab-shortcuts-btn-label">Shortcuts</span>
+          <span className="kbd-key">?</span>
         </button>
       </div>
 

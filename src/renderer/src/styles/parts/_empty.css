@@ -2,6 +2,17 @@
    Empty state
    ============================================================ */
 
+/* Touche clavier inline — utilisée dans EmptyState */
+.kbd-inline {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
 /* ============================================================
    Hero / EmptyState — landing quand aucune session ouverte
    ============================================================ */
