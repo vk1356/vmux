@@ -19,8 +19,14 @@ export { isNewer };
  * Stratégie :
  * - Check primaire = API GitHub direct (rapide, fiable, fonctionne en dev).
  *   Timeout dur 8s via AbortController. Compare app.getVersion() vs tag_name.
- * - electron-updater n'est utilisé QUE pour le download différentiel via
- *   blockmap quand l'user clique "Download".
+ * - electron-updater est utilisé pour le download différentiel via blockmap.
+ *   `autoDownload=true` → quand le check primaire détecte une version, on
+ *   trigger automatiquement le download en background.
+ *   `autoInstallOnAppQuit=true` → à la fermeture de l'app, l'installer NSIS
+ *   tourne en silent mode (`/S`) et remplace le binaire. Au prochain launch,
+ *   l'user a la nouvelle version sans aucun click.
+ * - L'IPC `updateInstall` reste exposé pour le bouton "Install now" (force
+ *   l'install immédiat au lieu d'attendre le quit).
  * - Tous les paths d'erreur envoient un statut UpdateStatus avec un `code`
  *   traduisible côté renderer.
  */
@@ -270,8 +276,16 @@ export async function setupAutoUpdater(
 
   /** Path du dernier installer téléchargé manuellement, prêt à être lancé. */
   let pendingManualInstaller: string | null = null;
+  /** Référence vers le module electron-updater (lazy-imported plus bas).
+   *  Quand non-null, le check primaire trigger un auto-download en background. */
+  let autoUpdaterRef: typeof import('electron-updater').autoUpdater | null = null;
+  /** Anti-spam : évite de re-trigger un download si le précédent tourne déjà
+   *  ou si on est passé à 'downloading' / 'downloaded'. */
+  let autoDownloadTriggered = false;
 
-  /** Check primaire : API GitHub. Aucun hang possible (timeout 8s strict). */
+  /** Check primaire : API GitHub. Aucun hang possible (timeout 8s strict).
+   *  Si une version plus récente est détectée ET que electron-updater est dispo,
+   *  on trigger un auto-download silencieux (autoDownload=true). */
   async function checkUpdates(): Promise<void> {
     log.info('[updater] checkUpdates() called');
     sendStatus({ kind: 'checking' });
@@ -285,6 +299,20 @@ export async function setupAutoUpdater(
           version: latest.version,
           releaseNotes: latest.notes
         });
+        // Auto-download en background via electron-updater (blockmap diff).
+        // À la fermeture de l'app → install silencieux via autoInstallOnAppQuit.
+        if (autoUpdaterRef && !autoDownloadTriggered) {
+          autoDownloadTriggered = true;
+          try {
+            log.info('[updater] auto-download triggered (silent install on quit)');
+            await autoUpdaterRef.checkForUpdates();
+          } catch (e) {
+            log.warn('[updater] auto checkForUpdates failed', e);
+            // Reset le flag : si l'user clique Download manuellement plus tard,
+            // on veut bien que le flow re-tente.
+            autoDownloadTriggered = false;
+          }
+        }
       } else {
         sendStatus({ kind: 'not-available', currentVersion: local });
       }
@@ -327,8 +355,11 @@ export async function setupAutoUpdater(
   try {
     const { autoUpdater } = await import('electron-updater');
     autoUpdater.logger = log;
-    autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = false;
+    // Mode silencieux à la cmd Claude Code : background download + install au quit.
+    // L'user ne voit jamais de prompt sauf s'il choisit "Install now" via le banner.
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdaterRef = autoUpdater;
 
     autoUpdater.on('download-progress', (p) =>
       sendStatus({
@@ -352,9 +383,12 @@ export async function setupAutoUpdater(
 
     ipcMain.handle(IPC.updateDownload, async () => {
       try {
-        log.info('[updater] electron-updater downloadUpdate()');
+        log.info('[updater] manual download requested');
+        // autoDownload=true → checkForUpdates() trigger lui-même le download.
+        // Pas besoin d'un downloadUpdate() supplémentaire (il duplique le travail
+        // si l'auto-download a déjà démarré via le check au boot).
+        autoDownloadTriggered = true;
         await autoUpdater.checkForUpdates();
-        await autoUpdater.downloadUpdate();
       } catch (err) {
         log.warn('[updater] electron-updater download failed, manual fallback', err);
         pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
