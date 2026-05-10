@@ -4,6 +4,7 @@ import { clearPaneData } from './paneDataBus';
 import type {
   AgentAvailability,
   AgentPreset,
+  AgentRunState,
   AppSettings,
   DetectedEvent,
   DetectedEventKind,
@@ -73,6 +74,10 @@ interface SessionStore {
   eventHistory: Array<{ event: DetectedEvent; sessionId: string; sessionName: string; readAt?: number }>;
   /** Niveau d'attention par pane — `idle` quand le user a focus, sinon escalade. */
   paneActivity: Record<PaneId, PaneAttention>;
+  /** État live de l'agent IA par pane (idle/thinking/generating/needs-input).
+   *  Orthogonal à paneActivity (qui est un signal d'attention non-lu, persistant).
+   *  paneAgentState reflète l'état courant et bascule en idle dès que le PTY se calme. */
+  paneAgentState: Record<PaneId, AgentRunState>;
   /** Historique CPU/RAM par pane (fenêtre glissante de STATS_WINDOW samples). */
   paneStats: Record<PaneId, PaneStatsHistory>;
   /** Stats globales machine + somme vMux (push toutes les 2s depuis main).
@@ -107,6 +112,8 @@ interface SessionStore {
   bumpAttention: (paneId: PaneId, level: PaneAttention) => void;
   /** Clear l'attention d'un pane (appelé quand le user focuses ce pane). */
   clearAttention: (paneId: PaneId) => void;
+  /** Setter de l'état live d'agent — appelé sur chaque transition côté main. */
+  setAgentState: (paneId: PaneId, state: AgentRunState) => void;
   /** Append samples CPU/RAM (push depuis le main toutes les 2s). */
   pushStatSamples: (samples: PaneStatSample[]) => void;
   /** Met à jour les stats système globales. */
@@ -147,6 +154,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
   toasts: [],
   eventHistory: [],
   paneActivity: {},
+  paneAgentState: {},
   paneStats: {},
   systemStats: null,
   systemCpuHistory: new Float32Array(0),
@@ -236,12 +244,15 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       // sur les longues sessions (chaque pane gardait ses 150 samples ad vitam).
       let paneStats = state.paneStats;
       let paneActivity = state.paneActivity;
+      let paneAgentState = state.paneAgentState;
       if (paneIds.length > 0) {
         paneStats = { ...state.paneStats };
         paneActivity = { ...state.paneActivity };
+        paneAgentState = { ...state.paneAgentState };
         for (const pid of paneIds) {
           delete paneStats[pid];
           delete paneActivity[pid];
+          delete paneAgentState[pid];
         }
       }
       return {
@@ -249,6 +260,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
         sessionsById,
         paneStats,
         paneActivity,
+        paneAgentState,
         activeSessionId:
           state.activeSessionId === id ? sessions[0]?.id ?? null : state.activeSessionId
       };
@@ -341,6 +353,22 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       const { [paneId]: _, ...rest } = state.paneActivity;
       void _;
       return { paneActivity: rest };
+    }),
+
+  setAgentState: (paneId, agentState) =>
+    set((state) => {
+      // Idempotent : pas de re-render si valeur inchangée.
+      if (state.paneAgentState[paneId] === agentState) return {};
+      // `idle` est l'état par défaut — on ne stocke que les autres pour
+      // éviter un objet qui croît indéfiniment. La lecture côté composant
+      // retombe sur 'idle' si la clé est absente.
+      if (agentState === 'idle') {
+        if (!(paneId in state.paneAgentState)) return {};
+        const { [paneId]: _, ...rest } = state.paneAgentState;
+        void _;
+        return { paneAgentState: rest };
+      }
+      return { paneAgentState: { ...state.paneAgentState, [paneId]: agentState } };
     }),
 
   pushStatSamples: (samples) =>

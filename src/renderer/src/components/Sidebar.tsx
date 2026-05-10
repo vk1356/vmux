@@ -45,6 +45,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
     activeSessionId,
     lastEventBySession,
     paneActivity,
+    paneAgentState,
     setActiveSession,
     removeSession,
     upsertSession,
@@ -56,6 +57,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
       activeSessionId: s.activeSessionId,
       lastEventBySession: s.lastEventBySession,
       paneActivity: s.paneActivity,
+      paneAgentState: s.paneAgentState,
       setActiveSession: s.setActiveSession,
       removeSession: s.removeSession,
       upsertSession: s.upsertSession,
@@ -191,6 +193,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
       dragOverId={dragOverId}
       colorPickerOpen={colorPickerFor === meta.session.id}
       paneActivity={paneActivity}
+      paneAgentState={paneAgentState}
       lastEvent={lastEventBySession[meta.session.id]}
       t={t}
       onActivate={onActivate}

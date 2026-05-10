@@ -3,6 +3,7 @@ import {
   IPC,
   type AgentAvailability,
   type AgentPreset,
+  type AgentRunState,
   type AppSettings,
   type ClipboardRichResult,
   type CreateSessionInput,
@@ -149,6 +150,14 @@ const api = {
       ipcRenderer.on(IPC.paneAttention, listener);
       return (): void => {
         ipcRenderer.off(IPC.paneAttention, listener);
+      };
+    },
+    onAgentState: (cb: (paneId: PaneId, state: AgentRunState) => void): (() => void) => {
+      const listener = (_: unknown, paneId: PaneId, state: AgentRunState): void =>
+        cb(paneId, state);
+      ipcRenderer.on(IPC.paneAgentState, listener);
+      return (): void => {
+        ipcRenderer.off(IPC.paneAgentState, listener);
       };
     },
     onStats: (cb: (samples: PaneStatSample[]) => void): (() => void) => {

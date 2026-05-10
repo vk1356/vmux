@@ -22,6 +22,7 @@ export function useGlobalIpcSubscriptions(): void {
   const recordEvent = useSessionStore((s) => s.recordEvent);
   const patchPane = useSessionStore((s) => s.patchPane);
   const bumpAttention = useSessionStore((s) => s.bumpAttention);
+  const setAgentState = useSessionStore((s) => s.setAgentState);
   const pushStatSamples = useSessionStore((s) => s.pushStatSamples);
   const pushSystemStats = useSessionStore((s) => s.pushSystemStats);
 
@@ -60,6 +61,9 @@ export function useGlobalIpcSubscriptions(): void {
     });
     const offAttention = window.cmux.panes.onAttention((paneId, level) => {
       bumpAttention(paneId, level);
+    });
+    const offAgentState = window.cmux.panes.onAgentState((paneId, state) => {
+      setAgentState(paneId, state);
     });
     const offStats = window.cmux.panes.onStats(pushStatSamples);
     const offSystemStats = window.cmux.panes.onSystemStats(pushSystemStats);
@@ -123,6 +127,7 @@ export function useGlobalIpcSubscriptions(): void {
       offSystemStats();
       offEvents();
       offAttention();
+      offAgentState();
       offNotifSound();
     };
   }, [
@@ -135,6 +140,7 @@ export function useGlobalIpcSubscriptions(): void {
     recordEvent,
     patchPane,
     bumpAttention,
+    setAgentState,
     pushStatSamples,
     pushSystemStats
   ]);

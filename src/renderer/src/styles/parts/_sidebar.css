@@ -449,6 +449,83 @@
   color: var(--text-muted);
 }
 
+/* Pill d'état "live" de l'agent (Idle / Generating / Thinking / Need input).
+   Style Warp : pill compact avec icône lucide + texte, couleur dynamique.
+   Posé en tête de .session-sub avant la branche. */
+.agent-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px 1px 5px;
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  border-radius: 9px;
+  flex-shrink: 0;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.agent-state-pill svg {
+  flex-shrink: 0;
+}
+.agent-state-pill.state-idle {
+  color: var(--text-muted);
+  background: transparent;
+  border-color: var(--border);
+  opacity: 0.85;
+}
+.agent-state-pill.state-generating {
+  color: #fde68a;
+  background: rgba(234, 179, 8, 0.14);
+  border-color: rgba(234, 179, 8, 0.35);
+}
+.agent-state-pill.state-generating svg {
+  animation: agent-state-bolt 1.4s ease-in-out infinite;
+}
+.agent-state-pill.state-thinking {
+  color: #fdba74;
+  background: rgba(249, 115, 22, 0.14);
+  border-color: rgba(249, 115, 22, 0.35);
+}
+.agent-state-pill.state-thinking svg {
+  animation: agent-state-pulse 1.6s ease-in-out infinite;
+}
+.agent-state-pill.state-needs-input {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.4);
+  animation: agent-state-blink 1.05s ease-in-out infinite;
+}
+@keyframes agent-state-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50%      { transform: scale(1.18); opacity: 1; }
+}
+@keyframes agent-state-bolt {
+  0%, 100% { opacity: 0.7; }
+  50%      { opacity: 1; }
+}
+@keyframes agent-state-blink {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45); }
+  50%      { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-state-pill svg,
+  .agent-state-pill { animation: none; }
+}
+/* Container ultra-compact : on retire le label et on garde l'icône seule. */
+@container sidebar (max-width: 220px) {
+  .agent-state-pill {
+    font-size: 0;
+    padding: 2px 4px;
+    gap: 0;
+  }
+  .agent-state-pill svg {
+    width: 10px;
+    height: 10px;
+  }
+}
+
 .session-icons {
   display: inline-flex;
   align-items: center;

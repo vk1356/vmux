@@ -10,9 +10,13 @@ import {
   Folder,
   Pin,
   PinOff,
-  Palette
+  Palette,
+  Brain,
+  Zap,
+  AlertCircle,
+  Moon
 } from 'lucide-react';
-import type { AgentPreset, DetectedEvent, Session, TerminalPane } from '@shared/types';
+import type { AgentPreset, AgentRunState, DetectedEvent, Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { pathBasename } from '@shared/utils';
 import { ATTENTION_RANK, type AttentionLevel } from '../store/sessions';
@@ -44,6 +48,23 @@ const SESSION_COLORS = [
   '#ef4444'
 ] as const;
 
+/** Ordre de priorité d'agrégation entre panes : needs-input > thinking > generating > idle.
+ *  Quand une session a plusieurs panes, on remonte l'état le plus "exigeant"
+ *  pour que l'user voie tout de suite ce qui demande son attention. */
+const AGENT_STATE_RANK: Record<AgentRunState, number> = {
+  idle: 0,
+  generating: 1,
+  thinking: 2,
+  'needs-input': 3
+};
+
+const AGENT_STATE_LABEL_KEY = {
+  idle: 'agentStateIdle',
+  thinking: 'agentStateThinking',
+  generating: 'agentStateGenerating',
+  'needs-input': 'agentStateNeedsInput'
+} as const;
+
 export interface SessionItemMeta {
   session: Session;
   isRunning: boolean;
@@ -60,6 +81,7 @@ interface Props {
   dragOverId: string | null;
   colorPickerOpen: boolean;
   paneActivity: Record<string, AttentionLevel | undefined>;
+  paneAgentState: Record<string, AgentRunState | undefined>;
   lastEvent: DetectedEvent | undefined;
   t: TFunction;
   onActivate: (sessionId: string) => void;
@@ -98,6 +120,7 @@ function SessionItemImpl(props: Props): JSX.Element {
     dragOverId,
     colorPickerOpen,
     paneActivity,
+    paneAgentState,
     lastEvent,
     t,
     onActivate,
@@ -143,6 +166,18 @@ function SessionItemImpl(props: Props): JSX.Element {
     if (ATTENTION_RANK[a] > ATTENTION_RANK[attention]) {
       attention = a;
       triggerPaneId = id;
+    }
+  }
+
+  // Agrégation de l'état "live" des agents : on prend le plus "actif" parmi
+  // les panes terminaux. Ordre de priorité : needs-input > thinking > generating > idle.
+  // Affiché uniquement si la session a au moins un pane qui tourne — sinon
+  // c'est juste du bruit (pane fermé / exited).
+  let agentRun: AgentRunState = 'idle';
+  if (running > 0) {
+    for (const p of terminalPanes) {
+      const s = paneAgentState[p.id] ?? 'idle';
+      if (AGENT_STATE_RANK[s] > AGENT_STATE_RANK[agentRun]) agentRun = s;
     }
   }
 
@@ -261,6 +296,7 @@ function SessionItemImpl(props: Props): JSX.Element {
           </div>
         )}
         <div className="session-sub">
+          <AgentStatePill state={agentRun} t={t} />
           {s.branch ? (
             <span className="session-sub-tag">
               <GitBranch size={9} /> {s.branch}
@@ -347,3 +383,32 @@ function SessionItemImpl(props: Props): JSX.Element {
 }
 
 export const SessionItem = memo(SessionItemImpl);
+
+interface AgentStatePillProps {
+  state: AgentRunState;
+  t: TFunction;
+}
+
+/** Pill visuel pour l'état live de l'agent — icône + label, couleur dynamique.
+ *  Pas de pill quand l'agent est idle pour ne pas alourdir la sidebar. */
+function AgentStatePill({ state, t }: AgentStatePillProps): JSX.Element | null {
+  if (state === 'idle') {
+    return (
+      <span className="agent-state-pill state-idle" title={t(AGENT_STATE_LABEL_KEY.idle)}>
+        <Moon size={9} />
+        {t(AGENT_STATE_LABEL_KEY.idle)}
+      </span>
+    );
+  }
+  const Icon =
+    state === 'thinking' ? Brain : state === 'generating' ? Zap : AlertCircle;
+  return (
+    <span
+      className={`agent-state-pill state-${state}`}
+      title={t(AGENT_STATE_LABEL_KEY[state])}
+    >
+      <Icon size={9} />
+      {t(AGENT_STATE_LABEL_KEY[state])}
+    </span>
+  );
+}

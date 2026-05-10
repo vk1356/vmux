@@ -191,6 +191,9 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     safeSend(IPC.paneAttention, paneId, level);
     notifService.notifyAttention(paneId, level);
   });
+  ptyManager.on('paneAgentState', (paneId, state) => {
+    safeSend(IPC.paneAgentState, paneId, state);
+  });
   ptyManager.on('eventDetected', (event: DetectedEvent) => {
     safeSend(IPC.eventDetected, event);
     notifService.notifyEvent(event);

@@ -202,6 +202,11 @@ export type DetectedEventKind =
 /** Niveau d'attention requis sur un pane non-actif (style tmux monitor-activity). */
 export type PaneAttention = 'idle' | 'activity' | 'alert' | 'needs-input';
 
+/** État live de l'agent IA inféré du PTY (style "Idle / Generating / Thinking" Warp).
+ *  Orthogonal à `PaneStatus` (qui est l'état du process) — un pane peut être
+ *  `running` côté process tout en étant `idle` côté agent (prompt visible). */
+export type AgentRunState = 'idle' | 'thinking' | 'generating' | 'needs-input';
+
 /** Échantillon CPU/RAM pour un pane à un instant donné. */
 export interface PaneStatSample {
   paneId: PaneId;
@@ -298,6 +303,9 @@ export const IPC = {
 
   // Attention détectée (bell, needs-input, etc.)
   paneAttention: 'pane:attention',
+
+  // État live de l'agent (idle / thinking / generating / needs-input)
+  paneAgentState: 'pane:agent-state',
 
   // Stats CPU/RAM par pane (push depuis main toutes les 2s)
   paneStats: 'pane:stats',

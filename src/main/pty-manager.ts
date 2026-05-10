@@ -4,6 +4,7 @@ import * as pty from 'node-pty';
 import log from 'electron-log/main';
 import type {
   AgentPreset,
+  AgentRunState,
   CreateSessionInput,
   DetectedEvent,
   Pane,
@@ -25,6 +26,7 @@ import { extractUrls, mergeUrls, stripAnsi } from './url-detector';
 import { clearDetector, detectEvents } from './event-detector';
 import { ptyStats } from './pty-stats';
 import { detectsNeedsInput } from './needs-input-detect';
+import { deriveAgentState, IDLE_AFTER_MS } from './agent-state-detect';
 import { PaneDataBuffer } from './pane-data-buffer';
 
 interface ManagedPane {
@@ -46,6 +48,16 @@ interface ManagedPane {
    *  dans le buffer du nouveau au restart. */
   dataSub?: pty.IDisposable;
   exitSub?: pty.IDisposable;
+  /** Tail roulant stripped (max ~2KB) pour la détection d'état d'agent.
+   *  On garde plus long que SCAN_WINDOW (800) pour absorber les chunks ANSI
+   *  qui peuvent contenir des séquences d'effacement importantes. */
+  stateTail?: string;
+  /** Timestamp du dernier chunk PTY (Date.now()). Sert au calcul idle. */
+  lastDataAt?: number;
+  /** Dernier état émis pour ce pane — émission idempotente sur transitions. */
+  lastAgentState?: AgentRunState;
+  /** Timer qui flippe en `idle` après IDLE_AFTER_MS de silence. */
+  idleTimer?: NodeJS.Timeout;
 }
 
 interface ManagedSession {
@@ -62,6 +74,7 @@ type Events = {
   urlsDetected: [paneId: PaneId, urls: string[]];
   eventDetected: [event: DetectedEvent];
   paneAttention: [paneId: PaneId, level: 'activity' | 'alert' | 'needs-input'];
+  paneAgentState: [paneId: PaneId, state: AgentRunState];
 };
 
 class PtyManager extends EventEmitter {
@@ -75,7 +88,7 @@ class PtyManager extends EventEmitter {
   /** Dernière émission d'attention 'activity' par pane — throttle 500ms. */
   private lastActivityEmit = new Map<PaneId, number>();
 
-  /** Clear tous les timers en vol pour un pane (boot, fallback, initialInput). */
+  /** Clear tous les timers en vol pour un pane (boot, fallback, initialInput, idle). */
   private clearPaneTimers(mp: ManagedPane): void {
     if (mp.bootTimer) {
       clearTimeout(mp.bootTimer);
@@ -88,6 +101,10 @@ class PtyManager extends EventEmitter {
     if (mp.inputTimer) {
       clearTimeout(mp.inputTimer);
       mp.inputTimer = undefined;
+    }
+    if (mp.idleTimer) {
+      clearTimeout(mp.idleTimer);
+      mp.idleTimer = undefined;
     }
   }
 
@@ -432,6 +449,9 @@ class PtyManager extends EventEmitter {
     }
     mp.bootSent = false;
     mp.pendingInitialInput = p.initialInput;
+    // Reset l'état d'agent pour ne pas hériter du tail de la run précédente.
+    mp.stateTail = '';
+    mp.lastAgentState = undefined;
     m.panes.set(paneId, mp);
 
     const updated: TerminalPane = {
@@ -617,6 +637,7 @@ class PtyManager extends EventEmitter {
       if (!curMp) return;
 
       this.emitAttention(paneId, data);
+      this.updateAgentState(paneId, curMp, data);
       this.processNewUrls(cur, paneId, data);
       for (const ev of detectEvents(paneId, data)) this.emit('eventDetected', ev);
       this.maybeWriteInitialInput(curMp);
@@ -632,6 +653,16 @@ class PtyManager extends EventEmitter {
         // les retire explicitement pour ne pas les rappeler au restart.
         curMp.dataSub = undefined;
         curMp.exitSub = undefined;
+        if (curMp.idleTimer) {
+          clearTimeout(curMp.idleTimer);
+          curMp.idleTimer = undefined;
+        }
+        // Force `idle` à la sortie du process : sinon le pane resterait
+        // figé sur "Generating" si l'agent meurt en plein stream.
+        if (curMp.lastAgentState !== 'idle') {
+          curMp.lastAgentState = 'idle';
+          this.emit('paneAgentState', paneId, 'idle');
+        }
       }
       ptyStats.removePane(paneId);
       this.updatePane(sessionId, paneId, {
@@ -650,6 +681,51 @@ class PtyManager extends EventEmitter {
       ...cur.session.panes,
       [paneId]: { ...cp0, lastOutputAt: Date.now() }
     };
+  }
+
+  /** Met à jour le tail roulant et émet une transition d'état d'agent
+   *  (idle/thinking/generating/needs-input). Émission idempotente — on n'envoie
+   *  un IPC que sur transition réelle. Un timer indépendant flippe en `idle`
+   *  après IDLE_AFTER_MS de silence (sans nouveau chunk).
+   *
+   *  Le coût par chunk est O(L) avec L ≤ ~2KB (clamp du tail) + un regex test
+   *  sur le tail SCAN_WINDOW (800 chars) → négligeable même sous stream. */
+  private static readonly STATE_TAIL_MAX = 2048;
+  private updateAgentState(paneId: PaneId, mp: ManagedPane, rawChunk: string): void {
+    const stripped = stripAnsi(rawChunk);
+    // Tail roulant : on append puis clamp en gardant la fin.
+    const concat = (mp.stateTail ?? '') + stripped;
+    mp.stateTail =
+      concat.length > PtyManager.STATE_TAIL_MAX
+        ? concat.slice(-PtyManager.STATE_TAIL_MAX)
+        : concat;
+    mp.lastDataAt = Date.now();
+
+    const next = deriveAgentState({
+      tailStripped: mp.stateTail,
+      msSinceLastChunk: 0
+    });
+    if (next !== mp.lastAgentState) {
+      mp.lastAgentState = next;
+      this.emit('paneAgentState', paneId, next);
+    }
+
+    // (Re)programme le timer idle. Au tick, si toujours pas de chunk reçu
+    // entre-temps, on re-dérive l'état avec un delta réaliste — ce qui
+    // bascule en `idle` quand le tail ne contient plus de spinner.
+    if (mp.idleTimer) clearTimeout(mp.idleTimer);
+    mp.idleTimer = setTimeout(() => {
+      mp.idleTimer = undefined;
+      const since = Date.now() - (mp.lastDataAt ?? 0);
+      const after = deriveAgentState({
+        tailStripped: mp.stateTail ?? '',
+        msSinceLastChunk: since
+      });
+      if (after !== mp.lastAgentState) {
+        mp.lastAgentState = after;
+        this.emit('paneAgentState', paneId, after);
+      }
+    }, IDLE_AFTER_MS + 100);
   }
 
   /** Détection d'attention (style tmux) — needs-input > alert (bell) > activity.
