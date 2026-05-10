@@ -2007,9 +2007,13 @@ export function translate(
   );
 }
 
+/** Type de la fonction t() retournée par `useT()`. Réutilisable pour passer
+ *  t à des helpers extraits hors du composant. */
+export type TFunction = (key: TKey, vars?: Record<string, string | number>) => string;
+
 /** Hook : renvoie une fonction `t(key, vars?)` qui se met à jour automatiquement
  *  quand la langue change dans le store. */
-export function useT(): (key: TKey, vars?: Record<string, string | number>) => string {
+export function useT(): TFunction {
   const lang = useSessionStore((s) => s.settings?.language ?? 'en');
   return (key, vars) => translate(lang as Lang, key, vars);
 }
