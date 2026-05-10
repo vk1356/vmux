@@ -8,7 +8,13 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
+  /* Container query : on adapte la sidebar à *sa propre* largeur (pas celle de
+     la window). Permet de masquer des actions quand l'user resize la sidebar
+     plus étroite, indépendamment de la taille de la fenêtre. */
+  container-type: inline-size;
+  container-name: sidebar;
 }
 
 .sidebar-header {
@@ -28,6 +34,7 @@
 .sidebar-header-actions {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .sidebar-title {
@@ -106,11 +113,16 @@
   place-items: center;
   width: 28px;
   height: 28px;
+  padding: 0;
   border-radius: 6px;
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
-  transition: all 120ms;
+  flex-shrink: 0;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.btn-icon > svg {
+  display: block;
 }
 .btn-icon:hover {
   background: var(--bg-elev-2);
@@ -140,12 +152,13 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-radius: var(--radius);
   border: 1px solid transparent;
   cursor: pointer;
   transition: background 100ms, border-color 100ms;
   position: relative;
+  min-width: 0;
 }
 .session-item:hover {
   background: var(--bg-elev-2);
@@ -173,28 +186,68 @@
 .session-item[draggable='true'] { cursor: grab; }
 .session-item[draggable='true']:active { cursor: grabbing; }
 
+/* Avatar style Warp : petit cercle solide coloré (pas d'emoji ni de lettre).
+   La couleur vient de l'agent ou de session.colorOverride, exposée via la
+   custom property `--avatar-color`. Le statut (running / idle / error /
+   exited) est encodé dans la classe `status-*` posée sur l'avatar lui-même —
+   plus besoin d'un dot enfant séparé : on utilise un ring (box-shadow) ou
+   l'opacité pour signaler l'état. */
 .session-avatar {
   position: relative;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  font-size: 13px;
-  font-weight: 700;
-  flex-shrink: 0;
-  border: 1px solid var(--border);
-  font-family: var(--font-mono);
-}
-.session-avatar-dot {
-  position: absolute;
-  bottom: -2px;
-  right: -2px;
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  border: 2px solid var(--bg-elev);
+  flex-shrink: 0;
+  background: var(--avatar-color, var(--text-dim));
+  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+}
+/* Running : pulse subtile + ring vert */
+.session-avatar.status-running {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--avatar-color, var(--success)) 25%, transparent);
+}
+.session-avatar.status-running::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid var(--success);
+  opacity: 0.5;
+  animation: avatar-pulse 1.8s ease-in-out infinite;
+}
+/* Idle : couleur dim */
+.session-avatar.status-idle {
+  opacity: 0.55;
+}
+/* Error : ring rouge */
+.session-avatar.status-error {
+  box-shadow: 0 0 0 2px var(--error);
+}
+/* Exited : grisé */
+.session-avatar.status-exited {
   background: var(--text-dim);
+  opacity: 0.4;
+}
+.session-item:hover .session-avatar {
+  transform: scale(1.12);
+}
+@keyframes avatar-pulse {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50%      { opacity: 0.6; transform: scale(1.15); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-avatar.status-running::after {
+    animation: none;
+    opacity: 0.4;
+  }
+  .session-item:hover .session-avatar {
+    transform: none;
+  }
+}
+/* Variante héritée — masque la couche obsolète si jamais le DOM la rendait
+   encore dans un cache ; sera nettoyé une fois la migration confirmée. */
+.session-avatar-dot,
+.session-avatar-emoji {
+  display: none;
 }
 /* Status dots — selectors combinés pour partager les rules entre les deux variantes
    (.session-dot dans la liste, .session-avatar-dot dans l'avatar). */
@@ -227,29 +280,29 @@
 
 .session-pin-mark {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
+  top: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
   background: var(--accent);
-  border: 2px solid var(--bg-elev);
+  border: 1.5px solid var(--bg-elev);
   border-radius: 50%;
-  box-shadow: 0 0 4px rgba(249, 115, 22, 0.5);
+  box-shadow: 0 0 3px rgba(249, 115, 22, 0.6);
 }
 
 /* Attention badges (style tmux monitor-activity / monitor-bell) — gros et visibles.
    Rendu en <button> pour qu'un clic focus le pane qui a déclenché l'attention. */
 .attention-badge {
   position: absolute;
-  top: -4px;
-  left: -4px;
-  width: 14px;
-  height: 14px;
+  top: -5px;
+  left: -5px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
-  border: 2px solid var(--bg-elev);
+  border: 1.5px solid var(--bg-elev);
   display: grid;
   place-items: center;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 900;
   color: #fff;
   z-index: 2;
@@ -270,8 +323,8 @@
 }
 .attention-badge.attention-activity {
   background: #eab308;
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   opacity: 0.85;
 }
 .attention-badge.attention-alert {
@@ -397,6 +450,8 @@
 .session-actions {
   display: flex;
   gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .session-dot {
@@ -448,20 +503,34 @@
   text-overflow: ellipsis;
   margin-top: 2px;
 }
+/* Style Warp : pas de chip, juste icône + texte muted */
 .session-sub-tag {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 10px;
-  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 10.5px;
+  color: var(--text-dim);
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  max-width: 120px;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.session-sub-tag svg {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+/* Compteur de panes : reste comme une mini-pill discrète */
+.session-sub-tag + .session-sub-tag {
+  margin-left: 2px;
+  padding: 0 5px;
+  background: var(--bg-elev-2);
+  border-radius: 3px;
+  font-size: 9px;
+  color: var(--text-muted);
 }
 
 .session-action {
@@ -499,6 +568,8 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 .sidebar-title {
   font-size: 11px;
@@ -534,10 +605,18 @@
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
   border-radius: 6px;
+  min-width: 0;
 }
 .sidebar-pulse strong {
   color: var(--text);
   font-weight: 600;
+}
+.sidebar-pulse-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sidebar-pulse-dot {
   width: 6px;
@@ -582,6 +661,7 @@
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-width: 0;
   padding: 4px 14px;
   background: transparent;
   border: 0;
@@ -604,9 +684,14 @@
   display: inline-flex;
   align-items: center;
   opacity: 0.7;
+  flex-shrink: 0;
 }
 .sidebar-section-label {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sidebar-section-count {
   display: inline-flex;
@@ -670,37 +755,34 @@
   border-radius: 6px !important;
 }
 
-/* Session items — modernisés */
+/* Session items — style Warp : compact, dense, dot coloré + texte sur 2 lignes */
 .session-item {
   position: relative;
-  padding: 7px 12px 7px 14px;
+  padding: 6px 10px 6px 12px;
   margin: 0 6px;
-  border-radius: 7px;
-  transition: background 120ms ease, transform 120ms ease;
+  border-radius: 6px;
+  transition: background 120ms ease;
 }
 .session-item:hover {
   background: var(--bg-elev-2);
 }
 .session-item.active {
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.04) 0%,
-    rgba(255, 255, 255, 0.01) 100%
-  );
-  border: 1px solid rgba(249, 115, 22, 0.18);
+  /* Warp-like : fond sombre subtil sans gradient agressif */
+  background: var(--bg-elev-2);
+  border-color: transparent;
 }
 .session-item.active::before {
-  display: none; /* on supprime l'ancien indicator pour utiliser .session-active-bar */
+  display: none;
 }
+/* Barre verticale colorée à gauche pour la session active (style Warp) */
 .session-active-bar {
   position: absolute;
-  left: -6px;
-  top: 6px;
-  bottom: 6px;
-  width: 3px;
-  border-radius: 2px;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 0 2px 2px 0;
   background: var(--session-accent, var(--accent));
-  box-shadow: 0 0 8px rgba(249, 115, 22, 0.5);
 }
 
 /* Footer stats */
@@ -778,6 +860,34 @@
   .sidebar-footer-stat-value { font-size: 11px; }
   .sidebar-footer-stat-label { font-size: 8px; }
   .sidebar-section-header { padding: 4px 10px; font-size: 9px; }
+}
+
+/* Container queries — la sidebar s'adapte à *sa propre* largeur (drag du
+   resize-handle), pas à celle de la window. */
+@container sidebar (max-width: 260px) {
+  /* Réduire le padding extérieur pour gagner de la place utile */
+  .session-item { padding: 7px 8px 7px 10px; gap: 8px; margin: 0 4px; }
+  .sidebar-header { padding: 12px 10px 6px; }
+  .sidebar-search { margin: 0 8px 8px; }
+}
+
+@container sidebar (max-width: 220px) {
+  /* Garde uniquement l'action critique (X). Pin / restart restent
+     accessibles via le menu contextuel et la palette de commande. */
+  .session-action:not(.danger) {
+    display: none;
+  }
+  .session-sub-tag { max-width: 80px; }
+  .session-name { font-size: 12px; }
+  .sidebar-section-header { padding: 4px 10px; }
+}
+
+@container sidebar (max-width: 180px) {
+  /* Mode ultra-compact : on cache aussi la rangée d'actions (le X reste
+     accessible via le menu contextuel ou Ctrl+W). */
+  .session-actions { display: none; }
+  .sidebar-pulse { padding: 4px 6px; font-size: 9.5px; }
+  .sidebar-search { font-size: 11px; }
 }
 
 /* Onboarding overlay (first-launch tutorial) */

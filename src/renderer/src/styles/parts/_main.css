@@ -78,13 +78,18 @@
   place-items: center;
   width: 16px;
   height: 16px;
+  padding: 0;
   border-radius: 3px;
   background: transparent;
   border: 0;
   color: var(--text-dim);
   margin-left: 2px;
   opacity: 0;
-  transition: all 80ms;
+  flex-shrink: 0;
+  transition: background 80ms, color 80ms, opacity 80ms;
+}
+.tab-close > svg {
+  display: block;
 }
 .tab:hover .tab-close,
 .tab.active .tab-close {

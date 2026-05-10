@@ -3,6 +3,7 @@ import { X, Globe, Terminal as TerminalIcon, Moon, Clock } from 'lucide-react';
 import type { Pane, TerminalPane as TerminalPaneT } from '@shared/types';
 import { hostFromUrl } from '@shared/utils';
 import { useSessionStore } from '../store/sessions';
+import { useT } from '../i18n';
 import { PaneStats } from './PaneStats';
 
 interface Props {
@@ -18,6 +19,7 @@ const STALE_THRESHOLD_MS = 5 * 60 * 1000;
 
 function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element {
   const attention = useSessionStore((s) => s.paneActivity[pane.id] ?? 'idle');
+  const t = useT();
   let label = pane.label || '';
   let dotClass = 'idle';
   let icon: JSX.Element;
@@ -50,8 +52,8 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
       {isTyping && (
         <span
           className="pane-header-typing"
-          title="Agent en train d'écrire…"
-          aria-label="Agent en train d'écrire"
+          title={t('paneTypingTitle')}
+          aria-label={t('paneTypingAria')}
         >
           <span />
           <span />
@@ -59,13 +61,13 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
         </span>
       )}
       {isRunningTerm && uptime && (
-        <span className="pane-header-uptime" title={`Démarré il y a ${uptime}`}>
+        <span className="pane-header-uptime" title={t('paneStartedAgo', { uptime })}>
           <Clock size={9} /> {uptime}
         </span>
       )}
       {/* Stale et typing sont mutuellement exclusifs : un agent qui tape n'est pas stale. */}
       {isStale && !isTyping && (
-        <span className="pane-header-stale" title="Aucune sortie récente — agent peut-être idle">
+        <span className="pane-header-stale" title={t('paneStaleHint')}>
           <Moon size={10} />
         </span>
       )}
@@ -76,8 +78,8 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
           e.stopPropagation();
           void window.cmux.panes.close(sessionId, pane.id);
         }}
-        title="Fermer ce pane"
-        aria-label="Fermer le pane"
+        title={t('paneCloseTitle')}
+        aria-label={t('paneCloseAria')}
       >
         <X size={11} />
       </button>

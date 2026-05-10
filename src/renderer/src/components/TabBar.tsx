@@ -147,8 +147,8 @@ export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
                   e.stopPropagation();
                   void closePane(id);
                 }}
-                title="Fermer le pane"
-                aria-label="Fermer"
+                title={t('paneCloseTitle')}
+                aria-label={t('paneCloseAria')}
               >
                 <X size={11} />
               </button>

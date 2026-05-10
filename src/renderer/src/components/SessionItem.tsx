@@ -29,16 +29,6 @@ const SESSION_COLORS = [
   '#ef4444'
 ] as const;
 
-/** Emojis par agent — fallback visuel quand l'avatar n'a pas d'image. */
-const AGENT_EMOJI: Record<string, string> = {
-  'claude-code': '🤖',
-  codex: '📝',
-  'cursor-agent': '🎯',
-  aider: '🛠️',
-  gemini: '✨',
-  shell: '💻'
-};
-
 export interface SessionItemMeta {
   session: Session;
   isRunning: boolean;
@@ -183,12 +173,12 @@ function SessionItemImpl(props: Props): JSX.Element {
     >
       {isActive && <span className="session-active-bar" aria-hidden />}
       <div
-        className="session-avatar"
-        style={{
-          background: accentIsHex ? `${accent}22` : 'var(--bg-elev-2)',
-          color: accent,
-          borderColor: accent
-        }}
+        className={`session-avatar status-${dotStatus}`}
+        style={
+          accentIsHex
+            ? ({ ['--avatar-color']: accent } as React.CSSProperties & Record<string, string>)
+            : undefined
+        }
         title={t('avatarHint', { agent: agent?.label ?? main?.agentId ?? 'shell' })}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -196,14 +186,6 @@ function SessionItemImpl(props: Props): JSX.Element {
           onOpenColorPicker(colorPickerOpen ? null : s.id);
         }}
       >
-        {main?.agentId && AGENT_EMOJI[main.agentId] ? (
-          <span className="session-avatar-emoji" aria-hidden>
-            {AGENT_EMOJI[main.agentId]}
-          </span>
-        ) : (
-          (agent?.label ?? main?.agentId ?? '?').charAt(0).toUpperCase()
-        )}
-        <span className={`session-avatar-dot ${dotStatus}`} />
         {s.pinned && <span className="session-pin-mark" title={t('pinnedLabel')} />}
         {attention !== 'idle' && (
           <button
