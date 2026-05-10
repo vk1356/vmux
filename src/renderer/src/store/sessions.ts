@@ -206,9 +206,14 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
   upsertSession: (s) =>
     set((state) => {
-      const idx = state.sessions.findIndex((x) => x.id === s.id);
-      const sessions =
-        idx === -1 ? [...state.sessions, s] : state.sessions.map((x) => (x.id === s.id ? s : x));
+      // Lookup via sessionsById (O(1)) plutôt qu'un findIndex (O(N)).
+      // Si la session n'a pas changé en référence ET en contenu shallow, on
+      // skip pour ne pas déclencher de re-render inutile.
+      const existing = state.sessionsById[s.id];
+      if (existing === s) return {};
+      const sessions = existing
+        ? state.sessions.map((x) => (x.id === s.id ? s : x))
+        : [...state.sessions, s];
       return {
         sessions,
         sessionsById: { ...state.sessionsById, [s.id]: s },

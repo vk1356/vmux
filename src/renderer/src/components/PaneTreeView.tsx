@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX
+} from 'react';
 import type { Pane, PaneTree } from '@shared/types';
 import { allPaneIds, type TreePath } from '@shared/tree';
 import { TerminalPane } from './TerminalPane';
@@ -15,6 +25,28 @@ interface Props {
   visible: boolean;
 }
 
+/**
+ * Context "render-time" pour panes + agentColorById + showHeaders.
+ * Évite de propager 3 props à travers chaque niveau de l'arbre, donc le memo
+ * sur TreeNode ne casse pas dès qu'on creuse de 2-3 niveaux.
+ */
+interface PaneRenderCtx {
+  sessionId: string;
+  panes: Record<string, Pane>;
+  activePaneId?: string;
+  visible: boolean;
+  showHeaders: boolean;
+  agentColorById: Record<string, string>;
+}
+
+const PaneRenderContext = createContext<PaneRenderCtx | null>(null);
+
+function usePaneCtx(): PaneRenderCtx {
+  const ctx = useContext(PaneRenderContext);
+  if (!ctx) throw new Error('PaneRenderContext missing — wrap with provider');
+  return ctx;
+}
+
 export function PaneTreeView({
   sessionId,
   tree,
@@ -24,7 +56,6 @@ export function PaneTreeView({
 }: Props): JSX.Element | null {
   const paneCount = allPaneIds(tree).length;
   // Lookup agent color : utilisé pour la border-left de chaque pane terminal.
-  // Donne une orientation visuelle instantanée quand on mixe Claude + Codex + Gemini.
   const agents = useSessionStore((s) => s.agents);
   const agentColorById = useMemo(() => {
     const map: Record<string, string> = {};
@@ -32,41 +63,34 @@ export function PaneTreeView({
     return map;
   }, [agents]);
 
+  const ctx = useMemo<PaneRenderCtx>(
+    () => ({
+      sessionId,
+      panes,
+      activePaneId,
+      visible,
+      showHeaders: paneCount > 1,
+      agentColorById
+    }),
+    [sessionId, panes, activePaneId, visible, paneCount, agentColorById]
+  );
+
   return (
-    <TreeNode
-      sessionId={sessionId}
-      tree={tree}
-      panes={panes}
-      activePaneId={activePaneId}
-      path={[]}
-      visible={visible}
-      showHeaders={paneCount > 1}
-      agentColorById={agentColorById}
-    />
+    <PaneRenderContext.Provider value={ctx}>
+      <TreeNode tree={tree} path={EMPTY_PATH} />
+    </PaneRenderContext.Provider>
   );
 }
 
+const EMPTY_PATH: TreePath = [];
+
 interface NodeProps {
-  sessionId: string;
   tree: PaneTree;
-  panes: Record<string, Pane>;
-  activePaneId?: string;
   path: TreePath;
-  visible: boolean;
-  showHeaders: boolean;
-  agentColorById: Record<string, string>;
 }
 
-function TreeNode({
-  sessionId,
-  tree,
-  panes,
-  activePaneId,
-  path,
-  visible,
-  showHeaders,
-  agentColorById
-}: NodeProps): JSX.Element | null {
+const TreeNode = memo(function TreeNode({ tree, path }: NodeProps): JSX.Element | null {
+  const { panes, activePaneId, visible, showHeaders, agentColorById, sessionId } = usePaneCtx();
   if (tree.kind === 'leaf') {
     const pane = panes[tree.paneId];
     if (!pane) return null;
@@ -74,8 +98,7 @@ function TreeNode({
     const label =
       pane.kind === 'terminal' ? `Pane ${pane.agentId}` : `Preview ${pane.url}`;
     // Border-left = couleur de l'agent du pane. Désactivée en single-pane
-    // (showHeaders=false) — sans split, l'orientation visuelle n'apporte rien
-    // et la barre colorée verticale collée à la sidebar pollue le layout.
+    // (showHeaders=false) — sans split, l'orientation visuelle n'apporte rien.
     // Preview panes : pas d'accent (pas d'agent associé).
     const accent =
       showHeaders && pane.kind === 'terminal' ? agentColorById[pane.agentId] : undefined;
@@ -96,34 +119,16 @@ function TreeNode({
     );
   }
 
-  return (
-    <SplitNode
-      sessionId={sessionId}
-      tree={tree}
-      panes={panes}
-      activePaneId={activePaneId}
-      path={path}
-      visible={visible}
-      showHeaders={showHeaders}
-      agentColorById={agentColorById}
-    />
-  );
-}
+  return <SplitNode tree={tree} path={path} />;
+});
 
-interface SplitProps extends NodeProps {
+interface SplitProps {
   tree: Extract<PaneTree, { kind: 'split' }>;
+  path: TreePath;
 }
 
-function SplitNode({
-  sessionId,
-  tree,
-  panes,
-  activePaneId,
-  path,
-  visible,
-  showHeaders,
-  agentColorById
-}: SplitProps): JSX.Element {
+const SplitNode = memo(function SplitNode({ tree, path }: SplitProps): JSX.Element {
+  const { sessionId } = usePaneCtx();
   const containerRef = useRef<HTMLDivElement>(null);
   const [sizes, setSizes] = useState<number[]>(tree.sizes);
   const draggingRef = useRef<{ leftIndex: number; startSizes: number[]; startPos: number } | null>(
@@ -206,22 +211,13 @@ function SplitNode({
             direction={tree.direction}
             onHandleDown={onMouseDownHandle(i)}
           >
-            <TreeNode
-              sessionId={sessionId}
-              tree={child}
-              panes={panes}
-              activePaneId={activePaneId}
-              path={[...path, i]}
-              visible={visible}
-              showHeaders={showHeaders}
-              agentColorById={agentColorById}
-            />
+            <TreeNode tree={child} path={[...path, i]} />
           </RowFragment>
         );
       })}
     </div>
   );
-}
+});
 
 /** Dérive une clé React stable d'un sous-arbre — utilise le 1er paneId rencontré
  *  en DFS. Le 1er leaf reste identifiant tant que ce sous-arbre existe (les
