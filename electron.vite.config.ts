@@ -64,6 +64,29 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html')
+        },
+        output: {
+          // Split du bundle renderer : isole les libs lourdes (xterm + addons,
+          // electron-conf via lucide imports, etc.) dans des chunks dédiés.
+          // Cold-start plus rapide : le main thread parse moins de JS d'un coup.
+          manualChunks(id): string | void {
+            if (!id.includes('node_modules')) return;
+            // xterm + addons : ~400KB. Toujours utilisé → 1 chunk dédié.
+            if (id.includes('@xterm/')) return 'xterm';
+            // React core — séparé pour cache long-terme entre versions.
+            if (
+              id.includes('/react/') ||
+              id.includes('/react-dom/') ||
+              id.includes('/scheduler/')
+            ) {
+              return 'react';
+            }
+            // Zustand + immer-like : très petit mais utilisé partout.
+            if (id.includes('/zustand/')) return 'state';
+            // Lucide icons : tree-shaké mais reste ~100KB ; chunk dédié évite
+            // que chaque dialog lazy en re-bundle des copies.
+            if (id.includes('/lucide-react/')) return 'icons';
+          }
         }
       }
     }
