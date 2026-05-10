@@ -4,16 +4,18 @@
 
 # vMux
 
-**The Windows multi-agent AI orchestrator.**
-Run Claude Code, Codex, Aider, Cursor Agent and Gemini in parallel — each isolated in its own git worktree, with native ConPTY terminals, tmux-style splits, embedded localhost preview and automatic event detection.
+**The Windows-native cmux alternative for AI coding agents.**
+Run Claude Code, Codex, Aider, Cursor Agent and Gemini side by side — each isolated in its own git worktree, with native ConPTY terminals, tmux-style splits, embedded localhost preview and automatic event detection. No WSL. No Docker. No browser-based workaround.
 
 [![Latest release](https://img.shields.io/github/v/release/vk1356/vmux?label=latest&color=f97316)](https://github.com/vk1356/vmux/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/vk1356/vmux/total?color=22c55e)](https://github.com/vk1356/vmux/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](#license)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2B-3b82f6)](#requirements)
 [![Built with Electron](https://img.shields.io/badge/electron-41-9333ea)](https://www.electronjs.org/)
 
 [Download](https://github.com/vk1356/vmux/releases/latest) ·
 [Features](#features) ·
+[vs cmux](#vmux-vs-cmux-vs-wmux-vs-raw-tmux) ·
 [Quick start](#installation) ·
 [Architecture](#architecture)
 
@@ -21,11 +23,47 @@ Run Claude Code, Codex, Aider, Cursor Agent and Gemini in parallel — each isol
 
 ---
 
+## vMux vs cmux vs wmux vs raw tmux
+
+The agent-multiplexer space exploded in 2025–2026. Here's where vMux fits.
+
+| | **vMux** | cmux | wmux | tmux + scripts |
+|---|---|---|---|---|
+| **Platform** | Windows 10/11 native | macOS only | Windows | Linux/macOS (WSL on Windows) |
+| **Stack** | Electron 41 + React 19 | Swift / AppKit + libghostty | Windows-native port | Bash + shell glue |
+| **Terminal backend** | node-pty + **ConPTY** | libghostty | ConPTY | native PTY |
+| **Install** | NSIS installer, one click | DMG / brew | manual | package manager |
+| **Auto-update** | ✅ differential (blockmap, ~few MB) | manual / brew | ❌ | n/a |
+| **Multi-agent presets** | 6 built-in + custom overrides | works with any CLI | works with any CLI | manual |
+| **Git worktree isolation** | ✅ per-session | ✅ per-workspace | ✅ | manual |
+| **Tmux-style splits + auto-tile** | ✅ 2D / even-h / even-v / main-stack | ✅ | ✅ | ✅ (manual) |
+| **Embedded localhost preview** | ✅ webview + DevTools console | ✅ scriptable browser | ❓ | ❌ |
+| **Event detection** | server-ready / build / test / agent-done | OSC 9/99/777 | partial | ❌ |
+| **Native OS notifications** | Windows toast + taskbar flash + custom sound | macOS Notification Center | ? | ❌ |
+| **Sync-input broadcast** | ✅ `Ctrl+Shift+S` | ❌ | ❌ | ✅ |
+| **Command palette** | ✅ `Ctrl+K` fuzzy search | ❌ | ❌ | ❌ |
+| **i18n** | 🇬🇧🇫🇷🇩🇪🇪🇸🇨🇳🇯🇵🇹🇷 **7 languages** | English only | English only | n/a |
+| **Live CPU/RAM per pane** | ✅ pidusage | ❌ | ❌ | manual |
+| **CLI launcher** | `vmux new --agent claude-code --prompt "..."` | `cmux` | yes | tmux |
+| **License** | MIT | MIT | MIT | ISC |
+
+**TL;DR**
+- You're on **macOS** → use [**cmux**](https://github.com/manaflow-ai/cmux). It's the original, native, and excellent.
+- You're on **Linux** → raw tmux is still king for headless servers; cmux works in a VM.
+- You're on **Windows** and want a polished desktop app with i18n, auto-update and an embedded preview → **vMux**.
+- You're on **Windows** and want cmux socket-protocol compatibility → look at [wmux](https://github.com/amirlehmam/wmux).
+
+vMux is **not** a port of cmux — it's a from-scratch Windows-first redesign with different defaults (Electron + React, built-in DevTools console, 7-language UI, differential auto-update). The two tools share a philosophy, not a codebase.
+
+---
+
 ## Why vMux?
 
 Modern AI coding agents are powerful but **hard to orchestrate**: each one wants its own terminal, its own working directory, its own branch. Running three of them in parallel without stepping on each other's toes means juggling worktrees, tmux panes, browser tabs and notifications.
 
-**vMux solves that in one window.** Spawn as many agent sessions as you want, each one fenced inside its own git worktree, with terminal splits that auto-tile, an embedded browser for your dev server, and Windows-native push notifications when an agent needs your attention.
+On macOS, [cmux](https://github.com/manaflow-ai/cmux) already solved this elegantly. On Windows, the options were: run WSL2 (slow file I/O, broken Windows clipboard), spin up Docker (overkill), or duct-tape your own tmux config (good luck with ConPTY edge cases).
+
+**vMux solves that in one native Windows window.** Spawn as many agent sessions as you want, each fenced inside its own git worktree, with terminal splits that auto-tile, an embedded browser for your dev server, and Windows-native push notifications when an agent needs your attention. No WSL. No Docker. No prefix keys.
 
 <div align="center">
 <img src="docs/screenshots/session-active.png" alt="Claude Code session running in vMux" width="100%"/>
@@ -310,5 +348,9 @@ MIT — © [Vural Kutun](mailto:xlazvek@gmail.com)
 ---
 
 <div align="center">
-<sub>Made with ⚡ for developers who run multiple AI agents at once.</sub>
+
+**If vMux makes you faster, star the repo ⭐ — it's the easiest way to keep this project alive.**
+
+<sub>Made with ⚡ on Windows, for developers who run multiple AI agents at once.</sub>
+
 </div>
