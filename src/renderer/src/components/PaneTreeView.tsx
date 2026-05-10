@@ -73,9 +73,12 @@ function TreeNode({
     const isActive = pane.id === activePaneId;
     const label =
       pane.kind === 'terminal' ? `Pane ${pane.agentId}` : `Preview ${pane.url}`;
-    // Border-left = couleur de l'agent du pane. Pour les preview panes, on
-    // garde un transparent (le pane preview n'a pas d'agent associé).
-    const accent = pane.kind === 'terminal' ? agentColorById[pane.agentId] : undefined;
+    // Border-left = couleur de l'agent du pane. Désactivée en single-pane
+    // (showHeaders=false) — sans split, l'orientation visuelle n'apporte rien
+    // et la barre colorée verticale collée à la sidebar pollue le layout.
+    // Preview panes : pas d'accent (pas d'agent associé).
+    const accent =
+      showHeaders && pane.kind === 'terminal' ? agentColorById[pane.agentId] : undefined;
     return (
       <ErrorBoundary scope="pane" label={label}>
         <div

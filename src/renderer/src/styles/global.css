@@ -912,12 +912,13 @@ a:hover {
   position: relative;
   /* Border-left = couleur de l'agent du pane (claude orange, codex vert, …).
      Inline-style définit `borderLeftColor` ; ici on définit juste la largeur
-     et le style de base. Transparent sur les preview panes. */
-  border-left: 2px solid transparent;
+     et le style de base. Transparent par défaut → invisible sur les preview
+     panes et en single-pane (où PaneTreeView ne passe pas d'accent). */
+  border-left: 1px solid transparent;
   transition: border-left-width 90ms ease-out;
 }
 .pane-with-header.active {
-  border-left-width: 3px;
+  border-left-width: 2px;
 }
 .pane-header {
   display: flex;
