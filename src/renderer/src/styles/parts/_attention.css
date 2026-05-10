@@ -1,0 +1,44 @@
+/* ============================================================
+   Pane attention banner — sticky en haut du TerminalPane quand
+   l'agent demande une action.
+   ============================================================ */
+.pane-attention-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.2), rgba(239, 68, 68, 0.05));
+  border-bottom: 1px solid rgba(239, 68, 68, 0.4);
+  color: var(--error);
+  animation: pane-attention-pulse 1.6s ease-in-out infinite;
+}
+.pane-attention-banner.alert {
+  background: linear-gradient(90deg, rgba(251, 146, 60, 0.2), rgba(251, 146, 60, 0.05));
+  border-bottom-color: rgba(251, 146, 60, 0.4);
+  color: var(--accent);
+}
+.pane-attention-banner-text {
+  flex: 1;
+  font-weight: 500;
+}
+.pane-attention-banner button {
+  background: transparent;
+  border: 1px solid currentColor;
+  color: currentColor;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.pane-attention-banner button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+@keyframes pane-attention-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 rgba(239, 68, 68, 0); }
+  50% { box-shadow: inset 0 -2px 8px rgba(239, 68, 68, 0.3); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-attention-banner { animation: none; }
+}
+

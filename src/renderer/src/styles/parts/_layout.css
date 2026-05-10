@@ -1,0 +1,74 @@
+/* ============================================================
+   Responsive — sidebar compact + tab shortcuts cachés < 1100px
+   ============================================================ */
+
+@media (max-width: 1100px) {
+  .tab-shortcuts { display: none; }
+}
+@media (max-width: 900px) {
+  .sidebar-search { display: none; }
+  .session-avatar { width: 26px; height: 26px; font-size: 12px; }
+  .session-sub { font-size: 10px; }
+  .url-chip-label { display: none; }
+  .titlebar-title { display: none; }
+}
+@media (max-width: 700px) {
+  .session-meta .session-sub { display: none; }
+  .hero-features { display: none; }
+}
+
+/* Respect a11y + gain de perf sur les machines low-spec */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .session-dot.running,
+  .session-dot.starting,
+  .sidebar-count-dot,
+  .session-avatar-dot.running,
+  .session-avatar-dot.starting {
+    animation: none !important;
+  }
+}
+
+/* ============================================================
+   Layout principal
+   ============================================================ */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: 280px 1px 1fr;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.resize-handle {
+  width: 1px;
+  background: var(--border);
+  position: relative;
+  cursor: col-resize;
+  transition: background 120ms;
+}
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  inset: 0 -3px;
+}
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--accent);
+}
+

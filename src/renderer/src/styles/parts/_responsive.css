@@ -1,0 +1,178 @@
+/* ============================================================
+   Responsive — stratégie complète
+   Breakpoints : 480 (mobile), 640 (small), 800 (medium), 1100 (large)
+   ============================================================ */
+
+/* Tablette / petite fenêtre — 800px */
+@media (max-width: 800px) {
+  /* Sidebar plus compact */
+  .sidebar { font-size: 12px; }
+  .sidebar-header { padding: 8px; }
+  .session-item { padding: 6px 8px; gap: 8px; }
+  .session-actions { gap: 2px; }
+  .session-actions .btn-icon { padding: 3px; }
+
+  /* Preview toolbar : addr input plus compact */
+  .preview-addr input { font-size: 10px; padding: 3px 8px; }
+  .preview-toolbar { padding: 3px 6px; gap: 3px; }
+
+  /* Tab bar : scroll horizontal au lieu de wrap */
+  .tab-bar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+  }
+  .tab-bar::-webkit-scrollbar { height: 3px; }
+  .tab-bar::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* Hero plus compact */
+  .hero { padding: 24px 16px 16px; }
+  .hero-title { font-size: 28px; }
+  .hero-lead { font-size: 13px; }
+  .hero-mark, .hero-mark-wrap { width: 60px; height: 60px; }
+  .hero-features { gap: 8px; }
+  .hero-feature-card { padding: 12px 10px; }
+
+  /* Update banner : stack si trop étroit */
+  .update-banner { padding: 6px 10px; gap: 6px; flex-wrap: wrap; }
+  .update-banner-text strong { font-size: 11px; }
+  .update-banner-text span { font-size: 10px; }
+  .update-banner-action { padding: 3px 8px; font-size: 10px; }
+
+  /* Console preview : un peu plus petit */
+  .preview-console { height: 180px; }
+  .preview-console-filter { padding: 1px 6px; font-size: 10px; }
+}
+
+/* Mobile / fenêtre minimale — 640px */
+@media (max-width: 640px) {
+  /* Cache des éléments non-essentiels du status bar */
+  .statusbar-section:not(:first-child):not(:last-child) {
+    display: none;
+  }
+  /* Garde le compteur sessions + bell + version */
+
+  /* Hero ultra compact */
+  .hero-title { font-size: 22px; }
+  .hero-eyebrow { font-size: 10px; padding: 3px 8px; }
+  .hero-cta { flex-direction: column; gap: 8px; }
+  .hero-cta-hint { font-size: 11px; }
+  .hero-shortcuts { gap: 4px 8px; padding: 6px 10px; font-size: 10px; }
+  .hero-shortcut-label { display: none; }
+
+  /* Dialogs : 95vw au lieu de min(680px, 92vw) */
+  .dialog { width: 95vw !important; max-width: 95vw !important; }
+  .dialog-body { padding: 12px; }
+  .dialog-header { padding: 10px 12px; }
+
+  /* Settings sidebar tabs : passe en row top, pas en column */
+  .dialog-body + div, /* fallback */
+  .settings-tabs {
+    /* targeting le wrapper de tabs si nommé settings-tabs */
+  }
+
+  /* TabBar items plus serrés */
+  .tab-item { padding: 4px 8px; font-size: 11px; gap: 4px; }
+  .tab-shortcuts { display: none; }
+
+  /* Update banner : actions sur la ligne suivante */
+  .update-banner-action { width: 100%; }
+  .update-banner-close { position: absolute; top: 4px; right: 4px; }
+
+  /* Preview console : plus compacte */
+  .preview-console { height: 140px; }
+  .preview-console-header { flex-wrap: wrap; }
+  .preview-console-entry-time, .preview-console-entry-src { display: none; }
+}
+
+/* Très petit — 480px (théorique, vu qu'on a min-width 560 sur la fenêtre) */
+@media (max-width: 480px) {
+  .titlebar { height: 32px; }
+  .titlebar-brand-name { font-size: 11px; }
+  .session-name { font-size: 11px; }
+  .hero-title { font-size: 18px; }
+}
+
+/* Hauteur réduite — moins d'espace vertical */
+@media (max-height: 600px) {
+  .hero { padding: 12px 16px; gap: 10px; }
+  .hero-title { font-size: 22px; }
+  .hero-mark, .hero-mark-wrap { width: 48px; height: 48px; }
+  .hero-features { display: none; }
+  .hero-shortcuts { display: none; }
+  .hero-meta { display: none; }
+}
+
+
+/* SettingsDialog layout — desktop: row (tabs side), mobile: column (tabs top) */
+.settings-layout {
+  display: flex;
+  min-height: 420px;
+}
+.settings-tabs {
+  width: 170px;
+  border-right: 1px solid var(--border);
+  padding: 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+@media (max-width: 640px) {
+  .settings-layout {
+    flex-direction: column;
+    min-height: 0;
+  }
+  .settings-tabs {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 6px;
+    gap: 4px;
+  }
+  .settings-tabs > button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .settings-tabs::-webkit-scrollbar { height: 3px; }
+}
+
+/* Hero — fixes débordement sur petits écrans */
+.hero-content {
+  width: 100%;
+  max-width: min(920px, 100%);
+}
+
+@media (max-width: 800px) {
+  .hero { padding: 20px 14px 16px; }
+  .hero-mark-glow { inset: -8px; filter: blur(8px); }
+}
+
+@media (max-width: 640px) {
+  .hero { padding: 16px 10px 12px; gap: 12px; }
+  .hero-mark, .hero-mark-wrap { width: 48px; height: 48px; }
+  .hero-mark-glow { inset: -4px; filter: blur(6px); }
+  .hero-title { font-size: 18px; line-height: 1.15; }
+  .hero-lead { font-size: 12px; line-height: 1.5; }
+  .hero-eyebrow { font-size: 9px; padding: 2px 6px; }
+  .hero-feature-card { padding: 8px; }
+  .hero-feature-icon { width: 24px; height: 24px; margin-bottom: 6px; }
+  .hero-feature-title { font-size: 11px; }
+  .hero-feature-body { font-size: 10px; }
+  .hero-shortcuts { padding: 4px 8px; gap: 3px 6px; }
+  .hero-shortcut { font-size: 10px; }
+  .kbd-inline { padding: 1px 4px; font-size: 9px; }
+}
+
+/* Force pas d'overflow horizontal sur l'app entière */
+html, body, #root {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+.app, .app-body, .main {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+

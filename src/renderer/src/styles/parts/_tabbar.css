@@ -1,0 +1,75 @@
+/* ============================================================
+   Tab bar additions
+   ============================================================ */
+
+.tab-name {
+  font-weight: 500;
+}
+
+/* URL chips persistants dans la tab bar */
+.url-chips {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+}
+.url-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 2px 4px 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  transition: all 100ms;
+  cursor: pointer;
+}
+.url-chip:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.url-chip-label {
+  pointer-events: none;
+}
+.url-chip-close {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  opacity: 0.5;
+  margin-left: 2px;
+  transition: all 80ms;
+}
+.url-chip-close:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--error);
+  opacity: 1;
+}
+.tab-spacer {
+  flex: 1;
+}
+.tab-shortcuts {
+  font-size: 10px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.kbd-inline {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+

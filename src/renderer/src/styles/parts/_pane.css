@@ -1,0 +1,359 @@
+/* ============================================================
+   Pane tree (tmux-style splits)
+   ============================================================ */
+
+.session-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane-with-header {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  /* Border-left = couleur de l'agent du pane (claude orange, codex vert, …).
+     Inline-style définit `borderLeftColor` ; ici on définit juste la largeur
+     et le style de base. Transparent par défaut → invisible sur les preview
+     panes et en single-pane (où PaneTreeView ne passe pas d'accent). */
+  border-left: 1px solid transparent;
+  transition: border-left-width 90ms ease-out;
+}
+.pane-with-header.active {
+  border-left-width: 2px;
+}
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  height: 22px;
+  user-select: none;
+}
+.pane-header.active {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.pane-header-icon {
+  display: inline-flex;
+  color: var(--text-dim);
+}
+.pane-header-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pane-header-close {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: all 80ms;
+}
+.pane-header:hover .pane-header-close,
+.pane-header.active .pane-header-close {
+  opacity: 1;
+}
+.pane-header-close:hover {
+  background: rgba(239, 68, 68, 0.18);
+  color: var(--error);
+}
+
+/* PaneStats — sparkline CPU/RAM (cf. PaneStats.tsx) */
+.pane-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.pane-stats.compact {
+  gap: 6px;
+  font-size: 9.5px;
+}
+.pane-stats-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.pane-stats-icon.cpu { color: var(--accent); opacity: 0.85; }
+.pane-stats-icon.mem { color: #3b82f6; opacity: 0.85; }
+.pane-stats-value {
+  min-width: 28px;
+  text-align: right;
+}
+.pane-stats.compact .pane-stats-value { min-width: 24px; }
+.pane-stats-canvas {
+  display: block;
+  border-radius: 1px;
+  opacity: 0.85;
+}
+.pane-stats-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-dim);
+  opacity: 0.5;
+  font-size: 10px;
+}
+.pane-stats-calc {
+  color: var(--text-dim);
+  font-style: italic;
+  opacity: 0.7;
+  letter-spacing: 1px;
+}
+.pane-stats-icon.calculating {
+  animation: pane-stats-pulse 1.4s ease-in-out infinite;
+}
+@keyframes pane-stats-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.statusbar-stats {
+  margin-left: -4px;
+}
+
+/* PID cliquable dans la status bar — feedback visuel sur copy */
+.statusbar-pid {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin: 0 -4px;
+  transition: background 100ms, color 100ms;
+}
+.statusbar-pid:hover {
+  background: var(--bg-elev-2);
+  color: var(--accent);
+}
+.statusbar-pid:active {
+  background: var(--accent-soft);
+}
+
+/* Système : CPU machine + RAM totale dans la status bar */
+.statusbar-system {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  background: var(--bg-elev-2);
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  cursor: help;
+  border: 1px solid transparent;
+  transition: border-color 120ms;
+}
+.statusbar-system:hover {
+  border-color: var(--border);
+}
+.statusbar-system-cpu {
+  font-weight: 600;
+  min-width: 28px;
+  text-align: right;
+}
+.statusbar-system-spark {
+  display: block;
+  margin: 0 2px;
+}
+.statusbar-system-mem {
+  opacity: 0.85;
+}
+
+/* Pane header : uptime + stale */
+.pane-header-uptime {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: var(--bg);
+  margin-left: 2px;
+}
+.pane-header-stale {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  opacity: 0.7;
+  margin-left: 2px;
+  animation: pane-stale-fade 3s ease-in-out infinite;
+}
+@keyframes pane-stale-fade {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
+
+/* Typing indicator : 3 dots qui pulsent en cascade. Visible quand un agent
+   produit de l'output PTY récemment (< 1.5s). Voir useIsTyping() dans PaneHeader. */
+.pane-header-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  height: 10px;
+}
+.pane-header-typing > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pane-typing-bounce 1.1s ease-in-out infinite;
+}
+.pane-header-typing > span:nth-child(2) { animation-delay: 0.18s; }
+.pane-header-typing > span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes pane-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30%           { transform: translateY(-2px); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-header-typing > span {
+    animation: none;
+    opacity: 0.85;
+  }
+}
+
+/* Avatar emoji fallback (sidebar) */
+.session-avatar-emoji {
+  font-size: 13px;
+  line-height: 1;
+  filter: saturate(1.1);
+}
+
+/* Tab unread counter (compteur d'événements non lus par pane) */
+.tab-unread {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 14px;
+  padding: 0 4px;
+  margin-left: 2px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #1a0a00;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.tab.attention-needs-input .tab-unread {
+  background: var(--error);
+  color: #fff;
+}
+
+/* Sidebar collapsed (Ctrl+B) */
+.app-body.sidebar-collapsed .sidebar,
+.app-body.sidebar-collapsed .resize-handle {
+  display: none;
+}
+
+.pane-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.pane-split-child {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pane-split-handle {
+  background: var(--border);
+  flex-shrink: 0;
+  position: relative;
+  transition: background 100ms;
+}
+.pane-split-handle-horizontal {
+  width: 1px;
+  cursor: col-resize;
+}
+.pane-split-handle-horizontal::after {
+  content: '';
+  position: absolute;
+  inset: 0 -3px;
+}
+.pane-split-handle-vertical {
+  height: 1px;
+  cursor: row-resize;
+}
+.pane-split-handle-vertical::after {
+  content: '';
+  position: absolute;
+  inset: -3px 0;
+}
+.pane-split-handle:hover,
+body.split-dragging .pane-split-handle {
+  background: var(--accent);
+}
+
+.terminal-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  background: #0a0a0b;
+  border: 1px solid transparent;
+  transition: border-color 80ms;
+  /* Isolation : le navigateur skip layout/paint cascadé hors de ce pane.
+     Gain notable quand un terminal stream du contenu sans réflux global. */
+  contain: layout paint style;
+}
+.terminal-pane.active {
+  border-color: rgba(249, 115, 22, 0.4);
+}
+.terminal-pane.sync {
+  border-color: rgba(239, 68, 68, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.25);
+}
+.terminal-pane.sync.active {
+  border-color: var(--error);
+}
+
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  background: #0a0a0b;
+  padding: 8px 4px 8px 12px;
+  position: relative;
+}
+
+.terminal-host .xterm,
+.terminal-host .xterm-viewport,
+.terminal-host .xterm-screen {
+  height: 100%;
+}
+.terminal-host .xterm-viewport {
+  background: transparent !important;
+}
+
