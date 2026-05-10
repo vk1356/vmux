@@ -159,6 +159,9 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   ptyStats.on('stats', (samples) => {
     safeSend(IPC.paneStats, samples);
   });
+  ptyStats.on('systemStats', (sample) => {
+    safeSend(IPC.systemStats, sample);
+  });
   ptyManager.on('paneAttention', (paneId, level) => {
     safeSend(IPC.paneAttention, paneId, level);
 

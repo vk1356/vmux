@@ -62,7 +62,8 @@ export function App(): JSX.Element {
     toggleSync,
     bumpAttention,
     clearAttention,
-    pushStatSamples
+    pushStatSamples,
+    pushSystemStats
   } = useSessionStore(
     useShallow((s) => ({
       sessions: s.sessions,
@@ -80,7 +81,8 @@ export function App(): JSX.Element {
       toggleSync: s.toggleSync,
       bumpAttention: s.bumpAttention,
       clearAttention: s.clearAttention,
-      pushStatSamples: s.pushStatSamples
+      pushStatSamples: s.pushStatSamples,
+      pushSystemStats: s.pushSystemStats
     }))
   );
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -160,6 +162,7 @@ export function App(): JSX.Element {
       bumpAttention(paneId, level);
     });
     const offStats = window.cmux.panes.onStats(pushStatSamples);
+    const offSystemStats = window.cmux.panes.onSystemStats(pushSystemStats);
     // Single handler — précédemment 2 abonnements distincts (onEvent x2)
     // créaient un doublon : chaque event était traité 2 fois et bumpAttention
     // pouvait flasher le badge. On centralise ici toast + attention + auto-open
@@ -222,6 +225,7 @@ export function App(): JSX.Element {
       offStatus();
       offUrls();
       offStats();
+      offSystemStats();
       offEvents();
       offAttention();
       offNotifSound();
@@ -236,7 +240,8 @@ export function App(): JSX.Element {
     recordEvent,
     patchPane,
     bumpAttention,
-    pushStatSamples
+    pushStatSamples,
+    pushSystemStats
   ]);
 
   // Drag-drop d'un dossier sur la window → ouvre New Session avec ce cwd

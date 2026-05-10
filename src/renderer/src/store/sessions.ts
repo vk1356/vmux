@@ -11,19 +11,28 @@ import type {
   PaneId,
   PaneStatSample,
   Session,
+  SystemStatsSample,
   TerminalPane
 } from '@shared/types';
 
-/** Capacité de la fenêtre glissante d'historique (samples par pane). */
-export const STATS_WINDOW = 30;
+/** Capacité de la fenêtre glissante d'historique (samples par pane).
+ *  Poll = 2s → 150 samples = 5 minutes. Donne assez de recul pour repérer
+ *  une fuite mémoire ou un agent qui ralentit, vs l'ancien 30s qui ne
+ *  permettait que de voir l'instant présent. */
+export const STATS_WINDOW = 150;
 
 export interface PaneStatsHistory {
   /** CPU% — fenêtre circulaire ; ordre chronologique (plus ancien en [0]).
-   *  Float32Array : 1 allocation préallouée à la bonne taille (vs `Array` qui
-   *  alloue + grandit + slice). Réduit la pression GC pour 30 panes × 1Hz. */
+   *  Stocké en raw pidusage (0..100*cores) ; l'UI normalise selon le mode. */
   cpu: Float32Array;
   /** RAM en octets — même fenêtre. */
   memory: Float32Array;
+  /** Nombre de cœurs logiques de la machine — copié depuis le sample, sert
+   *  à l'UI pour normaliser CPU% en % machine. Constant durant la session. */
+  cores: number;
+  /** True dès que pidusage a renvoyé un delta valide pour ce pane (≥ 2 polls).
+   *  Avant : l'UI affiche "calculating…" pour ne pas mentir avec un faux 0%. */
+  primed: boolean;
   /** Dernière valeur reçue (pratique pour l'affichage instantané). */
   last: { cpu: number; memory: number; timestamp: number } | null;
 }
@@ -66,6 +75,12 @@ interface SessionStore {
   paneActivity: Record<PaneId, PaneAttention>;
   /** Historique CPU/RAM par pane (fenêtre glissante de STATS_WINDOW samples). */
   paneStats: Record<PaneId, PaneStatsHistory>;
+  /** Stats globales machine + somme vMux (push toutes les 2s depuis main).
+   *  null tant qu'aucun pane n'a démarré (pty-stats ne tourne qu'avec ≥1 pane). */
+  systemStats: SystemStatsSample | null;
+  /** Historique des CPU% machine (fenêtre glissante) — alimenté en parallèle
+   *  pour la mini-sparkline système dans la status bar. */
+  systemCpuHistory: Float32Array;
 
   setSessions: (s: Session[]) => void;
   setAgents: (a: AgentPreset[]) => void;
@@ -94,6 +109,8 @@ interface SessionStore {
   clearAttention: (paneId: PaneId) => void;
   /** Append samples CPU/RAM (push depuis le main toutes les 2s). */
   pushStatSamples: (samples: PaneStatSample[]) => void;
+  /** Met à jour les stats système globales. */
+  pushSystemStats: (sample: SystemStatsSample) => void;
 }
 
 /** Ordre d'escalade des niveaux d'attention. */
@@ -128,6 +145,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
   eventHistory: [],
   paneActivity: {},
   paneStats: {},
+  systemStats: null,
+  systemCpuHistory: new Float32Array(0),
 
   setSessions: (sessions) =>
     set((state) => ({
@@ -200,15 +219,28 @@ export const useSessionStore = create<SessionStore>()((set) => ({
   removeSession: (id) =>
     set((state) => {
       const target = state.sessionsById[id];
-      if (target) {
-        for (const paneId of Object.keys(target.panes)) clearPaneData(paneId);
-      }
+      const paneIds = target ? Object.keys(target.panes) : [];
+      for (const paneId of paneIds) clearPaneData(paneId);
       const sessions = state.sessions.filter((s) => s.id !== id);
       const { [id]: _drop, ...sessionsById } = state.sessionsById;
       void _drop;
+      // Purge les stats CPU/RAM des panes fermés — évite une fuite mémoire
+      // sur les longues sessions (chaque pane gardait ses 150 samples ad vitam).
+      let paneStats = state.paneStats;
+      let paneActivity = state.paneActivity;
+      if (paneIds.length > 0) {
+        paneStats = { ...state.paneStats };
+        paneActivity = { ...state.paneActivity };
+        for (const pid of paneIds) {
+          delete paneStats[pid];
+          delete paneActivity[pid];
+        }
+      }
       return {
         sessions,
         sessionsById,
+        paneStats,
+        paneActivity,
         activeSessionId:
           state.activeSessionId === id ? sessions[0]?.id ?? null : state.activeSessionId
       };
@@ -327,9 +359,27 @@ export const useSessionStore = create<SessionStore>()((set) => ({
         next[s.paneId] = {
           cpu,
           memory,
+          cores: s.cores,
+          // Sticky : une fois primé, reste primé jusqu'au restart du pane.
+          primed: cur?.primed === true || s.primed === true,
           last: { cpu: s.cpu, memory: s.memory, timestamp: s.timestamp }
         };
       }
       return { paneStats: next };
+    }),
+
+  pushSystemStats: (sample) =>
+    set((state) => {
+      const cur = state.systemCpuHistory;
+      const curLen = cur.length;
+      const isFull = curLen >= STATS_WINDOW;
+      const newLen = isFull ? STATS_WINDOW : curLen + 1;
+      const next = new Float32Array(newLen);
+      if (curLen > 0) {
+        const srcOffset = isFull ? 1 : 0;
+        next.set(cur.subarray(srcOffset));
+      }
+      next[newLen - 1] = sample.cpu;
+      return { systemStats: sample, systemCpuHistory: next };
     })
 }));

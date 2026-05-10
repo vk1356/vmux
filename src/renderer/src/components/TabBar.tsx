@@ -1,8 +1,9 @@
-import { useState, type JSX, type MouseEvent } from 'react';
+import { useMemo, useState, type JSX, type MouseEvent } from 'react';
 import { Globe, RotateCw, X, Edit3, Layers, Keyboard } from 'lucide-react';
 import type { Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { useSessionStore } from '../store/sessions';
+import { useShallow } from 'zustand/react/shallow';
 import { useT } from '../i18n';
 
 interface Props {
@@ -18,14 +19,31 @@ interface MenuState {
 
 export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
   const t = useT();
-  const agents = useSessionStore((s) => s.agents);
-  const upsertSession = useSessionStore((s) => s.upsertSession);
-  const paneActivity = useSessionStore((s) => s.paneActivity);
+  const { agents, upsertSession, paneActivity, eventHistory } = useSessionStore(
+    useShallow((s) => ({
+      agents: s.agents,
+      upsertSession: s.upsertSession,
+      paneActivity: s.paneActivity,
+      eventHistory: s.eventHistory
+    }))
+  );
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingPaneId, setRenamingPaneId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
   const paneIds = allPaneIds(session.tree);
+
+  // Compteur d'events non lus par pane — calculé une fois par render plutôt
+  // que par tab. Filtre sur la session courante uniquement.
+  const unreadByPane = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const e of eventHistory) {
+      if (e.readAt) continue;
+      if (e.sessionId !== session.id) continue;
+      out[e.event.paneId] = (out[e.event.paneId] ?? 0) + 1;
+    }
+    return out;
+  }, [eventHistory, session.id]);
 
   const onClickTab = async (paneId: string): Promise<void> => {
     await window.cmux.panes.focus(session.id, paneId);
@@ -85,6 +103,7 @@ export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
           }
 
           const attention = paneActivity[id] ?? 'idle';
+          const unread = unreadByPane[id] ?? 0;
 
           return (
             <div
@@ -112,6 +131,14 @@ export function TabBar({ session, onShowShortcuts }: Props): JSX.Element {
                 />
               ) : (
                 <span className="tab-label">{label}</span>
+              )}
+              {unread > 0 && (
+                <span
+                  className="tab-unread"
+                  title={`${unread} événement${unread > 1 ? 's' : ''} non lu${unread > 1 ? 's' : ''}`}
+                >
+                  {unread > 99 ? '99+' : unread}
+                </span>
               )}
               <button
                 className="tab-close"

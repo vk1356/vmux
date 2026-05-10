@@ -12,6 +12,7 @@ import {
   type PaneId,
   type PaneStatSample,
   type PtySize,
+  type SystemStatsSample,
   type Session,
   type Snippet,
   type SplitPaneInput,
@@ -155,6 +156,13 @@ const api = {
       ipcRenderer.on(IPC.paneStats, listener);
       return (): void => {
         ipcRenderer.off(IPC.paneStats, listener);
+      };
+    },
+    onSystemStats: (cb: (sample: SystemStatsSample) => void): (() => void) => {
+      const listener = (_: unknown, s: SystemStatsSample): void => cb(s);
+      ipcRenderer.on(IPC.systemStats, listener);
+      return (): void => {
+        ipcRenderer.off(IPC.systemStats, listener);
       };
     }
   },

@@ -157,7 +157,7 @@ describe('useSessionStore — pushStatSamples ring buffer', () => {
   it('grows up to STATS_WINDOW then shifts', () => {
     const push = (cpu: number, mem: number): void =>
       useSessionStore.getState().pushStatSamples([
-        { paneId: 'p', cpu, memory: mem, timestamp: cpu }
+        { paneId: 'p', cpu, memory: mem, timestamp: cpu, cores: 8, primed: true }
       ]);
 
     for (let i = 0; i < STATS_WINDOW + 5; i++) push(i, i * 1000);
@@ -173,7 +173,7 @@ describe('useSessionStore — pushStatSamples ring buffer', () => {
 
   it('keeps last sample reference', () => {
     useSessionStore.getState().pushStatSamples([
-      { paneId: 'p', cpu: 42.5, memory: 1024, timestamp: 1000 }
+      { paneId: 'p', cpu: 42.5, memory: 1024, timestamp: 1000, cores: 8, primed: true }
     ]);
     const last = useSessionStore.getState().paneStats['p'].last;
     expect(last).toEqual({ cpu: 42.5, memory: 1024, timestamp: 1000 });

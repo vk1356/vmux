@@ -1,5 +1,15 @@
-import { useEffect, useMemo, useState, type JSX } from 'react';
-import { Activity, Folder, GitBranch, Cpu, Bell, AlertCircle } from 'lucide-react';
+import { memo, useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import {
+  Activity,
+  Folder,
+  GitBranch,
+  Cpu,
+  Bell,
+  AlertCircle,
+  MemoryStick,
+  Server,
+  Check
+} from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import { useShallow } from 'zustand/react/shallow';
 import { allPaneIds } from '@shared/tree';
@@ -11,19 +21,29 @@ interface Props {
   onOpenNotifications: () => void;
 }
 
-export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
+function StatusBarImpl({ onOpenNotifications }: Props): JSX.Element {
   const t = useT();
-  const { sessions, activeSessionId, eventHistory, paneActivity, setActiveSession } =
-    useSessionStore(
-      useShallow((s) => ({
-        sessions: s.sessions,
-        activeSessionId: s.activeSessionId,
-        eventHistory: s.eventHistory,
-        paneActivity: s.paneActivity,
-        setActiveSession: s.setActiveSession
-      }))
-    );
+  const {
+    sessions,
+    activeSessionId,
+    eventHistory,
+    paneActivity,
+    setActiveSession,
+    systemStats,
+    systemCpuHistory
+  } = useSessionStore(
+    useShallow((s) => ({
+      sessions: s.sessions,
+      activeSessionId: s.activeSessionId,
+      eventHistory: s.eventHistory,
+      paneActivity: s.paneActivity,
+      setActiveSession: s.setActiveSession,
+      systemStats: s.systemStats,
+      systemCpuHistory: s.systemCpuHistory
+    }))
+  );
   const [version, setVersion] = useState<string>('');
+  const [pidCopied, setPidCopied] = useState(false);
   useEffect(() => {
     void window.cmux.app?.version().then(setVersion);
   }, []);
@@ -72,6 +92,12 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
   const activeTerm =
     activePane && activePane.kind === 'terminal' ? (activePane as TerminalPane) : null;
 
+  const onCopyPid = (pid: number): void => {
+    void window.cmux.clipboard.write(String(pid));
+    setPidCopied(true);
+    setTimeout(() => setPidCopied(false), 1200);
+  };
+
   return (
     <div className="statusbar">
       <span className="statusbar-section">
@@ -79,17 +105,20 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
       </span>
       {active && (
         <>
-          {activeTerm && (
-            <>
-              <span className="statusbar-section">
-                <Cpu size={11} /> PID&nbsp;{activeTerm.pid ?? '—'}
-              </span>
-              {activeTerm.status === 'running' && (
-                <span className="statusbar-section statusbar-stats">
-                  <PaneStats paneId={activeTerm.id} />
-                </span>
-              )}
-            </>
+          {activeTerm && activeTerm.pid !== undefined && (
+            <button
+              className="statusbar-section statusbar-pid"
+              onClick={() => onCopyPid(activeTerm.pid as number)}
+              title="Cliquer pour copier le PID"
+            >
+              {pidCopied ? <Check size={11} /> : <Cpu size={11} />} PID&nbsp;
+              {activeTerm.pid}
+            </button>
+          )}
+          {activeTerm && activeTerm.status === 'running' && (
+            <span className="statusbar-section statusbar-stats">
+              <PaneStats paneId={activeTerm.id} />
+            </span>
           )}
           {active.branch && (
             <span className="statusbar-section">
@@ -111,6 +140,12 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
         </>
       )}
       <span className="statusbar-spacer" />
+      {systemStats && (
+        <SystemStatsWidget
+          stats={systemStats}
+          history={systemCpuHistory}
+        />
+      )}
       {needsInputCount > 0 && (
         <button
           className={`statusbar-attention ${hasNeedsInput ? 'urgent' : 'soft'}`}
@@ -138,5 +173,80 @@ export function StatusBar({ onOpenNotifications }: Props): JSX.Element {
         vMux {version ? `v${version}` : ''}
       </span>
     </div>
+  );
+}
+
+export const StatusBar = memo(StatusBarImpl);
+
+interface SystemStatsProps {
+  stats: NonNullable<ReturnType<typeof useSessionStore.getState>['systemStats']>;
+  history: Float32Array;
+}
+
+/** Mini-widget système : CPU machine + sparkline + RAM utilisée + part vMux.
+ *  Rendu uniquement quand au moins 1 pane tourne (sinon stats === null). */
+function SystemStatsWidget({ stats, history }: SystemStatsProps): JSX.Element {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const cpuColor =
+    stats.cpu < 30 ? '#22c55e' : stats.cpu < 70 ? '#f97316' : '#ef4444';
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = 48;
+    const cssH = 14;
+    if (canvas.width !== cssW * dpr) {
+      canvas.width = cssW * dpr;
+      canvas.height = cssH * dpr;
+      canvas.style.width = `${cssW}px`;
+      canvas.style.height = `${cssH}px`;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    const len = history.length;
+    if (len < 2) return;
+    const step = cssW / 149; // STATS_WINDOW - 1
+    const startX = cssW - (len - 1) * step;
+    ctx.strokeStyle = cpuColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < len; i++) {
+      const x = startX + i * step;
+      const y = cssH - (history[i] / 100) * (cssH - 2) - 1;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }, [history, cpuColor]);
+
+  const memUsedGb = stats.memoryUsed / (1024 * 1024 * 1024);
+  const memTotalGb = stats.memoryTotal / (1024 * 1024 * 1024);
+  const memPct = (stats.memoryUsed / stats.memoryTotal) * 100;
+  const vmuxMemMb = stats.vmuxMemory / (1024 * 1024);
+  const vmuxMemPart = (stats.vmuxMemory / stats.memoryTotal) * 100;
+
+  const tooltip = [
+    `CPU machine : ${stats.cpu.toFixed(1)}% (${stats.cores} cœurs)`,
+    `vMux + agents : ${stats.vmuxCpu.toFixed(1)}% CPU · ${vmuxMemMb.toFixed(0)} MB (${vmuxMemPart.toFixed(1)}%)`,
+    `RAM système : ${memUsedGb.toFixed(1)} / ${memTotalGb.toFixed(1)} GB (${memPct.toFixed(0)}%)`
+  ].join('\n');
+
+  return (
+    <span className="statusbar-section statusbar-system" title={tooltip}>
+      <Server size={11} style={{ color: cpuColor }} />
+      <span className="statusbar-system-cpu" style={{ color: cpuColor }}>
+        {Math.round(stats.cpu)}%
+      </span>
+      <canvas ref={canvasRef} className="statusbar-system-spark" />
+      <MemoryStick size={11} style={{ marginLeft: 6, opacity: 0.7 }} />
+      <span className="statusbar-system-mem">
+        {memUsedGb.toFixed(1)}/{memTotalGb.toFixed(0)}G
+      </span>
+    </span>
   );
 }

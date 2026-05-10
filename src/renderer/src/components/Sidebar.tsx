@@ -38,6 +38,17 @@ const SESSION_COLORS = [
   '#ef4444' // rouge
 ] as const;
 
+/** Emojis par agent — fallback visuel quand l'avatar n'a pas d'image et que
+ *  la 1ère lettre du label crée des collisions ("S" = Shell vs "Shop"). */
+const AGENT_EMOJI: Record<string, string> = {
+  'claude-code': '🤖',
+  codex: '📝',
+  'cursor-agent': '🎯',
+  aider: '🛠️',
+  gemini: '✨',
+  shell: '💻'
+};
+
 interface Props {
   onNewSession: () => void;
   onOpenSettings: () => void;
@@ -268,7 +279,13 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             setColorPickerFor((cur) => (cur === s.id ? null : s.id));
           }}
         >
-          {(agent?.label ?? main?.agentId ?? '?').charAt(0).toUpperCase()}
+          {main?.agentId && AGENT_EMOJI[main.agentId] ? (
+            <span className="session-avatar-emoji" aria-hidden>
+              {AGENT_EMOJI[main.agentId]}
+            </span>
+          ) : (
+            (agent?.label ?? main?.agentId ?? '?').charAt(0).toUpperCase()
+          )}
           <span className={`session-avatar-dot ${dotStatus}`} />
           {s.pinned && <span className="session-pin-mark" title={t('pinnedLabel')} />}
           {attention !== 'idle' && (

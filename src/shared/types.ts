@@ -210,6 +210,30 @@ export interface PaneStatSample {
   /** RAM en octets. */
   memory: number;
   timestamp: number;
+  /** Nombre de cœurs logiques de la machine — utile pour normaliser le CPU
+   *  côté UI (`cpu / cores` = % machine). Constant durant la session, envoyé
+   *  pour économiser un IPC séparé. */
+  cores: number;
+  /** False sur le 1er sample d'un pane fraîchement spawn — pidusage a besoin
+   *  de 2 ticks pour calculer un delta CPU. L'UI affiche "calculating…". */
+  primed: boolean;
+}
+
+/** Stats globales de la machine — pollées en parallèle des stats par pane. */
+export interface SystemStatsSample {
+  /** CPU% machine — 0..100. */
+  cpu: number;
+  /** RAM utilisée en octets. */
+  memoryUsed: number;
+  /** RAM totale en octets. */
+  memoryTotal: number;
+  /** Somme CPU% de tous les panes vMux trackés (déjà en %machine). */
+  vmuxCpu: number;
+  /** Somme RAM en octets de tous les panes vMux trackés. */
+  vmuxMemory: number;
+  /** Nombre de cœurs logiques. */
+  cores: number;
+  timestamp: number;
 }
 
 export interface DetectedEvent {
@@ -277,6 +301,9 @@ export const IPC = {
 
   // Stats CPU/RAM par pane (push depuis main toutes les 2s)
   paneStats: 'pane:stats',
+
+  // Stats globales machine + somme vMux (push depuis main toutes les 2s)
+  systemStats: 'pane:system-stats',
 
   // Agents
   agentsList: 'agents:list',

@@ -983,9 +983,129 @@ a:hover {
   opacity: 0.5;
   font-size: 10px;
 }
+.pane-stats-calc {
+  color: var(--text-dim);
+  font-style: italic;
+  opacity: 0.7;
+  letter-spacing: 1px;
+}
+.pane-stats-icon.calculating {
+  animation: pane-stats-pulse 1.4s ease-in-out infinite;
+}
+@keyframes pane-stats-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
 .statusbar-stats {
-  /* L'icône Cpu existe déjà avant via le PID — on n'en remet pas. */
   margin-left: -4px;
+}
+
+/* PID cliquable dans la status bar — feedback visuel sur copy */
+.statusbar-pid {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin: 0 -4px;
+  transition: background 100ms, color 100ms;
+}
+.statusbar-pid:hover {
+  background: var(--bg-elev-2);
+  color: var(--accent);
+}
+.statusbar-pid:active {
+  background: var(--accent-soft);
+}
+
+/* Système : CPU machine + RAM totale dans la status bar */
+.statusbar-system {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  background: var(--bg-elev-2);
+  border-radius: 3px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  cursor: help;
+  border: 1px solid transparent;
+  transition: border-color 120ms;
+}
+.statusbar-system:hover {
+  border-color: var(--border);
+}
+.statusbar-system-cpu {
+  font-weight: 600;
+  min-width: 28px;
+  text-align: right;
+}
+.statusbar-system-spark {
+  display: block;
+  margin: 0 2px;
+}
+.statusbar-system-mem {
+  opacity: 0.85;
+}
+
+/* Pane header : uptime + stale */
+.pane-header-uptime {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: var(--bg);
+  margin-left: 2px;
+}
+.pane-header-stale {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  opacity: 0.7;
+  margin-left: 2px;
+  animation: pane-stale-fade 3s ease-in-out infinite;
+}
+@keyframes pane-stale-fade {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
+
+/* Avatar emoji fallback (sidebar) */
+.session-avatar-emoji {
+  font-size: 13px;
+  line-height: 1;
+  filter: saturate(1.1);
+}
+
+/* Tab unread counter (compteur d'événements non lus par pane) */
+.tab-unread {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 14px;
+  padding: 0 4px;
+  margin-left: 2px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #1a0a00;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.tab.attention-needs-input .tab-unread {
+  background: var(--error);
+  color: #fff;
 }
 
 /* Sidebar collapsed (Ctrl+B) */
