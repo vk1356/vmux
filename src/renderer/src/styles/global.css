@@ -488,7 +488,8 @@ a:hover {
   box-shadow: 0 0 4px rgba(249, 115, 22, 0.5);
 }
 
-/* Attention badges (style tmux monitor-activity / monitor-bell) — gros et visibles */
+/* Attention badges (style tmux monitor-activity / monitor-bell) — gros et visibles.
+   Rendu en <button> pour qu'un clic focus le pane qui a déclenché l'attention. */
 .attention-badge {
   position: absolute;
   top: -4px;
@@ -503,6 +504,20 @@ a:hover {
   font-weight: 900;
   color: #fff;
   z-index: 2;
+  padding: 0;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+  line-height: 1;
+}
+.attention-badge:hover {
+  transform: scale(1.18);
+  transition: transform 90ms ease-out;
+}
+.attention-badge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .attention-badge.attention-activity {
   background: #eab308;
@@ -895,6 +910,14 @@ a:hover {
   min-width: 0;
   min-height: 0;
   position: relative;
+  /* Border-left = couleur de l'agent du pane (claude orange, codex vert, …).
+     Inline-style définit `borderLeftColor` ; ici on définit juste la largeur
+     et le style de base. Transparent sur les preview panes. */
+  border-left: 2px solid transparent;
+  transition: border-left-width 90ms ease-out;
+}
+.pane-with-header.active {
+  border-left-width: 3px;
 }
 .pane-header {
   display: flex;
@@ -1078,6 +1101,35 @@ a:hover {
 @keyframes pane-stale-fade {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.85; }
+}
+
+/* Typing indicator : 3 dots qui pulsent en cascade. Visible quand un agent
+   produit de l'output PTY récemment (< 1.5s). Voir useIsTyping() dans PaneHeader. */
+.pane-header-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  height: 10px;
+}
+.pane-header-typing > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pane-typing-bounce 1.1s ease-in-out infinite;
+}
+.pane-header-typing > span:nth-child(2) { animation-delay: 0.18s; }
+.pane-header-typing > span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes pane-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30%           { transform: translateY(-2px); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-header-typing > span {
+    animation: none;
+    opacity: 0.85;
+  }
 }
 
 /* Avatar emoji fallback (sidebar) */

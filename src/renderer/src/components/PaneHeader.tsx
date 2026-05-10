@@ -37,6 +37,7 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
 
   const uptime = useUptime(term?.lastStartedAt);
   const isStale = useStaleness(term);
+  const isTyping = useIsTyping(isRunningTerm ? term?.lastOutputAt : undefined);
 
   return (
     <div className={`pane-header ${active ? 'active' : ''} attention-${attention}`}>
@@ -45,12 +46,24 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
       <span className="pane-header-label" title={label}>
         {label}
       </span>
+      {isTyping && (
+        <span
+          className="pane-header-typing"
+          title="Agent en train d'écrire…"
+          aria-label="Agent en train d'écrire"
+        >
+          <span />
+          <span />
+          <span />
+        </span>
+      )}
       {isRunningTerm && uptime && (
         <span className="pane-header-uptime" title={`Démarré il y a ${uptime}`}>
           <Clock size={9} /> {uptime}
         </span>
       )}
-      {isStale && (
+      {/* Stale et typing sont mutuellement exclusifs : un agent qui tape n'est pas stale. */}
+      {isStale && !isTyping && (
         <span className="pane-header-stale" title="Aucune sortie récente — agent peut-être idle">
           <Moon size={10} />
         </span>
@@ -92,6 +105,26 @@ function useUptime(lastStartedAt: number | undefined): string | null {
   }, [lastStartedAt]);
   if (!lastStartedAt) return null;
   return formatDuration(Date.now() - lastStartedAt);
+}
+
+/** Détecte si un agent est "en train d'écrire" : output PTY < 1.5s.
+ *  Tick 600ms (assez réactif pour voir le dot apparaître/disparaître sans surcharger
+ *  React). 1 timer par PaneHeader monté → en pratique max ~10 panes, négligeable. */
+function useIsTyping(lastOutputAt: number | undefined): boolean {
+  const [typing, setTyping] = useState(false);
+  useEffect(() => {
+    if (!lastOutputAt) {
+      setTyping(false);
+      return;
+    }
+    const check = (): void => {
+      setTyping(Date.now() - lastOutputAt < 1500);
+    };
+    check();
+    const id = setInterval(check, 600);
+    return () => clearInterval(id);
+  }, [lastOutputAt]);
+  return typing;
 }
 
 /** Détecte si un pane terminal est "stale" : aucun output PTY depuis 5min.

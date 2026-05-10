@@ -213,9 +213,13 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
 
     const ATT_RANK = { idle: 0, activity: 1, alert: 2, 'needs-input': 3 } as const;
     let attention: 'idle' | 'activity' | 'alert' | 'needs-input' = 'idle';
+    let triggerPaneId: string | undefined;
     for (const id of paneIds) {
       const a = paneActivity[id] ?? 'idle';
-      if (ATT_RANK[a] > ATT_RANK[attention]) attention = a;
+      if (ATT_RANK[a] > ATT_RANK[attention]) {
+        attention = a;
+        triggerPaneId = id;
+      }
     }
 
     const isActive = activeSessionId === s.id;
@@ -289,7 +293,8 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
           <span className={`session-avatar-dot ${dotStatus}`} />
           {s.pinned && <span className="session-pin-mark" title={t('pinnedLabel')} />}
           {attention !== 'idle' && (
-            <span
+            <button
+              type="button"
               className={`attention-badge attention-${attention}`}
               title={
                 attention === 'needs-input'
@@ -298,6 +303,13 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
                     ? t('attentionAlertLabel')
                     : t('attentionActivityLabel')
               }
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveSession(s.id);
+                if (triggerPaneId) {
+                  void window.cmux.panes.focus(s.id, triggerPaneId);
+                }
+              }}
             />
           )}
         </div>

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import type { Pane, PaneTree } from '@shared/types';
 import { allPaneIds, type TreePath } from '@shared/tree';
 import { TerminalPane } from './TerminalPane';
 import { PreviewPane } from './PreviewPane';
 import { ErrorBoundary } from './ErrorBoundary';
 import { PaneHeader } from './PaneHeader';
+import { useSessionStore } from '../store/sessions';
 
 interface Props {
   sessionId: string;
@@ -22,6 +23,15 @@ export function PaneTreeView({
   visible
 }: Props): JSX.Element | null {
   const paneCount = allPaneIds(tree).length;
+  // Lookup agent color : utilisé pour la border-left de chaque pane terminal.
+  // Donne une orientation visuelle instantanée quand on mixe Claude + Codex + Gemini.
+  const agents = useSessionStore((s) => s.agents);
+  const agentColorById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const a of agents) map[a.id] = a.color;
+    return map;
+  }, [agents]);
+
   return (
     <TreeNode
       sessionId={sessionId}
@@ -31,6 +41,7 @@ export function PaneTreeView({
       path={[]}
       visible={visible}
       showHeaders={paneCount > 1}
+      agentColorById={agentColorById}
     />
   );
 }
@@ -43,6 +54,7 @@ interface NodeProps {
   path: TreePath;
   visible: boolean;
   showHeaders: boolean;
+  agentColorById: Record<string, string>;
 }
 
 function TreeNode({
@@ -52,7 +64,8 @@ function TreeNode({
   activePaneId,
   path,
   visible,
-  showHeaders
+  showHeaders,
+  agentColorById
 }: NodeProps): JSX.Element | null {
   if (tree.kind === 'leaf') {
     const pane = panes[tree.paneId];
@@ -60,10 +73,16 @@ function TreeNode({
     const isActive = pane.id === activePaneId;
     const label =
       pane.kind === 'terminal' ? `Pane ${pane.agentId}` : `Preview ${pane.url}`;
+    // Border-left = couleur de l'agent du pane. Pour les preview panes, on
+    // garde un transparent (le pane preview n'a pas d'agent associé).
+    const accent = pane.kind === 'terminal' ? agentColorById[pane.agentId] : undefined;
     return (
       <ErrorBoundary scope="pane" label={label}>
-        <div className="pane-with-header">
-          {showHeaders && <PaneHeader sessionId={sessionId} pane={pane} active={isActive} />}
+        <div
+          className={`pane-with-header ${isActive ? 'active' : ''}`}
+          style={accent ? { borderLeftColor: accent } : undefined}
+        >
+          {showHeaders && <PaneHeader sessionId={sessionId} pane={pane} active={isActive} accent={accent} />}
           {pane.kind === 'terminal' ? (
             <TerminalPane sessionId={sessionId} pane={pane} active={isActive} visible={visible} />
           ) : (
@@ -83,6 +102,7 @@ function TreeNode({
       path={path}
       visible={visible}
       showHeaders={showHeaders}
+      agentColorById={agentColorById}
     />
   );
 }
@@ -98,7 +118,8 @@ function SplitNode({
   activePaneId,
   path,
   visible,
-  showHeaders
+  showHeaders,
+  agentColorById
 }: SplitProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const [sizes, setSizes] = useState<number[]>(tree.sizes);
@@ -190,6 +211,7 @@ function SplitNode({
               path={[...path, i]}
               visible={visible}
               showHeaders={showHeaders}
+              agentColorById={agentColorById}
             />
           </RowFragment>
         );
