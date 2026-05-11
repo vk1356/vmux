@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useRef, useState, type JSX } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -94,7 +94,9 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
 
   const followingPane = useSessionStore((s) => {
     if (!pane.followsPaneId) return null;
-    const session = s.sessions.find((x) => x.id === sessionId);
+    // O(1) via sessionsById index — évite un .find() O(N) qui re-tournait sur
+    // chaque update du store (paneStats toutes les 2s, etc.).
+    const session = s.sessionsById[sessionId];
     return (session?.panes[pane.followsPaneId] as TerminalPane | undefined) ?? null;
   });
 
@@ -131,8 +133,12 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
     };
     const onFail = (e: Event): void => {
       const ev = e as Event & { errorCode?: number; errorDescription?: string };
-      // -3 = aborted (navigation Cancelled, ignore)
-      if (ev.errorCode === -3) return;
+      // -3 = aborted (navigation Cancelled) — pas un échec mais ne pas
+      // laisser le spinner bloqué : did-stop-loading ne fire pas sur abort.
+      if (ev.errorCode === -3) {
+        setLoading(false);
+        return;
+      }
       setLoading(false);
       setFailed(true);
       // Affiche aussi l'erreur dans la console intégrée.
@@ -206,7 +212,27 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
       e.preventDefault();
       const el = ref.current;
       if (!el) return;
-      const url = addr.startsWith('http://') || addr.startsWith('https://') ? addr : `http://${addr}`;
+      // Refuse explicitement les schémas autres que http/https. Sans ce check,
+      // saisir `javascript:alert(1)` exécutait dans le contexte de la <webview>
+      // (qui est isolé du main, mais l'effet visible était quand même
+      // exploitable côté UI/persistence).
+      // Strip wrapping <…> qu'on récupère souvent en collant depuis du markdown chat.
+      const trimmed = addr.trim().replace(/^<+|>+$/g, '');
+      let url: string;
+      if (/^https?:\/\//i.test(trimmed)) {
+        url = trimmed;
+      } else if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+        // Schéma reconnu mais non-http (javascript:, file:, data:, …) — bloque.
+        setFailed(true);
+        return;
+      } else {
+        url = `http://${trimmed}`;
+      }
+      // Sanity check final : protocole strictement http/https.
+      if (!/^https?:\/\//i.test(url)) {
+        setFailed(true);
+        return;
+      }
       el.loadURL(url).catch(() => setFailed(true));
       void window.cmux.panes.setUrl(sessionId, pane.id, url);
     },
@@ -225,14 +251,26 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
     [addr]
   );
 
-  const filteredLogs = filter === 'all' ? logs : logs.filter((l) => l.level === filter);
+  const filteredLogs = useMemo(
+    () => (filter === 'all' ? logs : logs.filter((l) => l.level === filter)),
+    [logs, filter]
+  );
   // Window de rendu : dernières VISIBLE_LOGS entrées seulement. Au-delà,
   // on aurait des centaines de nodes DOM à reconcile à chaque push.
   const renderedLogs =
     filteredLogs.length > VISIBLE_LOGS ? filteredLogs.slice(-VISIBLE_LOGS) : filteredLogs;
   const hiddenLogs = filteredLogs.length - renderedLogs.length;
-  const errorCount = logs.filter((l) => l.level === 'error').length;
-  const warnCount = logs.filter((l) => l.level === 'warn').length;
+  // Count en une seule passe — avant on filtrait `logs` deux fois par render
+  // (errorCount + warnCount) sur potentiellement 500 entrées.
+  const { errorCount, warnCount } = useMemo(() => {
+    let err = 0;
+    let warn = 0;
+    for (const l of logs) {
+      if (l.level === 'error') err++;
+      else if (l.level === 'warn') warn++;
+    }
+    return { errorCount: err, warnCount: warn };
+  }, [logs]);
 
   return (
     <div

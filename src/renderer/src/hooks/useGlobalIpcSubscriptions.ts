@@ -13,21 +13,17 @@ import type { PaneAttention } from '@shared/types';
  * éviter les closures stales — l'effet ne se ré-attache jamais après mount.
  */
 export function useGlobalIpcSubscriptions(): void {
-  const setSessions = useSessionStore((s) => s.setSessions);
-  const setAgents = useSessionStore((s) => s.setAgents);
-  const setAgentAvailability = useSessionStore((s) => s.setAgentAvailability);
-  const setSettings = useSessionStore((s) => s.setSettings);
-  const setActiveSession = useSessionStore((s) => s.setActiveSession);
-  const upsertSession = useSessionStore((s) => s.upsertSession);
-  const addToast = useSessionStore((s) => s.addToast);
-  const recordEvent = useSessionStore((s) => s.recordEvent);
-  const patchPane = useSessionStore((s) => s.patchPane);
-  const bumpAttention = useSessionStore((s) => s.bumpAttention);
-  const setAgentState = useSessionStore((s) => s.setAgentState);
-  const pushStatSamples = useSessionStore((s) => s.pushStatSamples);
-  const pushSystemStats = useSessionStore((s) => s.pushSystemStats);
-
   useEffect(() => {
+    // Read actions via getState() — Zustand 5 garantit que les actions sont
+    // stables par référence pour la vie du store. Pas besoin de 13 subscriptions
+    // (chacune coûte un selector run par store update), ni d'un dep-array qui
+    // re-mount tout l'effet sous StrictMode et risque de doubler les listeners IPC.
+    const {
+      setSessions, setAgents, setAgentAvailability, setSettings, setActiveSession,
+      upsertSession, addToast, recordEvent, patchPane, bumpAttention,
+      setAgentState, pushStatSamples, pushSystemStats
+    } = useSessionStore.getState();
+
     void window.cmux.agents.list().then(setAgents);
     // agents.check spawn un process where.exe par agent — déféré à l'idle.
     import('@shared/utils').then(({ whenIdle }) =>
@@ -149,20 +145,26 @@ export function useGlobalIpcSubscriptions(): void {
     // restaurer la dernière session ouverte. Subscribe via zustand.subscribe
     // (sans re-render) ; debounce 400ms pour éviter de marteler le disque sur
     // un drag rapide entre sessions.
+    // SKIP dans les fenêtres détachées : leur "activeSessionId" est forcé à
+    // la session détachée et n'a pas de sens à persister — sinon ça écrase
+    // ce que la fenêtre principale persiste, race fâcheuse au switch rapide.
+    const isDetached = window.location.hash.startsWith('#detached=');
     let persistTimer: ReturnType<typeof setTimeout> | null = null;
     let lastPersisted: string | null = null;
-    const offActiveSubscribe = useSessionStore.subscribe((state, prev) => {
-      if (state.activeSessionId === prev.activeSessionId) return;
-      if (state.activeSessionId === lastPersisted) return;
-      if (persistTimer) clearTimeout(persistTimer);
-      persistTimer = setTimeout(() => {
-        persistTimer = null;
-        const id = useSessionStore.getState().activeSessionId;
-        if (id === lastPersisted) return;
-        lastPersisted = id;
-        void window.cmux.settings.set({ lastActiveSessionId: id });
-      }, 400);
-    });
+    const offActiveSubscribe = isDetached
+      ? (): void => {}
+      : useSessionStore.subscribe((state, prev) => {
+          if (state.activeSessionId === prev.activeSessionId) return;
+          if (state.activeSessionId === lastPersisted) return;
+          if (persistTimer) clearTimeout(persistTimer);
+          persistTimer = setTimeout(() => {
+            persistTimer = null;
+            const id = useSessionStore.getState().activeSessionId;
+            if (id === lastPersisted) return;
+            lastPersisted = id;
+            void window.cmux.settings.set({ lastActiveSessionId: id });
+          }, 400);
+        });
     return () => {
       offSession();
       offStatus();
@@ -177,19 +179,8 @@ export function useGlobalIpcSubscriptions(): void {
       offActiveSubscribe();
       if (persistTimer) clearTimeout(persistTimer);
     };
-  }, [
-    setSessions,
-    setAgents,
-    setAgentAvailability,
-    setSettings,
-    setActiveSession,
-    upsertSession,
-    addToast,
-    recordEvent,
-    patchPane,
-    bumpAttention,
-    setAgentState,
-    pushStatSamples,
-    pushSystemStats
-  ]);
+    // Mount-once effect : toutes les actions sont lues via getState() (refs
+    // stables Zustand 5). Aucun re-mount à craindre — sauf StrictMode dev qui
+    // exécute mount/cleanup/mount à dessein, ce qui est désormais propre.
+  }, []);
 }

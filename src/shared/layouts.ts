@@ -58,6 +58,7 @@ export function tileLayout(paneIds: PaneId[]): PaneTree {
 
 /** Layout linéaire — toutes les panes sur une ligne. */
 export function evenHorizontalLayout(paneIds: PaneId[]): PaneTree {
+  if (paneIds.length === 0) throw new Error('evenHorizontalLayout: empty paneIds');
   if (paneIds.length === 1) return { kind: 'leaf', paneId: paneIds[0] };
   return {
     kind: 'split',
@@ -69,6 +70,7 @@ export function evenHorizontalLayout(paneIds: PaneId[]): PaneTree {
 
 /** Layout colonne — toutes les panes empilées. */
 export function evenVerticalLayout(paneIds: PaneId[]): PaneTree {
+  if (paneIds.length === 0) throw new Error('evenVerticalLayout: empty paneIds');
   if (paneIds.length === 1) return { kind: 'leaf', paneId: paneIds[0] };
   return {
     kind: 'split',

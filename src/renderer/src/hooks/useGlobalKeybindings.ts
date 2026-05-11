@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { neighborInDirection } from '@shared/tree';
 import type { Session } from '@shared/types';
@@ -49,8 +49,26 @@ export function useGlobalKeybindings({
   const toggleSync = useSessionStore((s) => s.toggleSync);
   const removeSession = useSessionStore((s) => s.removeSession);
 
+  // Refs live : sessions/activeSessionId/dialogs/actions sont des objets inline
+  // créés à chaque render dans App.tsx, donc dep-array les inclure tearait
+  // l'event listener à chaque render — fenêtre brève sans keybindings active +
+  // overhead. On lit depuis les refs dans le handler stable.
+  const sessionsRef = useRef(sessions);
+  const activeSessionIdRef = useRef(activeSessionId);
+  const dialogsRef = useRef(dialogs);
+  const actionsRef = useRef(actions);
+  sessionsRef.current = sessions;
+  activeSessionIdRef.current = activeSessionId;
+  dialogsRef.current = dialogs;
+  actionsRef.current = actions;
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      const dialogs = dialogsRef.current;
+      const actions = actionsRef.current;
+      const sessions = sessionsRef.current;
+      const activeSessionId = activeSessionIdRef.current;
+
       const aDialogIsOpen =
         dialogs.newSessionOpen ||
         dialogs.settingsOpen ||
@@ -94,10 +112,15 @@ export function useGlobalKeybindings({
         !dialogs.paletteOpen
       ) {
         // ? = ouvrir l'overlay de raccourcis (uniquement si on n'est pas déjà
-        // dans un dialog ou un input).
-        const ae = document.activeElement;
+        // dans un dialog ou un input — couvre contenteditable + role=textbox).
+        const ae = document.activeElement as HTMLElement | null;
         const inInput =
-          ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'CANVAS');
+          !!ae &&
+          (ae.tagName === 'INPUT' ||
+            ae.tagName === 'TEXTAREA' ||
+            ae.tagName === 'CANVAS' ||
+            ae.isContentEditable === true ||
+            ae.getAttribute('role') === 'textbox');
         if (!inInput) {
           e.preventDefault();
           actions.setShortcutsOpen(true);
@@ -176,5 +199,7 @@ export function useGlobalKeybindings({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sessions, activeSessionId, dialogs, actions, removeSession, toggleSync]);
+    // Deps minimal — sessions/activeSessionId/dialogs/actions lus via refs.
+    // toggleSync/removeSession sont des actions Zustand stables par référence.
+  }, [removeSession, toggleSync]);
 }

@@ -195,6 +195,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
   toggleSync: (id) =>
     set((state) => {
+      // Toggle est une vraie mutation par définition — on doit allouer un new Set.
       const next = new Set(state.syncSessions);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -203,6 +204,9 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
   dismissPreview: (sessionId) =>
     set((state) => {
+      // No-op : déjà dismissed. Évite un re-render cascade de tous les subscribers
+      // qui dépendent de dismissedPreviewSessions.
+      if (state.dismissedPreviewSessions.has(sessionId)) return {};
       const next = new Set(state.dismissedPreviewSessions);
       next.add(sessionId);
       return { dismissedPreviewSessions: next };
@@ -210,6 +214,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 
   resetPreviewDismissal: (sessionId) =>
     set((state) => {
+      if (!state.dismissedPreviewSessions.has(sessionId)) return {};
       const next = new Set(state.dismissedPreviewSessions);
       next.delete(sessionId);
       return { dismissedPreviewSessions: next };
@@ -222,6 +227,14 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       // skip pour ne pas déclencher de re-render inutile.
       const existing = state.sessionsById[s.id];
       if (existing === s) return {};
+      // Purge les buffers pending paneDataBus pour les panes qui ont disparu
+      // dans l'update (closePane individuel). Sinon le bus accumule des chunks
+      // pour des panes morts jusqu'au removeSession.
+      if (existing) {
+        for (const oldId of Object.keys(existing.panes)) {
+          if (!(oldId in s.panes)) clearPaneData(oldId);
+        }
+      }
       const sessions = existing
         ? state.sessions.map((x) => (x.id === s.id ? s : x))
         : [...state.sessions, s];
@@ -320,12 +333,17 @@ export const useSessionStore = create<SessionStore>()((set) => ({
     }),
 
   markEventsRead: () =>
-    set((state) => ({
-      eventHistory: state.eventHistory.map((e) => ({
-        ...e,
-        readAt: e.readAt ?? Date.now()
-      }))
-    })),
+    set((state) => {
+      // Short-circuit si tous les events sont déjà lus — avant, on rebuildait
+      // l'array entier sur chaque appel (panel open/focus), déclenchant un
+      // re-render cascade dans tous les subscribers à `eventHistory`.
+      if (state.eventHistory.every((e) => e.readAt !== undefined)) return {};
+      const now = Date.now();
+      const eventHistory = state.eventHistory.map((e) =>
+        e.readAt !== undefined ? e : { ...e, readAt: now }
+      );
+      return { eventHistory };
+    }),
 
   clearEventHistory: () => set({ eventHistory: [] }),
 
@@ -376,16 +394,16 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       if (samples.length === 0) return {};
       const next: Record<PaneId, PaneStatsHistory> = { ...state.paneStats };
       for (const s of samples) {
+        // CRITICAL : lire `cur` depuis l'accumulateur `next` et pas `state.paneStats`,
+        // sinon plusieurs samples pour le même paneId dans un batch écrasent les
+        // intermédiaires (seul le dernier est correctement appendé).
         const cur = next[s.paneId];
         const curLen = cur?.cpu.length ?? 0;
         const isFull = curLen >= STATS_WINDOW;
         const newLen = isFull ? STATS_WINDOW : curLen + 1;
-        // Préalloue la taille finale en 1 seule allocation (vs slice + push qui
-        // en faisait 2 + un grow interne du V8).
         const cpu = new Float32Array(newLen);
         const memory = new Float32Array(newLen);
         if (cur && curLen > 0) {
-          // Quand plein : on shift d'1 (drop le plus ancien). Sinon : copie tout.
           const srcOffset = isFull ? 1 : 0;
           cpu.set(cur.cpu.subarray(srcOffset));
           memory.set(cur.memory.subarray(srcOffset));
@@ -396,7 +414,6 @@ export const useSessionStore = create<SessionStore>()((set) => ({
           cpu,
           memory,
           cores: s.cores,
-          // Sticky : une fois primé, reste primé jusqu'au restart du pane.
           primed: cur?.primed === true || s.primed === true,
           last: { cpu: s.cpu, memory: s.memory, timestamp: s.timestamp }
         };

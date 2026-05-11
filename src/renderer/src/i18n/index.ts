@@ -533,6 +533,12 @@ export function useT(): TFunction {
     const sub = (): void => setV((v) => v + 1);
     subscribers.add(sub);
     void ensureLoaded(lang);
+    // Sync `<html lang>` côté DOM pour que les screen readers prononcent
+    // l'UI dans la bonne langue. Sans ça, le `lang="en"` figé dans
+    // index.html persiste même quand l'user passe en FR/JA/ZH.
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = lang === 'zh' ? 'zh-CN' : lang;
+    }
     return () => {
       subscribers.delete(sub);
     };

@@ -40,7 +40,10 @@ const THINKING_PATTERNS: RegExp[] = [
   // Glyphe de spinner + verbe-ing + ellipsis (Claude rotate ces verbes)
   new RegExp(`${SPINNER_GLYPHS}\\s+[A-Z][a-z]+ing[…\\.]{1,3}`),
   // "Thinking…" / "Thinking..." en début de ligne (codex, cursor)
-  /(?:^|\n)\s*Thinking[…\.]{1,3}/i,
+  // Pas de flag `i` — Claude Code/codex/cursor utilisent toujours la
+  // capitalisation initiale, et la version lowercase apparaît dans des messages
+  // utilisateur cités (faux positifs).
+  /(?:^|\n)\s*Thinking[…\.]{1,3}/,
   // Codex CLI : "[Reasoning]" ou "Reasoning…"
   /(?:^|\n)\s*Reasoning[…\.]{0,3}/,
   // Aider : "Thinking…" pendant l'attente du modèle

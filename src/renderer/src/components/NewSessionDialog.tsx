@@ -32,6 +32,11 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
   const [initialInput, setInitialInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Guard synchrone contre le double-fire de submit. `submitting` state suit
+  // un cycle render → React batche les setState donc 2 submits rapides
+  // peuvent passer le check `if (submitting)` avant le re-render. Le ref est
+  // checké et set synchroniquement → vraiment idempotent.
+  const submittingRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, open);
 
@@ -80,6 +85,7 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
   };
 
   const submit = async (): Promise<void> => {
+    if (submittingRef.current) return; // anti-double-fire synchrone
     setError(null);
     if (!cwd) {
       setError(t('newSessionCwd'));
@@ -90,6 +96,7 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const agent = agents.find((a) => a.id === agentId);
@@ -117,6 +124,7 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
     } catch (err) {
       setError((err as Error).message || t('newSessionFailedToCreate'));
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

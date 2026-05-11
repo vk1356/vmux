@@ -13,8 +13,10 @@ const NEEDS_INPUT_PATTERNS: RegExp[] = [
   /\[(?:Y\/n|y\/N|yes\/no)\]/i,
   // Press any/enter key
   /press (?:any |enter |return )key/i,
-  // Confirmations FR/EN
-  /(?:continuer|confirm|continue|proceed)\s*\??/i,
+  // Confirmations FR/EN — exige un terminator interrogatif/délimiteur en fin
+  // de tail. Sans ça, on match "Confirmed.", "confirmed changes", etc. dans
+  // de la sortie normale de l'agent.
+  /(?:continuer|confirm|continue|proceed)\s*[?:]\s*$/im,
   // Claude Code & autres TUI : prompts numérotés "Do you want to proceed?"
   // suivis d'une liste numérotée. On match juste la phrase clé.
   /do you want to (?:proceed|continue)/i,

@@ -60,7 +60,12 @@ const DEDUP_WINDOW = 2_000;
 
 /** Analyse un chunk brut. Renvoie les événements neufs (post-dedup). */
 export function detectEvents(paneId: PaneId, chunk: string): DetectedEvent[] {
-  const text = stripAnsi(chunk);
+  return detectEventsFromStripped(paneId, stripAnsi(chunk));
+}
+
+/** Variante pour appelants qui ont déjà strippé — évite un strip redondant
+ *  dans le hot path PTY (cf. pty-manager.ts onData). */
+export function detectEventsFromStripped(paneId: PaneId, text: string): DetectedEvent[] {
   if (!text) return [];
 
   let state = states.get(paneId);

@@ -110,8 +110,15 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
   const onRemove = useCallback(
     async (e: MouseEvent, s: Session): Promise<void> => {
       e.stopPropagation();
-      await window.cmux.sessions.remove(s.id);
-      removeSession(s.id);
+      try {
+        await window.cmux.sessions.remove(s.id);
+        removeSession(s.id);
+      } catch (err) {
+        // Échec IPC : ne PAS purger le store côté renderer — l'user voit la
+        // session disparaître puis revenir au prochain sessionUpdate. Surfacer
+        // l'erreur dans la console pour debug.
+        console.error('[sidebar] session remove failed', err);
+      }
     },
     [removeSession]
   );

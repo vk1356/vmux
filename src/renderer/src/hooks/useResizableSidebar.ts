@@ -54,22 +54,35 @@ export function useResizableSidebar(opts: Options): ResizableSidebar {
   useEffect(() => {
     const onMove = (e: MouseEvent): void => {
       if (!draggingRef.current) return;
+      // Si le user a relâché le bouton hors de la fenêtre, on rate le mouseup —
+      // détecter via e.buttons === 0 et finir le drag en se synchronisant.
+      if (e.buttons === 0) {
+        finishDrag();
+        return;
+      }
       const o = optsRef.current;
       const px = clamp(e.clientX, o.min, o.max);
       setWidthPx(px);
     };
-    const onUp = (): void => {
+    const finishDrag = (): void => {
       if (!draggingRef.current) return;
       draggingRef.current = false;
       document.body.style.cursor = '';
       const pct = Math.round((widthRef.current / window.innerWidth) * 100);
       optsRef.current.onPersistRatio(pct);
     };
+    const onBlur = (): void => finishDrag();
     window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('mouseup', finishDrag);
+    // Mouse leaks hors Electron window (taskbar, autre écran) : pas de mouseup.
+    // window blur OU pointerup global termine proprement le drag.
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('pointerup', finishDrag);
     return () => {
       window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('mouseup', finishDrag);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('pointerup', finishDrag);
     };
   }, []);
 

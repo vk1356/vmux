@@ -127,14 +127,15 @@ export function EmptyState({ onNewSession }: Props): JSX.Element {
         <div className="hero-meta">
           <span>vMux {version || ''}</span>
           <span className="hero-meta-sep" />
-          <a
+          <button
+            type="button"
             className="hero-meta-link"
             onClick={() =>
               window.cmux.dialog.openExternal('https://github.com/vk1356/vmux')
             }
           >
             github.com/vk1356/vmux
-          </a>
+          </button>
         </div>
       </div>
     </div>

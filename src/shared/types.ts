@@ -441,7 +441,10 @@ export type UpdateErrorCode =
   | 'no-installer-url'
   | 'github-api-failed'
   | 'no-response'
-  | 'dev-mode';
+  | 'dev-mode'
+  /** Émis quand electron-updater fire son event `error` (signature mismatch,
+   *  blockmap corrompu, 404 sur l'asset…). UI peut afficher un bouton Retry. */
+  | 'updater-error';
 
 export type UpdateStatus =
   | { kind: 'idle' }

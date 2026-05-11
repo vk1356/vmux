@@ -34,14 +34,11 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-/** UUID cross-platform : utilise crypto.randomUUID() quand dispo, sinon fallback
- *  Date+random. Côté renderer, certains contextes (iframe sandboxed, tests jsdom)
- *  n'exposent pas randomUUID — d'où le fallback. Côté main, préférer
- *  `randomUUID` de `node:crypto` (toujours dispo). */
+/** UUID v4. Node 20+ et Electron 28+ renderer ont `crypto.randomUUID()`
+ *  unconditionally. vMux cible Electron 42 + Node 20 donc le fallback Math.random
+ *  est code mort. Kept tight, no defensive fallbacks. */
 export function uuid(): string {
-  const c = (globalThis as unknown as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (c?.randomUUID) return c.randomUUID();
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
+  return crypto.randomUUID();
 }
 
 /** Extrait l'host d'une URL HTTP(S) pour affichage compact (TabBar, PaneHeader).

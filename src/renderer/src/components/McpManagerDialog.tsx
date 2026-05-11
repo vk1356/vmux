@@ -29,6 +29,12 @@ export function McpManagerDialog({ open, onClose }: Props): JSX.Element | null {
   const [error, setError] = useState<string | null>(null);
   const [edit, setEdit] = useState<EditDraft | null>(null);
   const [configPath, setConfigPath] = useState<string>('');
+  // Locks anti-double-fire pour les ops mutables (save + toggle).
+  // save = remove + add est non-idempotent : 2 clicks rapides peuvent supprimer
+  // puis échouer à ré-ajouter (race avec un autre toggle).
+  // toggle = état stocké côté disque, double-fire flicker / état incohérent.
+  const savingRef = useRef(false);
+  const togglingRef = useRef(new Set<string>());
   const dialogRef = useRef<HTMLDivElement>(null);
   useFocusTrap(dialogRef, open);
 
@@ -55,22 +61,28 @@ export function McpManagerDialog({ open, onClose }: Props): JSX.Element | null {
 
   const handleSave = async (): Promise<void> => {
     if (!edit) return;
+    if (savingRef.current) return;       // anti-double-fire synchrone
+    savingRef.current = true;
     setError(null);
-    // Si rename : drop l'ancien d'abord (le backend déduplique mais on est explicite).
-    if (edit.originalName && edit.originalName !== edit.server.name) {
-      const r1 = await window.cmux.mcp.remove(edit.originalName);
-      if (!r1.ok) {
-        setError(r1.error);
+    try {
+      // Si rename : drop l'ancien d'abord (le backend déduplique mais on est explicite).
+      if (edit.originalName && edit.originalName !== edit.server.name) {
+        const r1 = await window.cmux.mcp.remove(edit.originalName);
+        if (!r1.ok) {
+          setError(r1.error);
+          return;
+        }
+      }
+      const r2 = await window.cmux.mcp.add(edit.server);
+      if (!r2.ok) {
+        setError(r2.error);
         return;
       }
+      setServers(r2.data);
+      setEdit(null);
+    } finally {
+      savingRef.current = false;
     }
-    const r2 = await window.cmux.mcp.add(edit.server);
-    if (!r2.ok) {
-      setError(r2.error);
-      return;
-    }
-    setServers(r2.data);
-    setEdit(null);
   };
 
   const handleRemove = async (name: string): Promise<void> => {
@@ -81,10 +93,18 @@ export function McpManagerDialog({ open, onClose }: Props): JSX.Element | null {
   };
 
   const handleToggle = async (name: string): Promise<void> => {
+    // Per-server lock : un user qui spamme la pastille toggle ne race plus
+    // avec son propre toggle précédent (cas où le 1er reply écrasait le 2e).
+    if (togglingRef.current.has(name)) return;
+    togglingRef.current.add(name);
     setError(null);
-    const r = await window.cmux.mcp.toggle(name);
-    if (r.ok) setServers(r.data);
-    else setError(r.error);
+    try {
+      const r = await window.cmux.mcp.toggle(name);
+      if (r.ok) setServers(r.data);
+      else setError(r.error);
+    } finally {
+      togglingRef.current.delete(name);
+    }
   };
 
   return (

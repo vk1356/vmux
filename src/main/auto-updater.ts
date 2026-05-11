@@ -379,6 +379,15 @@ export async function setupAutoUpdater(
     );
     autoUpdater.on('error', (err) => {
       log.warn('[updater] electron-updater event error', err.message);
+      // Surface l'erreur au renderer — sinon l'UI reste figée sur "downloading"
+      // si le serveur 404, si la signature ne valide pas, ou si le blockmap
+      // est cassé. L'utilisateur voit alors une banner d'erreur et peut
+      // retenter manuellement.
+      sendStatus({
+        kind: 'error',
+        code: 'updater-error',
+        message: err.message || 'Update error'
+      });
     });
 
     ipcMain.handle(IPC.updateDownload, async () => {

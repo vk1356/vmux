@@ -30,12 +30,26 @@ describe('isNewer', () => {
     expect(isNewer('1.0.1', '1.0')).toBe(true);
   });
 
-  it('handles pre-release suffixes', () => {
-    // 1.0.0-beta.1 < 1.0.0 dans semver pur, mais notre parser splitte aussi
-    // sur `-` et compare numériquement → "1.0.0-beta.1" devient [1,0,0,0,1].
-    // Pour le flux GitHub Releases, on n'a quasi jamais ce cas — on documente
-    // juste le comportement.
+  it('handles pre-release suffixes per semver precedence', () => {
+    // semver §11 : 1.0.0 > 1.0.0-rc.1 > 1.0.0-beta > 1.0.0-alpha
     expect(isNewer('1.0.1', '1.0.0-beta.1')).toBe(true);
+    expect(isNewer('1.0.0', '1.0.0-alpha')).toBe(true); // stable > prerelease
+    expect(isNewer('1.0.0-alpha', '1.0.0')).toBe(false);
+    expect(isNewer('1.0.0-beta', '1.0.0-alpha')).toBe(true);
+    expect(isNewer('1.0.0-alpha.2', '1.0.0-alpha.1')).toBe(true);
+    // Le cas critique : ne PAS pousser un alpha comme update à un user stable.
+    expect(isNewer('2.0.0-alpha', '1.9.9')).toBe(true); // major bump l'emporte
+    expect(isNewer('0.7.3-alpha', '0.7.2')).toBe(true); // patch bump prerelease > stable précédent
+  });
+
+  it('strips leading v from GitHub tags', () => {
+    expect(isNewer('v2.0.0', '1.9.9')).toBe(true);
+    expect(isNewer('V0.7.3', '0.7.2')).toBe(true);
+  });
+
+  it('ignores build metadata (+...)', () => {
+    expect(isNewer('1.0.0+build.1', '1.0.0')).toBe(false);
+    expect(isNewer('1.0.0', '1.0.0+build.1')).toBe(false);
   });
 
   it('rejects non-numeric segments to 0 without throwing', () => {

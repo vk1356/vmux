@@ -159,16 +159,19 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       cursorBlink: settings.cursorBlink,
       cursorStyle: 'bar',
       cursorWidth: 2,
+      // v6 polish : pane non-actif → curseur outline pour distinguer visuellement
+      // dans un layout multi-pane. UX cohérente avec Warp/Wezterm.
+      cursorInactiveStyle: 'outline',
       scrollback: settings.scrollback,
       allowProposedApi: true,
       allowTransparency: true,
-      // smoothScrollDuration interagit mal avec WebglAddon sur certaines
-      // configs : la wheel se "fige" temporairement à mi-animation. 0 = scroll
-      // immédiat, beaucoup plus fiable pour parcourir l'historique.
       smoothScrollDuration: 0,
-      // Ne PAS forcer le scroll en bas quand l'utilisateur tape ailleurs (ex:
-      // dans la search bar) — on veut pouvoir lire l'historique tranquillement.
       scrollOnUserInput: false,
+      // v6 polish : Nerd Fonts + glyphes larges peuvent déborder leur cell —
+      // rescale les fait tenir sans casser le rendu sous WebGL.
+      rescaleOverlappingGlyphs: true,
+      // WCAG AA — relève les couleurs dim ANSI si trop proches du background.
+      minimumContrastRatio: 4.5,
       theme: THEME,
       // windowsPty est ignoré sur macOS/Linux par xterm.js — on ne le pose que
       // si on tourne sur Windows pour rester propre.
@@ -263,6 +266,9 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         void (async () => {
           try {
             const r = await window.cmux.clipboard.readRich();
+            // Re-check terminal vivant après l'await — l'user a pu fermer le
+            // pane pendant le round-trip clipboard.
+            if (termRef.current !== term) return;
             if (r.kind === 'image') {
               const p = /\s/.test(r.path) ? `"${r.path.replace(/"/g, '\\"')}"` : r.path;
               term.paste(p);
@@ -407,9 +413,18 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     }
   }, [settings?.webglRenderer]);
 
-  // Cleanup au démontage.
+  // Cleanup au démontage. Ordre critique :
+  //   1. Null `termRef.current` AVANT dispose() pour que les callbacks asynchrones
+  //      (subscribePaneData onData, paste handlers post-await) bailent
+  //      immédiatement quand ils relisent la ref.
+  //   2. Puis dispose des addons enfants avant le terminal parent (xterm exige
+  //      cet ordre — un addon disposé après son terminal crashe).
   useEffect(() => {
     return () => {
+      const term = termRef.current;
+      termRef.current = null;
+      fitRef.current = null;
+      searchRef.current = null;
       try {
         ligaturesRef.current?.dispose();
       } catch {
@@ -421,13 +436,10 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         /* ignore */
       }
       try {
-        termRef.current?.dispose();
+        term?.dispose();
       } catch {
         /* ignore */
       }
-      termRef.current = null;
-      fitRef.current = null;
-      searchRef.current = null;
       webglRef.current = null;
       ligaturesRef.current = null;
     };
@@ -441,6 +453,8 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       if (!t) return;
       // Rich paste : image clipboard → temp file path, sinon text.
       const r = await window.cmux.clipboard.readRich();
+      // Re-check après l'await — l'user a pu fermer/restart pendant.
+      if (termRef.current !== t) return;
       if (r.kind === 'image') {
         const p = /\s/.test(r.path) ? `"${r.path.replace(/"/g, '\\"')}"` : r.path;
         t.paste(p);

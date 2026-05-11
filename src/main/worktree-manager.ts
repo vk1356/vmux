@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { GitRepoInfo } from '@shared/types';
@@ -12,14 +12,27 @@ const execFileAsync = promisify(execFile);
 const GIT_TIMEOUT_MS = 30_000;
 
 async function git(cwd: string, args: string[]): Promise<string> {
+  // AbortSignal.timeout (Node 20+) remplace timeout+killSignal et offre une
+  // sémantique uniforme cross-platform (Windows ignore SIGKILL côté node-pty
+  // mais execFile l'utilise via taskkill — AbortSignal homogénéise).
   const { stdout } = await execFileAsync('git', args, {
     cwd,
     windowsHide: true,
     maxBuffer: 10 * 1024 * 1024,
-    timeout: GIT_TIMEOUT_MS,
-    killSignal: 'SIGKILL'
+    signal: AbortSignal.timeout(GIT_TIMEOUT_MS)
   });
   return stdout;
+}
+
+/** Test d'existence non-bloquant. fs.existsSync() faisait du sync I/O sur le
+ *  main thread Electron — sur un mount réseau lent ça stallait toute l'UI. */
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fsp.access(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function inspectRepo(dir: string): Promise<GitRepoInfo> {
@@ -29,7 +42,7 @@ export async function inspectRepo(dir: string): Promise<GitRepoInfo> {
     branches: [],
     hasUncommitted: false
   };
-  if (!existsSync(dir)) return empty;
+  if (!(await pathExists(dir))) return empty;
   try {
     const top = (await git(dir, ['rev-parse', '--show-toplevel'])).trim();
     const branch = (await git(dir, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
@@ -76,7 +89,7 @@ export async function createWorktree(opts: CreateWorktreeOptions): Promise<Workt
   const parent = opts.parentDir || path.join(path.dirname(repo), `${repoName}-worktrees`);
   const wtPath = path.join(parent, sanitize(opts.branch));
 
-  if (existsSync(wtPath)) {
+  if (await pathExists(wtPath)) {
     return { path: wtPath, branch: opts.branch, created: false };
   }
 
@@ -85,11 +98,24 @@ export async function createWorktree(opts: CreateWorktreeOptions): Promise<Workt
     .map((b) => b.trim())
     .filter(Boolean);
 
+  // Defense en profondeur : refuse les refs/paths qui commencent par "-" pour
+  // empêcher qu'un input contrôlé par l'utilisateur soit interprété comme un
+  // git option (--upload-pack=evil, --output=…). execFile sans shell évite
+  // l'injection shell, mais git interprète tout leading-dash comme un flag.
+  // `sanitize()` lave déjà la branch côté path, mais le `base` arrive direct.
+  const safeBase = opts.base && !opts.base.startsWith('-') ? opts.base : 'HEAD';
+  if (opts.branch.startsWith('-')) {
+    throw new Error(`Invalid branch name: ${opts.branch}`);
+  }
+  if (wtPath.startsWith('-')) {
+    throw new Error(`Invalid worktree path: ${wtPath}`);
+  }
+
   const args = ['worktree', 'add'];
   if (existingBranches.includes(opts.branch)) {
     args.push(wtPath, opts.branch);
   } else {
-    args.push('-b', opts.branch, wtPath, opts.base || 'HEAD');
+    args.push('-b', opts.branch, wtPath, safeBase);
   }
 
   await git(repo, args);

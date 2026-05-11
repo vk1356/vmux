@@ -24,7 +24,12 @@ export async function isAgentAvailable(command: string): Promise<{ found: boolea
 
   const tool = process.platform === 'win32' ? 'where.exe' : 'which';
   try {
-    const { stdout } = await execFileAsync(tool, [command], { windowsHide: true, timeout: 3000 });
+    // AbortSignal.timeout (Node 20+) — un where.exe sur mount réseau lent ne
+    // bloque plus le main thread plus de 3s.
+    const { stdout } = await execFileAsync(tool, [command], {
+      windowsHide: true,
+      signal: AbortSignal.timeout(3000)
+    });
     const resolvedPath = stdout.split(/\r?\n/).map((l) => l.trim()).find(Boolean);
     const result = { found: !!resolvedPath, resolvedPath };
     cache.set(command, { ...result, expiry: now + TTL });

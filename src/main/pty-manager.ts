@@ -25,8 +25,8 @@ import { applyLayout, type LayoutPreset } from '@shared/layouts';
 import { buildAgentBootLine, getInteractiveShell } from './shell';
 import { createWorktree, removeWorktree } from './worktree-manager';
 import { getSettings, loadSessions, saveSessions } from './settings-store';
-import { extractUrls, mergeUrls, stripAnsi } from './url-detector';
-import { clearDetector, detectEvents } from './event-detector';
+import { extractUrlsFromStripped, mergeUrls, stripAnsi } from './url-detector';
+import { clearDetector, detectEventsFromStripped } from './event-detector';
 import { detectOscEvents } from './osc-detector';
 import { ptyStats } from './pty-stats';
 import { detectsNeedsInput } from './needs-input-detect';
@@ -58,6 +58,8 @@ interface ManagedPane {
   stateTail?: string;
   /** Timestamp du dernier chunk PTY (Date.now()). Sert au calcul idle. */
   lastDataAt?: number;
+  /** Dernière émission du heartbeat dans session.panes[].lastOutputAt — throttle 1Hz. */
+  lastHeartbeatEmit?: number;
   /** Dernier état émis pour ce pane — émission idempotente sur transitions. */
   lastAgentState?: AgentRunState;
   /** Timer qui flippe en `idle` après IDLE_AFTER_MS de silence. */
@@ -133,6 +135,14 @@ class PtyManager extends EventEmitter {
 
   list(): Session[] {
     return Array.from(this.sessions.values()).map((m) => m.session);
+  }
+
+  /** Lookup public sessionId pour un paneId — O(1) via l'index inversé.
+   *  Utilisé par ipc.ts pour router les events vers les bonnes fenêtres
+   *  (main + détachées de la session propriétaire), au lieu de broadcaster
+   *  à toutes les BrowserWindows. */
+  sessionForPane(paneId: PaneId): string | undefined {
+    return this.paneToSession.get(paneId);
   }
 
   /** Auto-restore : relance les PTY de tous les terminal panes des sessions
@@ -342,7 +352,9 @@ class PtyManager extends EventEmitter {
     this.paneToSession.delete(paneId);
     const newTree = removePane(m.session.tree, paneId);
     if (!newTree) {
-      // Plus de panes → on ferme la session entière.
+      // Plus de panes → on ferme la session entière. Après removeSession,
+      // `m` est une référence morte (session déjà supprimée du map) — toute
+      // mutation/emit ferait fuiter une session fantôme côté renderer.
       await this.removeSession(sessionId);
       return null;
     }
@@ -640,6 +652,9 @@ class PtyManager extends EventEmitter {
         rows,
         cwd: pane.cwd,
         env,
+        // utf8 est le défaut de node-pty 1.1 mais on l'explicite — forward-compat
+        // si un futur major change le défaut, et clarifie l'intention.
+        encoding: 'utf8',
         ...winOpts
       });
     } catch (err) {
@@ -693,21 +708,28 @@ class PtyManager extends EventEmitter {
 
       const cur = this.sessions.get(sessionId);
       if (!cur) return;
-      this.updateHeartbeat(cur, paneId);
       const curMp = cur.panes.get(paneId);
       if (!curMp) return;
 
-      this.emitAttention(paneId, data);
-      this.updateAgentState(paneId, curMp, data);
-      this.processNewUrls(cur, paneId, data);
-      for (const ev of detectEvents(paneId, data)) this.emit('eventDetected', ev);
+      // Strip ANSI une seule fois et router le résultat aux consommateurs.
+      // Avant : stripAnsi() appelé 3x par chunk (updateAgentState +
+      // emitAttention + detectEvents) sur le même input. Sur des streams
+      // d'agent (Claude Code peut sortir des centaines de chunks/s), ça
+      // dominait le coût CPU du hot path.
+      const stripped = stripAnsi(data);
+
+      this.updateHeartbeat(curMp, paneId);
+      this.emitAttention(paneId, data, stripped);
+      this.updateAgentState(paneId, curMp, stripped);
+      this.processNewUrls(cur, paneId, stripped);
+      for (const ev of detectEventsFromStripped(paneId, stripped)) this.emit('eventDetected', ev);
       // OSC notifications (\x1b]9;... / \x1b]777;...) — émises explicitement par
       // l'agent, donc indépendantes des heuristiques de detectEvents.
       for (const ev of detectOscEvents(paneId, data)) this.emit('eventDetected', ev);
       this.maybeWriteInitialInput(curMp);
     });
 
-    mp.exitSub = child.onExit(({ exitCode }) => {
+    mp.exitSub = child.onExit(({ exitCode, signal }) => {
       const cur = this.sessions.get(sessionId);
       if (!cur) return;
       const curMp = cur.panes.get(paneId);
@@ -729,22 +751,42 @@ class PtyManager extends EventEmitter {
         }
       }
       ptyStats.removePane(paneId);
+      // POSIX: signal=number → killed by signal (SIGTERM/SIGKILL/...). Win32:
+      // signal toujours undefined (ConPTY ne propage pas les signaux). On
+      // surface `exited` (exit 0 ou kill clean) vs `error` (non-zero exit).
+      // Un kill manuel pendant restart → exitCode arbitraire mais le user n'a
+      // pas besoin de voir "error" puisqu'on respawne juste après ; on
+      // n'expose pas plus loin que le status pour l'instant.
+      const killed = typeof signal === 'number' && signal > 0;
       this.updatePane(sessionId, paneId, {
-        status: exitCode === 0 ? 'exited' : 'error',
+        status: exitCode === 0 || killed ? 'exited' : 'error',
         exitCode
       });
     });
   }
 
   /** Heartbeat : tracker le dernier output pour la détection "stale".
-   *  Pas de persist ici (trop fréquent) — le sessionUpdate fire ailleurs. */
-  private updateHeartbeat(cur: ManagedSession, paneId: PaneId): void {
+   *  Pas de persist ici (trop fréquent) — le sessionUpdate fire ailleurs.
+   *
+   *  Throttle à 1Hz : avant, on clonait `session.panes` et `session.panes[paneId]`
+   *  à chaque chunk PTY (centaines/s sous stream agent). Pure GC pressure car
+   *  la valeur n'est de toute façon visible côté renderer que quand un autre
+   *  event piggyback la session — 1s de fraîcheur suffit largement aux
+   *  consommateurs (useIsTyping 600ms tick, useStaleness 30s tick). */
+  private updateHeartbeat(mp: ManagedPane, paneId: PaneId): void {
+    const now = Date.now();
+    mp.lastDataAt = now;
+    if (now - (mp.lastHeartbeatEmit ?? 0) < 1000) return;
+    mp.lastHeartbeatEmit = now;
+    const sessionId = this.paneToSession.get(paneId);
+    if (!sessionId) return;
+    const cur = this.sessions.get(sessionId);
+    if (!cur) return;
     const cp0 = cur.session.panes[paneId];
     if (!cp0 || cp0.kind !== 'terminal') return;
-    cur.session.panes = {
-      ...cur.session.panes,
-      [paneId]: { ...cp0, lastOutputAt: Date.now() }
-    };
+    // Mutate in-place : pas de clone du Record entier. Le renderer voit la
+    // nouvelle valeur quand sessionUpdate fire (structured clone côté IPC).
+    cur.session.panes[paneId] = { ...cp0, lastOutputAt: now };
   }
 
   /** Met à jour le tail roulant et émet une transition d'état d'agent
@@ -755,14 +797,16 @@ class PtyManager extends EventEmitter {
    *  Le coût par chunk est O(L) avec L ≤ ~2KB (clamp du tail) + un regex test
    *  sur le tail SCAN_WINDOW (800 chars) → négligeable même sous stream. */
   private static readonly STATE_TAIL_MAX = 2048;
-  private updateAgentState(paneId: PaneId, mp: ManagedPane, rawChunk: string): void {
-    const stripped = stripAnsi(rawChunk);
+  /** L'appelant fournit le chunk déjà stripped (cf. onData). */
+  private updateAgentState(paneId: PaneId, mp: ManagedPane, stripped: string): void {
     // Tail roulant : on append puis clamp en gardant la fin.
     const concat = (mp.stateTail ?? '') + stripped;
     mp.stateTail =
       concat.length > PtyManager.STATE_TAIL_MAX
         ? concat.slice(-PtyManager.STATE_TAIL_MAX)
         : concat;
+    // lastDataAt est aussi mis à jour par updateHeartbeat, mais on garantit la
+    // fraîcheur ici au cas où l'ordre des helpers change.
     mp.lastDataAt = Date.now();
 
     const next = deriveAgentState({
@@ -793,9 +837,9 @@ class PtyManager extends EventEmitter {
   }
 
   /** Détection d'attention (style tmux) — needs-input > alert (bell) > activity.
-   *  Activity throttlé à 500ms — sinon on flood quand l'agent stream. */
-  private emitAttention(paneId: PaneId, data: string): void {
-    const stripped = stripAnsi(data);
+   *  Activity throttlé à 500ms — sinon on flood quand l'agent stream.
+   *  L'appelant fournit déjà `stripped` (cf. onData). */
+  private emitAttention(paneId: PaneId, data: string, stripped: string): void {
     const isBell = data.includes('\x07');
     if (detectsNeedsInput(stripped)) {
       this.emit('paneAttention', paneId, 'needs-input');
@@ -813,9 +857,10 @@ class PtyManager extends EventEmitter {
     }
   }
 
-  /** Détection d'URLs — merge dans recentUrls du pane et émet urlsDetected. */
-  private processNewUrls(cur: ManagedSession, paneId: PaneId, data: string): void {
-    const fresh = extractUrls(data);
+  /** Détection d'URLs — merge dans recentUrls du pane et émet urlsDetected.
+   *  L'appelant fournit déjà `stripped` (cf. onData). */
+  private processNewUrls(cur: ManagedSession, paneId: PaneId, stripped: string): void {
+    const fresh = extractUrlsFromStripped(stripped);
     if (fresh.length === 0) return;
     const cp = cur.session.panes[paneId];
     if (!cp || cp.kind !== 'terminal') return;

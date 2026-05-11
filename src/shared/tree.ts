@@ -110,7 +110,12 @@ export function setSplitSizes(tree: PaneTree, path: TreePath, sizes: number[]): 
   if (path.length === 0) {
     if (tree.kind !== 'split') return tree;
     if (sizes.length !== tree.children.length) return tree;
-    const total = sizes.reduce((s, v) => s + v, 0) || 1;
+    // Refuse les inputs avec valeurs négatives ou non-finies : sinon la
+    // normalisation produit des tailles aberrantes (>100 ou <0) qui cassent
+    // le rendu (flex-basis avec une valeur négative se comporte mal).
+    if (sizes.some((s) => !Number.isFinite(s) || s < 0)) return tree;
+    const total = sizes.reduce((s, v) => s + v, 0);
+    if (total <= 0) return tree;
     return { ...tree, sizes: sizes.map((s) => (s / total) * 100) };
   }
   if (tree.kind === 'leaf') return tree;
@@ -174,7 +179,14 @@ function findEdgeLeaf(tree: PaneTree, direction: 'left' | 'right' | 'up' | 'down
   return findEdgeLeaf(tree.children[0], direction);
 }
 
-/** Le 1er leaf rencontré (utile quand on ferme l'active pane → focus fallback). */
-export function firstLeaf(tree: PaneTree): PaneId {
-  return tree.kind === 'leaf' ? tree.paneId : firstLeaf(tree.children[0]);
+/** Le 1er leaf rencontré (utile quand on ferme l'active pane → focus fallback).
+ *  Guard de profondeur : un tree persisté corrompu (cycle, ou split sans
+ *  children) ne doit pas crash le renderer en stack-overflow. */
+export function firstLeaf(tree: PaneTree, depth = 0): PaneId {
+  if (depth > 64) throw new Error('firstLeaf: tree corruption — depth limit');
+  if (tree.kind === 'leaf') return tree.paneId;
+  if (!tree.children || tree.children.length === 0) {
+    throw new Error('firstLeaf: split with no children');
+  }
+  return firstLeaf(tree.children[0], depth + 1);
 }

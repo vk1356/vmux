@@ -226,7 +226,16 @@ const SplitNode = memo(function SplitNode({ tree, path }: SplitProps): JSX.Eleme
 function subtreeKey(t: PaneTree): string {
   if (t.kind === 'leaf') return `leaf-${t.paneId}`;
   let cur: PaneTree = t;
-  while (cur.kind === 'split') cur = cur.children[0];
+  // Guard de profondeur : un arbre corrompu (cycle, ou children vide) ne doit
+  // pas hanger le renderer thread. 32 niveaux de splits = bien au-delà de tout
+  // usage réel (l'UX devient inutilisable au-delà de ~6).
+  let depth = 0;
+  while (cur.kind === 'split') {
+    if (depth++ > 32 || !cur.children || cur.children.length === 0) {
+      return `split-corrupt-${depth}`;
+    }
+    cur = cur.children[0];
+  }
   return `split-${cur.paneId}`;
 }
 

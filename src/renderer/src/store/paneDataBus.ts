@@ -57,9 +57,12 @@ export function subscribePaneData(paneId: PaneId, handler: Handler): () => void 
 }
 
 /** À appeler quand un pane est définitivement fermé (côté store) — purge le
- *  buffer pending pour libérer la mémoire. */
+ *  buffer pending pour libérer la mémoire.
+ *  Note : appelé depuis `removeSession` (couvre la fermeture de session) ET
+ *  via TerminalPane lors d'un closePane individuel pour éviter les leaks. */
 export function clearPaneData(paneId: PaneId): void {
   pending.delete(paneId);
+  handlers.delete(paneId);
 }
 
 /** Diagnostic — peut être appelé depuis la devtools si besoin. */

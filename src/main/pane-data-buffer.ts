@@ -44,7 +44,10 @@ export class PaneDataBuffer extends EventEmitter {
     for (const [paneId, chunks] of this.buffers) {
       if (chunks.length === 0) continue;
       const combined = chunks.length === 1 ? chunks[0] : chunks.join('');
-      this.buffers.set(paneId, []);
+      // Delete plutôt que set([], ...) : un pane churn rapide (ouverture/
+      // fermeture) ne laisse pas de slots vides dans la Map. push() lazily
+      // re-créera l'entrée à la prochaine arrivée de data.
+      this.buffers.delete(paneId);
       this.emit('flush', paneId, combined);
     }
   }

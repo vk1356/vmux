@@ -1,4 +1,4 @@
-import { useEffect, type JSX } from 'react';
+import { useCallback, useEffect, type JSX } from 'react';
 import { Globe, Rocket, CheckCircle2, XCircle, FlaskConical, Sparkles, Bell, X } from 'lucide-react';
 import type { DetectedEventKind } from '@shared/types';
 import { useSessionStore, type ToastItem } from '../store/sessions';
@@ -9,12 +9,22 @@ const TOAST_TIMEOUT = 6000;
 
 export function ToastContainer(): JSX.Element {
   const toasts = useSessionStore((s) => s.toasts);
+  // removeToast est stable (zustand action). On le passe à chaque Toast qui
+  // construit son onClose via useCallback ancré sur l'id. Sans ça, l'onClose
+  // inline créait une closure neuve à chaque render du parent, ce qui retait
+  // le useEffect du Toast et donc reset le timer auto-dismiss à chaque tick.
   const removeToast = useSessionStore((s) => s.removeToast);
 
   return (
-    <div className="toast-container">
+    <div
+      className="toast-container"
+      role="region"
+      aria-live="polite"
+      aria-atomic="false"
+      aria-label="Notifications"
+    >
       {toasts.map((t) => (
-        <Toast key={t.id} toast={t} onClose={() => removeToast(t.id)} />
+        <Toast key={t.id} toast={t} remove={removeToast} />
       ))}
     </div>
   );
@@ -22,11 +32,12 @@ export function ToastContainer(): JSX.Element {
 
 interface Props {
   toast: ToastItem;
-  onClose: () => void;
+  remove: (id: string) => void;
 }
 
-function Toast({ toast, onClose }: Props): JSX.Element {
+function Toast({ toast, remove }: Props): JSX.Element {
   const t = useT();
+  const onClose = useCallback(() => remove(toast.id), [remove, toast.id]);
   useEffect(() => {
     const handle = window.setTimeout(onClose, TOAST_TIMEOUT);
     return () => window.clearTimeout(handle);

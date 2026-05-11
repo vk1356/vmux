@@ -28,6 +28,20 @@ interface CreateWindowOptions {
   startHidden?: boolean;
 }
 
+/** webPreferences partagé entre main et detached window — single source of truth.
+ *  `sandbox: false` reste nécessaire car le preload utilise `webUtils` (drag-drop)
+ *  et certaines API electron-toolkit qui requièrent un preload non-sandbox.
+ *  `webviewTag: true` est requis pour les preview panes (`<webview>` isolé). */
+function sharedWebPreferences(): Electron.WebPreferences {
+  return {
+    preload: path.join(__dirname, '../preload/index.js'),
+    sandbox: false,
+    contextIsolation: true,
+    nodeIntegration: false,
+    webviewTag: true
+  };
+}
+
 export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
   const saved = clampToScreens(getWindowState());
 
@@ -52,14 +66,7 @@ export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
     title: 'vMux',
     autoHideMenuBar: true,
     ...titleBarOpts,
-    webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      // Active le tag <webview> pour les preview panes (process isolé).
-      webviewTag: true
-    }
+    webPreferences: sharedWebPreferences()
   });
 
   win.on('ready-to-show', () => {
@@ -122,13 +129,7 @@ export function createDetachedWindow(sessionId: string): BrowserWindow {
     title: 'vMux — Session',
     autoHideMenuBar: true,
     ...titleBarOpts,
-    webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webviewTag: true
-    }
+    webPreferences: sharedWebPreferences()
   });
 
   win.on('ready-to-show', () => win.show());

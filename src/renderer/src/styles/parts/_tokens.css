@@ -42,6 +42,16 @@
   box-sizing: border-box;
 }
 
+/* Focus ring global — `:focus-visible` ne s'active qu'au focus clavier.
+ * Plusieurs CSS modules suppriment `outline:none` sur les boutons/inputs ;
+ * cette règle restaure un indicateur clavier accessible sans gêner le focus
+ * souris. Sans ça, la nav Tab est invisible et viole WCAG 2.4.7. */
+:where(button, a, [role='button'], [tabindex]):focus-visible,
+:where(input, textarea, select):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 html,
 body,
 #root {
