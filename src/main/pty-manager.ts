@@ -114,11 +114,23 @@ class PtyManager extends EventEmitter {
     }
   }
 
+  /** AbortController : annulé au shutdown pour que tout async en vol
+   *  (worktree removal, etc.) cesse proprement sans émettre vers l'IPC mort. */
+  private shutdownCtrl = new AbortController();
+  /** True une fois shutdown() entré — on n'émet plus rien après. */
+  private isShuttingDown = false;
+
   constructor() {
     super();
     // Forward des chunks agrégés du buffer vers les listeners IPC.
     this.dataBuffer.on('flush', (paneId, combined) => {
+      if (this.isShuttingDown) return;
       this.emit('paneData', paneId, combined);
+    });
+    // Filet de sécurité : sans ça, une exception dans un listener (renderer
+    // crashé, etc.) cracherait le main process et tuerait *tous* les PTY.
+    process.on('unhandledRejection', (err) => {
+      log.error('[pty] unhandledRejection', err);
     });
     for (const s of loadSessions()) {
       // À la restauration, marquer tous les panes terminaux en idle (pas de PTY vivant).
@@ -165,7 +177,12 @@ class PtyManager extends EventEmitter {
         // dans ces cas-là, attendre qu'il clique "Restart" lui-même.
         if (mp?.process) continue;
         if (p.status === 'exited' || p.status === 'error') continue;
-        // Reset l'état pour partir propre.
+        // Reset l'état pour partir propre — mais on dispose d'abord les
+        // subs/timers résiduels au cas où (idempotence stricte).
+        if (mp) {
+          this.clearPaneTimers(mp);
+          this.disposeChildSubs(mp);
+        }
         m.panes.set(paneId, { pendingInitialInput: undefined });
         // Met à jour le pane visible côté renderer (status 'starting') avant spawn.
         m.session.panes = {
@@ -526,12 +543,15 @@ class PtyManager extends EventEmitter {
   // ============================================================
 
   writePane(paneId: PaneId, data: string): void {
+    if (this.isShuttingDown) return;
     // Hot path : O(1) via index inversé. Avant : findSessionByPane scan O(N×P).
     const sessionId = this.paneToSession.get(paneId);
     if (!sessionId) return;
     const mp = this.sessions.get(sessionId)?.panes.get(paneId);
+    const proc = mp?.process;
+    if (!proc) return;
     try {
-      mp?.process?.write(data);
+      proc.write(data);
     } catch (err) {
       log.debug('[pty] write failed', err);
     }
@@ -589,15 +609,34 @@ class PtyManager extends EventEmitter {
   }
 
   private spawnPane(sessionId: string, paneId: PaneId): void {
+    if (this.isShuttingDown) return;
     const m = this.sessions.get(sessionId);
     if (!m) return;
     const pane = m.session.panes[paneId];
     if (!pane || pane.kind !== 'terminal') return;
+    // Validation du cwd — node-pty.spawn throw une UnhandledException native si
+    // cwd n'existe pas (et le message Windows est cryptique). On surface une
+    // erreur claire et on évite le crash du worker thread.
+    if (pane.cwd && !existsSync(pane.cwd)) {
+      log.error(`[pty] cwd does not exist: ${pane.cwd}`);
+      this.updatePane(sessionId, paneId, { status: 'error', exitCode: -1 });
+      this.emit(
+        'paneData',
+        paneId,
+        `\r\n\x1b[31m[cmux] Dossier introuvable: ${pane.cwd}\x1b[0m\r\n`
+      );
+      return;
+    }
     // Merge l'agent preset avec l'override utilisateur s'il existe.
     const overrides = getSettings().agentOverrides;
     const agent = resolveAgent(pane.agentId, overrides);
     if (!agent) return;
     const mp = m.panes.get(paneId) ?? {};
+    // Defensive : si on respawne sur un slot qui aurait gardé d'anciens subs
+    // ou timers (race exotique), on les nettoie avant de reconstruire — sinon
+    // les anciens onData/onExit captureraient le scope du nouveau child.
+    this.clearPaneTimers(mp);
+    this.disposeChildSubs(mp);
     m.panes.set(paneId, mp);
 
     const shell = getInteractiveShell();
@@ -703,13 +742,16 @@ class PtyManager extends EventEmitter {
     }
 
     mp.dataSub = child.onData((data) => {
+      if (this.isShuttingDown) return;
       // Batch côté main : agrège les chunks pour réduire l'overhead IPC.
       this.dataBuffer.push(paneId, data);
 
       const cur = this.sessions.get(sessionId);
       if (!cur) return;
       const curMp = cur.panes.get(paneId);
-      if (!curMp) return;
+      // Si le slot a été remplacé (restart en cours) on jette le chunk plutôt
+      // que de leak dans le nouveau pane.
+      if (!curMp || curMp.process !== child) return;
 
       // Strip ANSI une seule fois et router le résultat aux consommateurs.
       // Avant : stripAnsi() appelé 3x par chunk (updateAgentState +
@@ -718,15 +760,21 @@ class PtyManager extends EventEmitter {
       // dominait le coût CPU du hot path.
       const stripped = stripAnsi(data);
 
-      this.updateHeartbeat(curMp, paneId);
-      this.emitAttention(paneId, data, stripped);
-      this.updateAgentState(paneId, curMp, stripped);
-      this.processNewUrls(cur, paneId, stripped);
-      for (const ev of detectEventsFromStripped(paneId, stripped)) this.emit('eventDetected', ev);
-      // OSC notifications (\x1b]9;... / \x1b]777;...) — émises explicitement par
-      // l'agent, donc indépendantes des heuristiques de detectEvents.
-      for (const ev of detectOscEvents(paneId, data)) this.emit('eventDetected', ev);
-      this.maybeWriteInitialInput(curMp);
+      try {
+        this.updateHeartbeat(curMp, paneId);
+        this.emitAttention(paneId, data, stripped);
+        this.updateAgentState(paneId, curMp, stripped);
+        this.processNewUrls(cur, paneId, stripped);
+        for (const ev of detectEventsFromStripped(paneId, stripped)) this.emit('eventDetected', ev);
+        // OSC notifications (\x1b]9;... / \x1b]777;...) — émises explicitement par
+        // l'agent, donc indépendantes des heuristiques de detectEvents.
+        for (const ev of detectOscEvents(paneId, data)) this.emit('eventDetected', ev);
+        this.maybeWriteInitialInput(curMp);
+      } catch (err) {
+        // Une exception dans un helper ne doit jamais tuer le main process —
+        // on log et on continue pour ne pas perdre le PTY.
+        log.error('[pty] onData handler threw', err);
+      }
     });
 
     mp.exitSub = child.onExit(({ exitCode, signal }) => {
@@ -799,12 +847,16 @@ class PtyManager extends EventEmitter {
   private static readonly STATE_TAIL_MAX = 2048;
   /** L'appelant fournit le chunk déjà stripped (cf. onData). */
   private updateAgentState(paneId: PaneId, mp: ManagedPane, stripped: string): void {
-    // Tail roulant : on append puis clamp en gardant la fin.
-    const concat = (mp.stateTail ?? '') + stripped;
-    mp.stateTail =
-      concat.length > PtyManager.STATE_TAIL_MAX
-        ? concat.slice(-PtyManager.STATE_TAIL_MAX)
-        : concat;
+    // Tail roulant : on append, et on ne clamp que quand le tail dépasse —
+    // évite une réallocation slice() systématique dans le hot path (un
+    // stream agent peut générer des centaines de chunks/s).
+    const prev = mp.stateTail ?? '';
+    const concat = prev + stripped;
+    if (concat.length > PtyManager.STATE_TAIL_MAX) {
+      mp.stateTail = concat.slice(-PtyManager.STATE_TAIL_MAX);
+    } else {
+      mp.stateTail = concat;
+    }
     // lastDataAt est aussi mis à jour par updateHeartbeat, mais on garantit la
     // fraîcheur ici au cas où l'ordre des helpers change.
     mp.lastDataAt = Date.now();
@@ -941,20 +993,39 @@ class PtyManager extends EventEmitter {
   }
 
   async shutdown(): Promise<void> {
-    this.dataBuffer.shutdown();
+    if (this.isShuttingDown) return;
+    this.isShuttingDown = true;
+    this.shutdownCtrl.abort();
+    // Persist + buffer flush AVANT de killer les PTY : un kill peut générer
+    // un dernier chunk d'output qu'on jetterait sinon (cf. isShuttingDown
+    // guard dans dataBuffer flush).
     this.flushPersist();
-    ptyStats.shutdown();
+    this.dataBuffer.shutdown();
+    // Récupère les PID racines avant teardown pour kill l'arbre orphelin
+    // (pwsh → agent → node enfants) que ConPTY ne nettoie pas toujours sur
+    // Windows quand le parent est forcefully killed.
+    const rootPids: number[] = [];
     for (const m of this.sessions.values()) {
       for (const mp of m.panes.values()) {
         this.clearPaneTimers(mp);
         this.disposeChildSubs(mp);
+        const pid = mp.process?.pid;
+        if (typeof pid === 'number' && pid > 0) rootPids.push(pid);
         try {
           mp.process?.kill();
         } catch {
           /* déjà mort */
         }
+        mp.process = undefined;
       }
     }
+    // Délègue le kill récursif au stats collector qui connaît déjà l'API
+    // pidtree — évite une dépendance circulaire et garde un seul propriétaire
+    // de la primitive "kill tree".
+    await ptyStats.killTrees(rootPids).catch((err) => {
+      log.debug('[pty] killTrees failed', err);
+    });
+    ptyStats.shutdown();
   }
 }
 

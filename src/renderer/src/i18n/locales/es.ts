@@ -1,5 +1,6 @@
 // Lazy-loaded locale chunk. See i18n/index.ts.
-const ES: Record<string, string> = {
+import type { LocaleCatalog } from '..';
+const ES = {
   appTagline: 'orquestador multi-agente IA',
   heroTitleA: 'Múltiples agentes IA,',
   heroTitleB: 'una sola ventana.',
@@ -264,7 +265,7 @@ const ES: Record<string, string> = {
   'agentDesc.aider': 'Pair-programmer IA en CLI',
   'agentDesc.gemini': 'Google Gemini CLI',
   'agentDesc.shell': 'PowerShell puro, sin agente'
-};
+} satisfies LocaleCatalog;
 
 
 export default ES;

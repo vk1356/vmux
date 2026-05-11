@@ -8,7 +8,7 @@ import {
   type JSX,
   type MouseEvent
 } from 'react';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type IDisposable, type ITerminalOptions, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
@@ -36,9 +36,6 @@ interface Props {
  * lecture si l'user est scrolled-up. Le `Terminal.resize()` interne à fit
  * peut snapper la viewport au bottom — on capture le delta `baseY - viewportY`
  * avant et on restore via `term.scrollLines(-delta)` après.
- *
- * Sans ça, drag d'un splitter ou changement de font ramènent la vue en bas
- * et on perd la position de lecture.
  */
 function withPreservedScroll(term: Terminal, fn: () => void): void {
   const buf = term.buffer.active;
@@ -48,12 +45,14 @@ function withPreservedScroll(term: Terminal, fn: () => void): void {
     try {
       term.scrollLines(-delta);
     } catch {
-      /* ignore — viewport peut avoir disparu pendant fn() (cleanup race) */
+      /* viewport peut avoir disparu pendant fn() (cleanup race) */
     }
   }
 }
 
-const THEME = {
+// Module-level constants — pas de recréation par render (et donc theme/options
+// stable côté xterm interne).
+const THEME: ITheme = {
   background: '#0a0a0b',
   foreground: '#e4e4e7',
   cursor: '#f97316',
@@ -75,7 +74,17 @@ const THEME = {
   brightMagenta: '#e879f9',
   brightCyan: '#22d3ee',
   brightWhite: '#fafafa'
-} as const;
+};
+
+const IS_WINDOWS = /win/i.test(
+  (typeof navigator !== 'undefined' && navigator.platform) || ''
+);
+
+/** Cap des bytes pendants quand le pane est invisible. Au-delà on droppe la
+ *  moitié la plus ancienne — sinon un agent verbeux off-screen peut leak ~GB. */
+const PENDING_CAP_BYTES = 4_000_000;
+/** Limite des highlights search — décorateurs au-delà ferait stutter sur de gros buffers. */
+const SEARCH_HIGHLIGHT_LIMIT = 1000;
 
 function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Element {
   const t = useT();
@@ -85,18 +94,39 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
   const ligaturesRef = useRef<LigaturesAddon | null>(null);
+  /** Tous les IDisposable owned par ce pane (event handlers xterm). Disposed
+   *  dans l'ordre inverse au unmount, AVANT `term.dispose()`. */
+  const disposablesRef = useRef<IDisposable[]>([]);
   const pendingRef = useRef<string[]>([]);
+  /** Compteur de bytes pending O(1) — évite un scan du tableau à chaque chunk. */
+  const pendingBytesRef = useRef(0);
+
   const settings = useSessionStore((s) => s.settings);
   const isSync = useSessionStore((s) => s.syncSessions.has(sessionId));
-  // Ref live de `visible` lue depuis le hot path data-bus pour décider
-  // write-direct vs queue-and-replay sans déclencher de re-subscribe.
+
+  // Refs live lues depuis les hot paths (data-bus, onData) sans déclencher
+  // de re-subscribe à chaque flip d'état.
   const visibleRef = useRef(visible);
-  // Ref live pour lire l'état sync dans des callbacks chauds (term.onData)
-  // sans déclencher de re-render à chaque chunk.
+  const activeRef = useRef(active);
   const isSyncRef = useRef(isSync);
+  const sessionIdRef = useRef(sessionId);
+  const paneIdRef = useRef(pane.id);
+  useEffect(() => {
+    visibleRef.current = visible;
+  }, [visible]);
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
   useEffect(() => {
     isSyncRef.current = isSync;
   }, [isSync]);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+  useEffect(() => {
+    paneIdRef.current = pane.id;
+  }, [pane.id]);
+
   const [searchOpen, setSearchOpen] = useState(false);
   const [restarting, setRestarting] = useState(false);
 
@@ -111,82 +141,87 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     }
   }, [sessionId, pane.id]);
 
-  // Souscription via le bus unique — 1 seul listener IPC global pour tous les
-  // panes (cf. store/paneDataBus.ts).
-  // Quand le pane n'est PAS visible (session inactive), on queue les chunks
-  // dans pendingRef au lieu d'écrire à xterm. xterm garde quand même une
-  // viewport invisible coûteuse en CPU sur de gros bursts (parser ANSI,
-  // mise à jour du buffer interne) — pause complète quand off-screen.
-  // Cap du pending à 4MB pour éviter une fuite si un pane invisible reçoit
-  // 100MB de logs.
+  // Souscription via le bus IPC unique. 1 seul listener IPC global pour tous
+  // les panes (cf. store/paneDataBus.ts). Tant que le pane est invisible on
+  // queue (xterm parser ANSI = coûteux même offscreen) ; cap à 4MB.
   useEffect(() => {
-    return subscribePaneData(pane.id, (data) => {
-      const t = termRef.current;
-      if (t && visibleRef.current) {
-        t.write(data);
+    const id = pane.id;
+    return subscribePaneData(id, (data) => {
+      const term = termRef.current;
+      if (term && visibleRef.current) {
+        term.write(data);
         return;
       }
       pendingRef.current.push(data);
-      let total = 0;
-      for (const c of pendingRef.current) total += c.length;
-      if (total > 4_000_000) {
-        const drop = pendingRef.current.length >>> 1;
-        pendingRef.current.splice(0, drop);
+      pendingBytesRef.current += data.length;
+      if (pendingBytesRef.current > PENDING_CAP_BYTES) {
+        const arr = pendingRef.current;
+        const drop = arr.length >>> 1;
+        let dropped = 0;
+        for (let i = 0; i < drop; i++) dropped += arr[i].length;
+        arr.splice(0, drop);
+        pendingBytesRef.current -= dropped;
       }
     });
   }, [pane.id]);
 
-  // Sync visibleRef + replay du pending buffer quand on redevient visible.
+  // Replay du pending buffer quand on redevient visible.
   useEffect(() => {
-    visibleRef.current = visible;
     if (!visible) return;
-    const t = termRef.current;
-    if (!t) return;
+    const term = termRef.current;
+    if (!term) return;
     const pending = pendingRef.current;
     if (pending.length === 0) return;
     pendingRef.current = [];
-    for (const chunk of pending) t.write(chunk);
+    pendingBytesRef.current = 0;
+    for (const chunk of pending) term.write(chunk);
   }, [visible]);
 
-  // Init xterm — lazy, premier active ou visible.
+  // ─────────────────────────────────────────────────────────────────────────
+  // MOUNT EFFECT — un seul, idempotent. Lit `settings` via ref pour ne PAS
+  // re-monter quand un sous-champ change (gérés par les effets live ci-après).
+  // ─────────────────────────────────────────────────────────────────────────
+  const settingsRef = useRef(settings);
   useEffect(() => {
-    if (!visible || termRef.current || !hostRef.current || !settings) return;
+    settingsRef.current = settings;
+  }, [settings]);
 
-    const term = new Terminal({
-      fontFamily: settings.fontFamily,
-      fontSize: settings.fontSize,
+  useEffect(() => {
+    if (!visible || termRef.current || !hostRef.current) return;
+    const s = settingsRef.current;
+    if (!s) return;
+
+    const opts: ITerminalOptions = {
+      fontFamily: s.fontFamily,
+      fontSize: s.fontSize,
       lineHeight: 1.25,
-      cursorBlink: settings.cursorBlink,
+      cursorBlink: s.cursorBlink && visible,
       cursorStyle: 'bar',
       cursorWidth: 2,
-      // v6 polish : pane non-actif → curseur outline pour distinguer visuellement
-      // dans un layout multi-pane. UX cohérente avec Warp/Wezterm.
+      // Pane non-actif → curseur outline (UX cohérente avec Warp/Wezterm).
       cursorInactiveStyle: 'outline',
-      scrollback: settings.scrollback,
+      scrollback: s.scrollback,
+      // smoothScrollDuration + cursorInactiveStyle = proposed API.
       allowProposedApi: true,
       allowTransparency: true,
       smoothScrollDuration: 0,
       scrollOnUserInput: false,
-      // v6 polish : Nerd Fonts + glyphes larges peuvent déborder leur cell —
-      // rescale les fait tenir sans casser le rendu sous WebGL.
+      // Nerd Fonts + glyphes larges peuvent déborder leur cell — rescale via WebGL.
       rescaleOverlappingGlyphs: true,
       // WCAG AA — relève les couleurs dim ANSI si trop proches du background.
       minimumContrastRatio: 4.5,
       theme: THEME,
-      // windowsPty est ignoré sur macOS/Linux par xterm.js — on ne le pose que
-      // si on tourne sur Windows pour rester propre.
-      ...(navigator.platform.toLowerCase().includes('win')
-        ? { windowsPty: { backend: 'conpty' as const } }
-        : {})
-    });
+      ...(IS_WINDOWS ? { windowsPty: { backend: 'conpty' as const } } : {})
+    };
+
+    const term = new Terminal(opts);
     const fit = new FitAddon();
-    const search = new SearchAddon();
+    const search = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
+    const collected: IDisposable[] = [];
+
     term.loadAddon(fit);
-    // Handler custom : on valide l'URL et on passe par notre IPC pour
-    // ouvrir dans le browser système (sinon shell.openExternal peut être
-    // appelé avec une URL malformée et Windows affiche "lien about").
     term.loadAddon(
-      new WebLinksAddon((event, uri) => {
+      new WebLinksAddon((_event, uri) => {
         if (!uri || !/^https?:\/\//i.test(uri)) return;
         void window.cmux.dialog.openExternal(uri);
       })
@@ -194,8 +229,6 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     term.loadAddon(new Unicode11Addon());
     term.unicode.activeVersion = '11';
     term.loadAddon(search);
-    // ClipboardAddon : gère OSC 52 (les agents qui veulent copier dans le
-    // clipboard via la séquence ANSI standard, e.g. tmux/nvim/agents TUI).
     try {
       term.loadAddon(new ClipboardAddon());
     } catch (err) {
@@ -203,18 +236,27 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     }
     term.open(hostRef.current);
 
-    if (settings.webglRenderer) {
+    if (s.webglRenderer) {
       try {
         const webgl = new WebglAddon();
-        webgl.onContextLoss(() => {
-          webgl.dispose();
+        // ⚠️ context loss : dispose ligatures aussi (lié au renderer canvas/webgl).
+        const ctxLost = webgl.onContextLoss(() => {
+          try {
+            ligaturesRef.current?.dispose();
+          } catch {
+            /* ignore */
+          }
+          ligaturesRef.current = null;
+          try {
+            webgl.dispose();
+          } catch {
+            /* ignore */
+          }
           webglRef.current = null;
         });
+        collected.push(ctxLost);
         term.loadAddon(webgl);
         webglRef.current = webgl;
-        // LigaturesAddon ne marche qu'avec un renderer canvas/webgl. JetBrains
-        // Mono / Cascadia Code / Fira Code ont des ligatures de programmation
-        // (=>, !=, ===, etc.) — sans cet addon elles sont rendues lettre-par-lettre.
         try {
           const lig = new LigaturesAddon();
           term.loadAddon(lig);
@@ -234,28 +276,36 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     }
     window.cmux.panes.resize(pane.id, { cols: term.cols, rows: term.rows });
 
-    for (const chunk of pendingRef.current) term.write(chunk);
-    pendingRef.current = [];
+    // Flush pending accumulé pendant la phase invisible.
+    if (pendingRef.current.length > 0) {
+      const pending = pendingRef.current;
+      pendingRef.current = [];
+      pendingBytesRef.current = 0;
+      for (const chunk of pending) term.write(chunk);
+    }
 
-    term.onData((data) => {
-      // Lecture O(1) via ref — pas de scan store à chaque frappe.
-      if (isSyncRef.current) {
-        const sess = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-        if (sess) {
-          for (const id of allPaneIds(sess.tree)) {
-            const p = sess.panes[id];
-            if (p?.kind === 'terminal') window.cmux.panes.write(p.id, data);
+    // onData → garder le IDisposable pour dispose au unmount.
+    collected.push(
+      term.onData((data) => {
+        if (isSyncRef.current) {
+          const sess = useSessionStore
+            .getState()
+            .sessions.find((s) => s.id === sessionIdRef.current);
+          if (sess) {
+            for (const id of allPaneIds(sess.tree)) {
+              const p = sess.panes[id];
+              if (p?.kind === 'terminal') window.cmux.panes.write(p.id, data);
+            }
+            return;
           }
-          return;
         }
-      }
-      window.cmux.panes.write(pane.id, data);
-    });
+        window.cmux.panes.write(paneIdRef.current, data);
+      })
+    );
 
-    // Rich paste (Ctrl+V / Ctrl+Shift+V / Cmd+V) : si le clipboard contient
-    // une image, on la sauve en PNG temporaire et on colle son chemin. Sinon
-    // texte normal. Tue le besoin de "screenshot → save → drag" pour Claude
-    // vision / Codex / etc.
+    // Rich paste — Ctrl/Cmd+V intercepte avant le default xterm pour gérer
+    // images (PNG temp file → path) + texte. attachCustomKeyEventHandler
+    // installe UN handler (pas de IDisposable retourné).
     term.attachCustomKeyEventHandler((event) => {
       if (
         event.type === 'keydown' &&
@@ -266,8 +316,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         void (async () => {
           try {
             const r = await window.cmux.clipboard.readRich();
-            // Re-check terminal vivant après l'await — l'user a pu fermer le
-            // pane pendant le round-trip clipboard.
+            // Re-check : l'user a pu fermer le pane pendant le round-trip.
             if (termRef.current !== term) return;
             if (r.kind === 'image') {
               const p = /\s/.test(r.path) ? `"${r.path.replace(/"/g, '\\"')}"` : r.path;
@@ -284,27 +333,33 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       return true;
     });
 
-    if (settings.copyOnSelection) {
-      term.onSelectionChange(() => {
-        const sel = term.getSelection();
-        if (sel) void window.cmux.clipboard.write(sel);
-      });
+    if (s.copyOnSelection) {
+      collected.push(
+        term.onSelectionChange(() => {
+          const sel = term.getSelection();
+          if (sel) void window.cmux.clipboard.write(sel);
+        })
+      );
     }
 
     termRef.current = term;
     fitRef.current = fit;
     searchRef.current = search;
-  }, [visible, pane.id, settings]);
+    disposablesRef.current = collected;
+  }, [visible, pane.id]);
 
-  // ResizeObserver debounced.
+  // ResizeObserver debounced via RAF. Single RAF par cycle, gardé en ref pour
+  // pouvoir l'annuler au unmount (anti-stale callback sur term disposé).
   useEffect(() => {
-    if (!hostRef.current) return;
+    const host = hostRef.current;
+    if (!host) return;
     let raf = 0;
     let lastCols = -1;
     let lastRows = -1;
     const ro = new ResizeObserver(() => {
       if (raf) cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        raf = 0;
         const term = termRef.current;
         const fit = fitRef.current;
         if (!term || !fit) return;
@@ -320,76 +375,100 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         }
       });
     });
-    ro.observe(hostRef.current);
+    ro.observe(host);
     return () => {
       if (raf) cancelAnimationFrame(raf);
       ro.disconnect();
     };
   }, [pane.id]);
 
-  // Re-fit + focus quand on devient actif. On renvoie aussi un resize au PTY
-  // pour que le main process sache que le renderer est prêt (déclenche le
-  // bootLine de l'agent à la bonne taille, même après un restart).
-  // On NE vole PAS le focus si l'utilisateur est dans un input/textarea
-  // (e.g. dialog ouvert, address bar du preview, command palette…).
-  // ⚠️ On ne refocus pas non plus si l'utilisateur est en train de lire le
-  // scrollback (viewportY < baseY) : `term.focus()` ramène la viewport en bas
-  // et fait perdre la position de lecture.
+  // Re-fit + focus quand on devient actif. RAF annulable pour éviter une
+  // callback sur term disposé après un changement de active rapide.
   useEffect(() => {
     if (!active) return;
-    const t = termRef.current;
-    const f = fitRef.current;
-    if (!t || !f) return;
-    requestAnimationFrame(() => {
+    const term = termRef.current;
+    const fit = fitRef.current;
+    if (!term || !fit) return;
+    const raf = requestAnimationFrame(() => {
       try {
-        withPreservedScroll(t, () => f.fit());
+        withPreservedScroll(term, () => fit.fit());
         const ae = document.activeElement;
         const isFreeFocus =
           !ae || ae === document.body || (ae as HTMLElement).tagName === 'CANVAS';
-        const buf = t.buffer.active;
+        const buf = term.buffer.active;
         const isScrolledUp = buf.viewportY < buf.baseY;
-        if (isFreeFocus && !isScrolledUp) t.focus();
-        window.cmux.panes.resize(pane.id, { cols: t.cols, rows: t.rows });
+        if (isFreeFocus && !isScrolledUp) term.focus();
+        window.cmux.panes.resize(pane.id, { cols: term.cols, rows: term.rows });
       } catch {
         /* ignore */
       }
     });
+    return () => cancelAnimationFrame(raf);
   }, [active, pane.id, pane.status]);
 
-  // Live settings.
+  // Pause cursor blink quand le pane n'est plus visible — sinon RAF continu
+  // côté xterm sur N panes off-screen.
   useEffect(() => {
-    const t = termRef.current;
-    if (!t || !settings) return;
-    t.options.fontFamily = settings.fontFamily;
-    t.options.fontSize = settings.fontSize;
-    t.options.cursorBlink = settings.cursorBlink;
-    t.options.scrollback = settings.scrollback;
+    const term = termRef.current;
+    if (!term || !settings) return;
+    const desired = settings.cursorBlink && visible;
+    if (term.options.cursorBlink !== desired) term.options.cursorBlink = desired;
+  }, [visible, settings?.cursorBlink, settings]);
+
+  // Live settings — chaque champ surveillé indépendamment + fit() seulement
+  // si la métrique de cell change (fontFamily/fontSize).
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !settings) return;
+    if (term.options.fontFamily !== settings.fontFamily) {
+      term.options.fontFamily = settings.fontFamily;
+    }
+    if (term.options.fontSize !== settings.fontSize) {
+      term.options.fontSize = settings.fontSize;
+    }
     try {
       const fit = fitRef.current;
-      if (fit) withPreservedScroll(t, () => fit.fit());
+      if (fit) withPreservedScroll(term, () => fit.fit());
     } catch {
       /* ignore */
     }
-  }, [settings?.fontFamily, settings?.fontSize, settings?.cursorBlink, settings?.scrollback]);
+  }, [settings?.fontFamily, settings?.fontSize, settings]);
 
-  // Live toggle WebGL renderer : avant ce useEffect, basculer le setting
-  // n'avait aucun effet tant que le terminal n'était pas re-créé (close+reopen
-  // du pane). On gère le mount/unmount à chaud — fallback DOM en cas d'échec.
   useEffect(() => {
-    const t = termRef.current;
-    if (!t || !settings) return;
+    const term = termRef.current;
+    if (!term || !settings) return;
+    if (term.options.scrollback !== settings.scrollback) {
+      term.options.scrollback = settings.scrollback;
+    }
+  }, [settings?.scrollback, settings]);
+
+  // Live toggle WebGL — mount/unmount à chaud, fallback DOM si échec.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !settings) return;
     if (settings.webglRenderer && !webglRef.current) {
       try {
         const webgl = new WebglAddon();
-        webgl.onContextLoss(() => {
-          webgl.dispose();
+        const ctxLost = webgl.onContextLoss(() => {
+          try {
+            ligaturesRef.current?.dispose();
+          } catch {
+            /* ignore */
+          }
+          ligaturesRef.current = null;
+          try {
+            webgl.dispose();
+          } catch {
+            /* ignore */
+          }
           webglRef.current = null;
         });
-        t.loadAddon(webgl);
+        disposablesRef.current.push(ctxLost);
+        term.loadAddon(webgl);
         webglRef.current = webgl;
         try {
           const lig = new LigaturesAddon();
-          t.loadAddon(lig);
+          term.loadAddon(lig);
           ligaturesRef.current = lig;
         } catch (err) {
           console.warn('[term] LigaturesAddon load failed', err);
@@ -411,37 +490,57 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       }
       webglRef.current = null;
     }
-  }, [settings?.webglRenderer]);
+  }, [settings?.webglRenderer, settings]);
 
-  // Cleanup au démontage. Ordre critique :
-  //   1. Null `termRef.current` AVANT dispose() pour que les callbacks asynchrones
-  //      (subscribePaneData onData, paste handlers post-await) bailent
-  //      immédiatement quand ils relisent la ref.
-  //   2. Puis dispose des addons enfants avant le terminal parent (xterm exige
-  //      cet ordre — un addon disposé après son terminal crashe).
+  // ─────────────────────────────────────────────────────────────────────────
+  // CLEANUP au démontage. Ordre critique :
+  //   1. Null `termRef.current` AVANT dispose() pour que les callbacks
+  //      asynchrones (paste handlers post-await, custom key handler) bailent.
+  //   2. Dispose des IDisposable enregistrés (onData, onSelectionChange,
+  //      onContextLoss) — xterm interdit l'inverse (handler dispatch après
+  //      dispose du terminal = crash).
+  //   3. Dispose des addons enfants (ligatures, webgl) AVANT le terminal —
+  //      l'ordre est imposé par xterm v6 (un addon disposé après son terminal
+  //      crashe : il accède à `term._core` déjà null).
+  //   4. Enfin dispose le terminal lui-même → libère GPU context, buffer,
+  //      keypress listener, ResizeSensor interne. SANS ça : leak de ~5-10MB
+  //      par pane fermé + un context WebGL bloqué (limite 8 par tab).
+  // ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       const term = termRef.current;
       termRef.current = null;
       fitRef.current = null;
       searchRef.current = null;
+
+      const disposables = disposablesRef.current;
+      disposablesRef.current = [];
+      for (let i = disposables.length - 1; i >= 0; i--) {
+        try {
+          disposables[i].dispose();
+        } catch {
+          /* ignore */
+        }
+      }
+
       try {
         ligaturesRef.current?.dispose();
       } catch {
         /* ignore */
       }
+      ligaturesRef.current = null;
       try {
         webglRef.current?.dispose();
       } catch {
         /* ignore */
       }
+      webglRef.current = null;
+
       try {
         term?.dispose();
       } catch {
         /* ignore */
       }
-      webglRef.current = null;
-      ligaturesRef.current = null;
     };
   }, []);
 
@@ -449,24 +548,20 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     async (e: MouseEvent): Promise<void> => {
       if (!settings?.pasteOnRightClick) return;
       e.preventDefault();
-      const t = termRef.current;
-      if (!t) return;
-      // Rich paste : image clipboard → temp file path, sinon text.
+      const term = termRef.current;
+      if (!term) return;
       const r = await window.cmux.clipboard.readRich();
-      // Re-check après l'await — l'user a pu fermer/restart pendant.
-      if (termRef.current !== t) return;
+      if (termRef.current !== term) return;
       if (r.kind === 'image') {
         const p = /\s/.test(r.path) ? `"${r.path.replace(/"/g, '\\"')}"` : r.path;
-        t.paste(p);
+        term.paste(p);
       } else if (r.text) {
-        t.paste(r.text);
+        term.paste(r.text);
       }
     },
     [settings?.pasteOnRightClick]
   );
 
-  // Drag & drop : on récupère le chemin disque des fichiers déposés et on les
-  // écrit dans le PTY (séparés par espace, avec quotes pour les chemins à espaces).
   const onDragOver = useCallback((e: DragEvent): void => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
@@ -482,14 +577,15 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         .filter((p): p is string => !!p)
         .map((p) => (/\s/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p));
       if (paths.length === 0) return;
-      const insert = paths.join(' ');
-      window.cmux.panes.write(pane.id, insert);
+      window.cmux.panes.write(pane.id, paths.join(' '));
       termRef.current?.focus();
     },
     [pane.id]
   );
 
-  // Raccourcis pane-actif : Ctrl+Shift+F recherche, Ctrl+Shift+L clear scrollback.
+  // Raccourcis pane-actif : Ctrl+Shift+F (search), Ctrl+Shift+L (clear),
+  // Escape (close search). Listener installé seulement quand actif → 0 cost
+  // sur les panes non-actifs.
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent): void => {
@@ -497,7 +593,6 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         e.preventDefault();
         setSearchOpen(true);
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
-        // Force clear même si l'agent ne supporte pas Ctrl+L lui-même.
         e.preventDefault();
         termRef.current?.clear();
       } else if (e.key === 'Escape' && searchOpen) {
@@ -510,10 +605,16 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     return () => window.removeEventListener('keydown', onKey);
   }, [active, searchOpen]);
 
+  const onPaneClick = useCallback(() => {
+    window.cmux.panes.focus(sessionId, pane.id);
+  }, [sessionId, pane.id]);
+
+  const onCloseSearch = useCallback(() => setSearchOpen(false), []);
+
   return (
     <div
       className={`terminal-pane ${active ? 'active' : ''} ${isSync ? 'sync' : ''}`}
-      onClick={() => window.cmux.panes.focus(sessionId, pane.id)}
+      onClick={onPaneClick}
     >
       <div
         className="terminal-host"
@@ -542,13 +643,24 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         </div>
       )}
       {searchOpen && (
-        <TerminalSearchBar
-          searchAddon={searchRef.current}
-          onClose={() => setSearchOpen(false)}
-        />
+        <TerminalSearchBar searchAddon={searchRef.current} onClose={onCloseSearch} />
       )}
     </div>
   );
 }
 
-export const TerminalPane = memo(TerminalPaneImpl);
+/** Compare custom pour `React.memo` : ré-render seulement si une prop sémantiquement
+ *  utile change. Sans ça, chaque mutation du store Zustand (qui retourne un
+ *  nouveau `pane` object) re-rendrait tous les panes. */
+function arePropsEqual(prev: Props, next: Props): boolean {
+  return (
+    prev.sessionId === next.sessionId &&
+    prev.active === next.active &&
+    prev.visible === next.visible &&
+    prev.pane.id === next.pane.id &&
+    prev.pane.status === next.pane.status &&
+    prev.pane.exitCode === next.pane.exitCode
+  );
+}
+
+export const TerminalPane = memo(TerminalPaneImpl, arePropsEqual);

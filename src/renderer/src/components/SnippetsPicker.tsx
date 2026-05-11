@@ -1,9 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import {
+  memo,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type JSX
+} from 'react';
 import { Search, X, Plus, Trash2, Edit3 } from 'lucide-react';
 import type { Session, Snippet } from '@shared/types';
 import { pathBasename } from '@shared/utils';
 import { useT } from '../i18n';
-import { useFocusTrap } from '../hooks/useFocusTrap';
+
+ensureDialogBackdropStyle();
 
 interface Props {
   open: boolean;
@@ -17,31 +27,46 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<Snippet | null>(null);
   const [selected, setSelected] = useState(0);
+  const deferredQuery = useDeferredValue(query);
+  const inputId = useId();
+  const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(dialogRef, open);
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    if (!open) return;
-    setQuery('');
-    setEditing(null);
-    setSelected(0);
-    void window.cmux.snippets.list().then(setSnippets);
-    requestAnimationFrame(() => inputRef.current?.focus());
+    const d = dialogRef.current;
+    if (!d) return;
+    if (open && !d.open) {
+      d.showModal();
+      setQuery('');
+      setEditing(null);
+      setSelected(0);
+      void window.cmux.snippets.list().then(setSnippets);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } else if (!open && d.open) {
+      d.close();
+    }
   }, [open]);
 
-  const filtered = useMemo(() => {
-    if (!query.trim()) return snippets;
-    const q = query.toLowerCase();
-    return snippets.filter(
-      (s) =>
-        s.name.toLowerCase().includes(q) ||
-        s.content.toLowerCase().includes(q) ||
-        (s.tags ?? []).some((t) => t.toLowerCase().includes(q))
-    );
-  }, [snippets, query]);
+  // Précalcul des haystacks lowercase (1 fois par changement de snippets).
+  const indexed = useMemo(
+    () =>
+      snippets.map((s) => ({
+        s,
+        haystack: `${s.name} ${s.content} ${(s.tags ?? []).join(' ')}`.toLowerCase()
+      })),
+    [snippets]
+  );
 
-  useEffect(() => setSelected(0), [query]);
+  const filtered = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    if (!q) return snippets;
+    return indexed.filter((x) => x.haystack.includes(q)).map((x) => x.s);
+  }, [indexed, deferredQuery, snippets]);
+
+  useEffect(() => {
+    setSelected(0);
+  }, [deferredQuery]);
 
   if (!open) return null;
 
@@ -101,163 +126,277 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
       e.preventDefault();
       const s = filtered[selected];
       if (s) insertSnippet(s);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
     }
+    // Esc : native cancel event.
   };
 
+  const onBackdropClick = (e: React.MouseEvent<HTMLDialogElement>): void => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
+  const activeDescendantId =
+    !editing && filtered.length > 0 ? `${listId}-item-${selected}` : undefined;
+  const stale = query !== deferredQuery;
+
   return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div
-        className="palette"
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('snippetsName')}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {editing ? (
-          <>
-            <div className="palette-input-row">
-              <Edit3 size={14} style={{ color: 'var(--accent)' }} />
-              <input
-                ref={inputRef}
-                placeholder={t('snippetsName')}
-                value={editing.name}
-                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                style={{ flex: 1 }}
-              />
-              <button className="btn-icon" onClick={() => setEditing(null)}>
-                <X size={14} />
-              </button>
-            </div>
-            <textarea
-              className="snippet-edit-content"
-              value={editing.content}
-              onChange={(e) => setEditing({ ...editing, content: e.target.value })}
-              placeholder={t('snippetsContent')}
-              rows={8}
+    <dialog
+      ref={dialogRef}
+      className="palette vmux-dialog"
+      style={paletteDialogStyle}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={onBackdropClick}
+      aria-label={t('snippetsName')}
+    >
+      {editing ? (
+        <>
+          <div className="palette-input-row">
+            <Edit3 size={14} style={{ color: 'var(--accent)' }} />
+            <input
+              ref={inputRef}
+              placeholder={t('snippetsName')}
+              value={editing.name}
+              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+              style={{ flex: 1 }}
+              autoComplete="off"
+              spellCheck={false}
             />
-            <div className="palette-input-row" style={{ borderTop: '1px solid var(--border)', borderBottom: 0 }}>
-              <input
-                placeholder={t('snippetsTagsPlaceholder')}
-                value={(editing.tags ?? []).join(', ')}
-                onChange={(e) =>
-                  setEditing({
-                    ...editing,
-                    tags: e.target.value.split(',').map((tag) => tag.trim()).filter(Boolean)
-                  })
-                }
-              />
-              <button
-                className="btn primary"
-                onClick={() => void saveEditing()}
-                disabled={!editing.name.trim() || !editing.content.trim()}
-              >
-                {t('snippetsSave')}
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="palette-input-row">
-              <Search size={14} style={{ color: 'var(--text-dim)' }} />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={onKeyDown}
-                placeholder={t('palettePlaceholder')}
-              />
-              <button className="btn-icon" onClick={newSnippet} title={t('snippetsNew')}>
-                <Plus size={14} />
-              </button>
-              <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
-                <X size={14} />
-              </button>
-            </div>
-            <div className="palette-list">
-              {filtered.length === 0 ? (
-                <div className="palette-empty">
-                  <div>{t('snippetsEmpty')}</div>
-                  <div style={{ fontSize: 11, opacity: 0.6 }}>
-                    {t('snippetsEmptyHint', { plus: '+' })
-                      .split('+')
-                      .flatMap((part, i, arr) =>
-                        i < arr.length - 1
-                          ? [
-                              <span key={`s${i}`}>{part}</span>,
-                              <Plus
-                                key={`p${i}`}
-                                size={11}
-                                style={{ verticalAlign: '-2px' }}
-                              />
-                            ]
-                          : [<span key={`s${i}`}>{part}</span>]
-                      )}
-                  </div>
+            <button className="btn-icon" onClick={() => setEditing(null)}>
+              <X size={14} />
+            </button>
+          </div>
+          <textarea
+            className="snippet-edit-content"
+            value={editing.content}
+            onChange={(e) => setEditing({ ...editing, content: e.target.value })}
+            placeholder={t('snippetsContent')}
+            rows={8}
+          />
+          <div
+            className="palette-input-row"
+            style={{ borderTop: '1px solid var(--border)', borderBottom: 0 }}
+          >
+            <input
+              placeholder={t('snippetsTagsPlaceholder')}
+              value={(editing.tags ?? []).join(', ')}
+              onChange={(e) =>
+                setEditing({
+                  ...editing,
+                  tags: e.target.value
+                    .split(',')
+                    .map((tag) => tag.trim())
+                    .filter(Boolean)
+                })
+              }
+              autoComplete="off"
+            />
+            <button
+              className="btn primary"
+              onClick={() => void saveEditing()}
+              disabled={!editing.name.trim() || !editing.content.trim()}
+            >
+              {t('snippetsSave')}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="palette-input-row">
+            <Search size={14} style={{ color: 'var(--text-dim)' }} />
+            <label htmlFor={inputId} className="sr-only" style={visuallyHidden}>
+              {t('palettePlaceholder')}
+            </label>
+            <input
+              id={inputId}
+              ref={inputRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={t('palettePlaceholder')}
+              role="combobox"
+              aria-expanded
+              aria-controls={listId}
+              aria-activedescendant={activeDescendantId}
+              aria-autocomplete="list"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button className="btn-icon" onClick={newSnippet} title={t('snippetsNew')}>
+              <Plus size={14} />
+            </button>
+            <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
+              <X size={14} />
+            </button>
+          </div>
+          <div
+            id={listId}
+            role="listbox"
+            className="palette-list"
+            style={{ opacity: stale ? 0.6 : 1, transition: 'opacity 80ms' }}
+          >
+            {filtered.length === 0 ? (
+              <div className="palette-empty">
+                <div>{t('snippetsEmpty')}</div>
+                <div style={{ fontSize: 11, opacity: 0.6 }}>
+                  {t('snippetsEmptyHint', { plus: '+' })
+                    .split('+')
+                    .flatMap((part, i, arr) =>
+                      i < arr.length - 1
+                        ? [
+                            <span key={`s${i}`}>{part}</span>,
+                            <Plus key={`p${i}`} size={11} style={{ verticalAlign: '-2px' }} />
+                          ]
+                        : [<span key={`s${i}`}>{part}</span>]
+                    )}
                 </div>
-              ) : (
-                filtered.map((s, i) => (
-                  <div
-                    key={s.id}
-                    className={`palette-item snippet-item ${i === selected ? 'selected' : ''}`}
-                    onClick={() => insertSnippet(s)}
-                    onMouseEnter={() => setSelected(i)}
-                  >
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="palette-item-label">{s.name}</div>
-                      <div className="snippet-content">{s.content}</div>
-                      {s.tags && s.tags.length > 0 && (
-                        <div className="snippet-tags">
-                          {s.tags.map((tag) => (
-                            <span key={tag} className="snippet-tag">
-                              {tag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="snippet-actions">
-                      <button
-                        className="btn-icon"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditing(s);
-                        }}
-                        title={t('snippetsEdit')}
-                      >
-                        <Edit3 size={11} />
-                      </button>
-                      <button
-                        className="btn-icon"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void deleteSnippet(s.id);
-                        }}
-                        title={t('snippetsDelete')}
-                      >
-                        <Trash2 size={11} />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="palette-footer">
-              <span><kbd>↑</kbd><kbd>↓</kbd> nav</span>
-              <span>
-                <kbd>↵</kbd> {t('snippetsInsertHint')}
+              </div>
+            ) : (
+              filtered.map((s, i) => (
+                <SnippetRow
+                  key={s.id}
+                  snippet={s}
+                  idx={i}
+                  selected={i === selected}
+                  rowId={`${listId}-item-${i}`}
+                  onSelect={setSelected}
+                  onInsert={insertSnippet}
+                  onEdit={setEditing}
+                  onDelete={deleteSnippet}
+                  editLabel={t('snippetsEdit')}
+                  deleteLabel={t('snippetsDelete')}
+                />
+              ))
+            )}
+          </div>
+          <div className="palette-footer">
+            <span>
+              <kbd>↑</kbd>
+              <kbd>↓</kbd> nav
+            </span>
+            <span>
+              <kbd>↵</kbd> {t('snippetsInsertHint')}
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-dim)' }}>
+              <code>{'{{file}}'}</code> <code>{'{{branch}}'}</code> <code>{'{{cwd}}'}</code>
+            </span>
+          </div>
+        </>
+      )}
+    </dialog>
+  );
+}
+
+interface SnippetRowProps {
+  snippet: Snippet;
+  idx: number;
+  selected: boolean;
+  rowId: string;
+  onSelect: (i: number) => void;
+  onInsert: (s: Snippet) => void;
+  onEdit: (s: Snippet) => void;
+  onDelete: (id: string) => Promise<void>;
+  editLabel: string;
+  deleteLabel: string;
+}
+
+const SnippetRow = memo(function SnippetRow({
+  snippet,
+  idx,
+  selected,
+  rowId,
+  onSelect,
+  onInsert,
+  onEdit,
+  onDelete,
+  editLabel,
+  deleteLabel
+}: SnippetRowProps): JSX.Element {
+  return (
+    <div
+      id={rowId}
+      role="option"
+      aria-selected={selected}
+      className={`palette-item snippet-item ${selected ? 'selected' : ''}`}
+      onClick={() => onInsert(snippet)}
+      onMouseEnter={() => onSelect(idx)}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="palette-item-label">{snippet.name}</div>
+        <div className="snippet-content">{snippet.content}</div>
+        {snippet.tags && snippet.tags.length > 0 && (
+          <div className="snippet-tags">
+            {snippet.tags.map((tag) => (
+              <span key={tag} className="snippet-tag">
+                {tag}
               </span>
-              <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-dim)' }}>
-                <code>{'{{file}}'}</code> <code>{'{{branch}}'}</code>{' '}
-                <code>{'{{cwd}}'}</code>
-              </span>
-            </div>
-          </>
+            ))}
+          </div>
         )}
+      </div>
+      <div className="snippet-actions">
+        <button
+          className="btn-icon"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit(snippet);
+          }}
+          title={editLabel}
+        >
+          <Edit3 size={11} />
+        </button>
+        <button
+          className="btn-icon"
+          onClick={(e) => {
+            e.stopPropagation();
+            void onDelete(snippet.id);
+          }}
+          title={deleteLabel}
+        >
+          <Trash2 size={11} />
+        </button>
       </div>
     </div>
   );
+});
+
+const paletteDialogStyle: React.CSSProperties = {
+  padding: 0,
+  border: 0,
+  background: 'transparent',
+  maxWidth: 'unset',
+  maxHeight: 'unset',
+  overflow: 'visible',
+  color: 'inherit'
+};
+
+const visuallyHidden: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0,0,0,0)',
+  whiteSpace: 'nowrap',
+  border: 0
+};
+
+function ensureDialogBackdropStyle(): void {
+  if (typeof document === 'undefined') return;
+  const id = 'vmux-dialog-backdrop-style';
+  if (document.getElementById(id)) return;
+  const el = document.createElement('style');
+  el.id = id;
+  el.textContent = `
+dialog.vmux-dialog { margin: auto; inset: 0; }
+dialog.vmux-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: vmuxDialogBackdropFadeIn 120ms ease-out;
+}
+@keyframes vmuxDialogBackdropFadeIn { from { opacity: 0; } }
+`;
+  document.head.appendChild(el);
 }

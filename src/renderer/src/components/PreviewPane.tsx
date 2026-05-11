@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import React, { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -67,6 +67,30 @@ const LEVEL_FROM_CODE: Record<number, ConsoleLevel> = {
   3: 'info'
 };
 
+/** Schémas autorisés dans la barre d'adresse + dans pane.url. Tout le reste
+ *  (javascript:, file:, data:, chrome:, …) est bloqué pour ne pas exécuter
+ *  de code arbitraire dans le contexte de la <webview>. */
+function sanitizeUrl(input: string): string | null {
+  const trimmed = input.trim().replace(/^<+|>+$/g, '');
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      // URL constructor valide la syntaxe (rejette les espaces non-encoded, etc.)
+      return new URL(trimmed).toString();
+    } catch {
+      return null;
+    }
+  }
+  // Schéma reconnu mais non-http → bloque (javascript:, file:, data:, …).
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null;
+  // Sans schéma : on assume http (cas typique : "localhost:3000").
+  try {
+    return new URL(`http://${trimmed}`).toString();
+  } catch {
+    return null;
+  }
+}
+
 const MAX_LOGS = 500;
 /** Quand on a > VISIBLE_LOGS entrées, on ne rend que les VISIBLE_LOGS dernières
  *  pour cap le coût DOM (chaque entry = ~3-4 nodes × 500 = 2000 nodes minimum).
@@ -104,12 +128,29 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
   useEffect(() => {
     if (!pane.followsPaneId || !followingPane?.recentUrls?.length) return;
     const latest = followingPane.recentUrls[followingPane.recentUrls.length - 1];
-    if (latest && latest !== pane.url) {
-      setAddr(latest);
-      void window.cmux.panes.setUrl(sessionId, pane.id, latest);
-      ref.current?.loadURL(latest).catch(() => setFailed(true));
-    }
+    if (!latest || latest === pane.url) return;
+    // Même les URLs détectées en sortie de terminal passent par sanitizeUrl —
+    // un agent qui imprime `javascript:alert(1)` ne doit pas charger ça dans
+    // la <webview>.
+    const safe = sanitizeUrl(latest);
+    if (!safe) return;
+    setAddr(safe);
+    void window.cmux.panes.setUrl(sessionId, pane.id, safe);
+    ref.current?.loadURL(safe).catch(() => setFailed(true));
   }, [followingPane?.recentUrls, pane.followsPaneId, pane.url, pane.id, sessionId]);
+
+  // Re-sync `addr` quand pane.url change depuis l'extérieur (URL chip click,
+  // command palette, etc.). On évite la boucle infinie avec le check d'égalité
+  // — sinon chaque set local re-déclenche un setAddr identique.
+  useEffect(() => {
+    if (pane.url && pane.url !== addr) {
+      setAddr(pane.url);
+      ref.current?.loadURL(pane.url).catch(() => setFailed(true));
+    }
+    // addr volontairement exclu : on ne veut réagir qu'aux MAJ externes
+    // de pane.url, pas aux frappes dans l'input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane.url]);
 
   // Wire les events <webview> via DOM addEventListener (pas de React props pour ces events).
   // Re-run quand `visible` change car la <webview> est unmount/remount.
@@ -174,12 +215,40 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
       });
     };
 
+    // Webview crashed / killed → on log et on affiche l'erreur. Sans ça,
+    // le spinner pouvait rester bloqué indéfiniment quand le renderer guest meurt.
+    const onCrash = (): void => {
+      setLoading(false);
+      setFailed(true);
+      pushLog({
+        level: 'error',
+        message: 'Webview renderer crashed',
+        source: 'webview'
+      });
+    };
+    // Bloque les navigations vers des schémas non-http (paranoia : un site
+    // chargé pourrait tenter window.location = 'file:///…').
+    const onWillNav = (e: Event): void => {
+      const ev = e as Event & { url?: string };
+      if (ev.url && !sanitizeUrl(ev.url)) {
+        // Pas de preventDefault sur did-* events ; loadURL('about:blank') stoppe.
+        try {
+          el.loadURL('about:blank');
+        } catch {
+          /* swallow */
+        }
+      }
+    };
+
     el.addEventListener('did-start-loading', onStart);
     el.addEventListener('did-stop-loading', onStop);
     el.addEventListener('did-fail-load', onFail as EventListener);
     el.addEventListener('did-navigate', onNav);
     el.addEventListener('did-navigate-in-page', onNav);
     el.addEventListener('console-message', onConsole as EventListener);
+    el.addEventListener('crashed', onCrash);
+    el.addEventListener('destroyed', onCrash);
+    el.addEventListener('will-navigate', onWillNav as EventListener);
     return () => {
       el.removeEventListener('did-start-loading', onStart);
       el.removeEventListener('did-stop-loading', onStop);
@@ -187,7 +256,12 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
       el.removeEventListener('did-navigate', onNav);
       el.removeEventListener('did-navigate-in-page', onNav);
       el.removeEventListener('console-message', onConsole as EventListener);
+      el.removeEventListener('crashed', onCrash);
+      el.removeEventListener('destroyed', onCrash);
+      el.removeEventListener('will-navigate', onWillNav as EventListener);
     };
+    // pushLog est stable (useCallback []), pas besoin de l'ajouter aux deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   // Helper qui push un log et cap la taille à MAX_LOGS (FIFO).
@@ -200,11 +274,15 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
     });
   }, []);
 
-  // Auto-scroll en bas quand un nouveau log arrive et que la console est visible.
+  // Auto-scroll en bas quand un nouveau log arrive ET que l'user n'a pas scrollé
+  // vers l'historique. Sans ce check, lire un vieux log était impossible : un
+  // nouveau warn pendant la lecture re-scrollait au bas.
   useEffect(() => {
     if (!consoleOpen) return;
     const el = logsScrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom < 24) el.scrollTop = el.scrollHeight;
   }, [logs.length, consoleOpen]);
 
   const onAddrSubmit = useCallback(
@@ -212,24 +290,8 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
       e.preventDefault();
       const el = ref.current;
       if (!el) return;
-      // Refuse explicitement les schémas autres que http/https. Sans ce check,
-      // saisir `javascript:alert(1)` exécutait dans le contexte de la <webview>
-      // (qui est isolé du main, mais l'effet visible était quand même
-      // exploitable côté UI/persistence).
-      // Strip wrapping <…> qu'on récupère souvent en collant depuis du markdown chat.
-      const trimmed = addr.trim().replace(/^<+|>+$/g, '');
-      let url: string;
-      if (/^https?:\/\//i.test(trimmed)) {
-        url = trimmed;
-      } else if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
-        // Schéma reconnu mais non-http (javascript:, file:, data:, …) — bloque.
-        setFailed(true);
-        return;
-      } else {
-        url = `http://${trimmed}`;
-      }
-      // Sanity check final : protocole strictement http/https.
-      if (!/^https?:\/\//i.test(url)) {
+      const url = sanitizeUrl(addr);
+      if (!url) {
         setFailed(true);
         return;
       }
@@ -251,25 +313,40 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
     [addr]
   );
 
-  const filteredLogs = useMemo(
-    () => (filter === 'all' ? logs : logs.filter((l) => l.level === filter)),
-    [logs, filter]
-  );
+  // useDeferredValue : quand le filter change rapidement (l'user tape sur 4
+  // filters d'affilée) ou que `logs` augmente vite (console crachant 50 entries/s),
+  // React peut prioriser l'input/UI et rendre la liste filtrée "à la traîne".
+  const deferredFilter = useDeferredValue(filter);
+  const deferredLogs = useDeferredValue(logs);
+  const filteredLogs = useMemo(() => {
+    if (deferredFilter === 'all') return deferredLogs;
+    // "log" englobe log/info/debug pour cohérence avec DevTools — le bug avant
+    // était que seul level=='log' passait, donc console.info() était invisible.
+    if (deferredFilter === 'log') {
+      return deferredLogs.filter(
+        (l) => l.level === 'log' || l.level === 'info' || l.level === 'debug'
+      );
+    }
+    return deferredLogs.filter((l) => l.level === deferredFilter);
+  }, [deferredLogs, deferredFilter]);
   // Window de rendu : dernières VISIBLE_LOGS entrées seulement. Au-delà,
   // on aurait des centaines de nodes DOM à reconcile à chaque push.
   const renderedLogs =
     filteredLogs.length > VISIBLE_LOGS ? filteredLogs.slice(-VISIBLE_LOGS) : filteredLogs;
   const hiddenLogs = filteredLogs.length - renderedLogs.length;
   // Count en une seule passe — avant on filtrait `logs` deux fois par render
-  // (errorCount + warnCount) sur potentiellement 500 entrées.
-  const { errorCount, warnCount } = useMemo(() => {
+  // (errorCount + warnCount) sur potentiellement 500 entrées. Ajout du logCount
+  // ici pour éviter le 3e filter() inline dans le JSX.
+  const { errorCount, warnCount, logCount } = useMemo(() => {
     let err = 0;
     let warn = 0;
+    let log = 0;
     for (const l of logs) {
       if (l.level === 'error') err++;
       else if (l.level === 'warn') warn++;
+      else if (l.level === 'log' || l.level === 'info' || l.level === 'debug') log++;
     }
-    return { errorCount: err, warnCount: warn };
+    return { errorCount: err, warnCount: warn, logCount: log };
   }, [logs]);
 
   return (
@@ -353,14 +430,20 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
         </button>
       </div>
 
-      <div className="preview-host">
+      <div className="preview-host" aria-busy={loading || undefined}>
         {/* eslint-disable-next-line react/no-unknown-property */}
         {visible &&
           React.createElement<WebviewProps>('webview', {
             ref: (el: HTMLElement | null) => {
-              ref.current = el as unknown as WebviewElement;
+              // null à l'unmount : sans ça, ref.current pointait sur un node
+              // détaché du DOM tant que le composant React vivait — toute
+              // tentative de loadURL/getURL ratait silencieusement après
+              // qu'on ait flippé visible=false → true (nouveau node créé).
+              ref.current = el as unknown as WebviewElement | null;
             },
-            src: addr || pane.url,
+            // sanitizeUrl appelé sur pane.url aussi : si la persistence a un
+            // jour stocké une URL malformée, on ne la charge pas.
+            src: sanitizeUrl(addr || pane.url) ?? 'about:blank',
             partition: 'persist:cmux-preview',
             allowpopups: 'true',
             webpreferences: 'contextIsolation=yes,nodeIntegration=no',
@@ -406,7 +489,7 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
             />
             <ConsoleFilterBtn
               label="Logs"
-              count={logs.filter((l) => l.level === 'log' || l.level === 'info').length}
+              count={logCount}
               active={filter === 'log'}
               onClick={() => setFilter('log')}
             />

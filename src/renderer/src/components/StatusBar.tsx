@@ -44,9 +44,21 @@ function StatusBarImpl({ onOpenNotifications }: Props): JSX.Element {
   );
   const [version, setVersion] = useState<string>('');
   const [pidCopied, setPidCopied] = useState(false);
+  const pidCopiedTimerRef = useRef<number | null>(null);
   useEffect(() => {
     void window.cmux.app?.version().then(setVersion);
   }, []);
+  // Cleanup du timer "pid copied" au unmount — sinon setState after unmount
+  // si la status bar est détruite pendant les 1200ms d'affichage du tick.
+  useEffect(
+    () => () => {
+      if (pidCopiedTimerRef.current !== null) {
+        window.clearTimeout(pidCopiedTimerRef.current);
+        pidCopiedTimerRef.current = null;
+      }
+    },
+    []
+  );
 
   // Memoized — sinon ce calcul O(sessions × panes) re-tournait à chaque
   // re-render (et la StatusBar re-rend sur n'importe quel store update).
@@ -95,7 +107,13 @@ function StatusBarImpl({ onOpenNotifications }: Props): JSX.Element {
   const onCopyPid = (pid: number): void => {
     void window.cmux.clipboard.write(String(pid));
     setPidCopied(true);
-    setTimeout(() => setPidCopied(false), 1200);
+    if (pidCopiedTimerRef.current !== null) {
+      window.clearTimeout(pidCopiedTimerRef.current);
+    }
+    pidCopiedTimerRef.current = window.setTimeout(() => {
+      setPidCopied(false);
+      pidCopiedTimerRef.current = null;
+    }, 1200);
   };
 
   const hasProcessGroup =

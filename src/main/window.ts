@@ -7,7 +7,8 @@ import log from 'electron-log/main';
 import { IPC, type WindowState } from '@shared/types';
 import { getWindowState, saveWindowState } from './settings-store';
 
-/** Vérifie que les bounds sauvegardés sont toujours sur un écran connecté. */
+/** Verify saved bounds still intersect a connected display (laptop unplugged
+ *  from external monitor, display moved, etc.). Falls back to centered defaults. */
 export function clampToScreens(state: WindowState): WindowState {
   const displays = screen.getAllDisplays();
   if (state.x === undefined || state.y === undefined) return state;
@@ -24,31 +25,82 @@ export function clampToScreens(state: WindowState): WindowState {
 }
 
 interface CreateWindowOptions {
-  /** Si true, on ne montre pas la fenêtre au ready-to-show (mode --hidden). */
+  /** If true, don't show the window on `ready-to-show` (--hidden CLI flag). */
   startHidden?: boolean;
 }
 
-/** webPreferences partagé entre main et detached window — single source of truth.
- *  `sandbox: false` reste nécessaire car le preload utilise `webUtils` (drag-drop)
- *  et certaines API electron-toolkit qui requièrent un preload non-sandbox.
- *  `webviewTag: true` est requis pour les preview panes (`<webview>` isolé). */
+/** webPreferences shared between the main window and detached windows —
+ *  single source of truth. `sandbox: false` is required because the preload
+ *  uses `webUtils` (drag-drop file paths) and electron-toolkit helpers that
+ *  need a non-sandboxed preload. `webviewTag: true` is required for the
+ *  PreviewPane (`<webview>` isolated). `will-attach-webview` in
+ *  `src/main/index.ts` enforces a sandboxed, nodeIntegration-free webview at
+ *  attach time so the relaxed preload sandbox does not bleed into webviews. */
 function sharedWebPreferences(): Electron.WebPreferences {
   return {
     preload: path.join(__dirname, '../preload/index.js'),
     sandbox: false,
     contextIsolation: true,
     nodeIntegration: false,
-    webviewTag: true
+    nodeIntegrationInWorker: false,
+    nodeIntegrationInSubFrames: false,
+    webviewTag: true,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    experimentalFeatures: false,
+    spellcheck: false
+  };
+}
+
+/** Open a URL in the user's default browser if and only if it is http(s).
+ *  Centralized so every window's `setWindowOpenHandler` uses the same policy
+ *  even though `web-contents-created` in index.ts is already defense-in-depth. */
+function openSafeExternal(url: string): void {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      void shell.openExternal(url);
+    } else {
+      log.warn(`[security] refused external open with protocol ${u.protocol}`);
+    }
+  } catch {
+    log.warn(`[security] refused malformed external URL: ${url}`);
+  }
+}
+
+/** Wire up the debounced window-state persistence and return a `dispose` that
+ *  cancels the trailing timer when the window is closed mid-debounce. */
+function attachWindowStatePersistence(win: BrowserWindow): () => void {
+  let saveTimer: NodeJS.Timeout | null = null;
+  const persist = (): void => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      if (win.isDestroyed()) return;
+      const isMax = win.isMaximized();
+      const bounds = isMax ? win.getNormalBounds() : win.getBounds();
+      saveWindowState({ ...bounds, isMaximized: isMax });
+    }, 200);
+  };
+  win.on('resize', persist);
+  win.on('move', persist);
+  win.on('maximize', persist);
+  win.on('unmaximize', persist);
+  return () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
   };
 }
 
 export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
   const saved = clampToScreens(getWindowState());
 
-  // Plateformes :
-  // - Windows / Linux : frameless complet, on dessine notre TitleBar custom.
-  // - macOS : on garde les traffic lights natifs (`hiddenInset`) pour respecter
-  //   les conventions macOS — sinon le user perd close/minimize/zoom.
+  // Platform conventions:
+  //   - Windows / Linux: fully frameless, we draw our own TitleBar.
+  //   - macOS: keep native traffic lights (`hiddenInset`) so users don't lose
+  //     close/minimize/zoom — bad form to remove them on darwin.
   const isDarwin = process.platform === 'darwin';
   const titleBarOpts: Electron.BrowserWindowConstructorOptions = isDarwin
     ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 12 } }
@@ -73,26 +125,24 @@ export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
     if (saved.isMaximized) win.maximize();
     if (!opts.startHidden) win.show();
   });
-  win.on('maximize', () => win.webContents.send(IPC.windowMaximizedChanged, true));
-  win.on('unmaximize', () => win.webContents.send(IPC.windowMaximizedChanged, false));
 
-  // Persistance taille/position fenêtre — debouncée pour éviter trop d'écritures.
-  let saveTimer: NodeJS.Timeout | null = null;
-  const persist = (): void => {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      const isMax = win.isMaximized();
-      const bounds = isMax ? win.getNormalBounds() : win.getBounds();
-      saveWindowState({ ...bounds, isMaximized: isMax });
-    }, 200);
+  // Notify renderer of maximize state changes — guard against post-close sends.
+  const sendMaximized = (v: boolean) => (): void => {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send(IPC.windowMaximizedChanged, v);
+    }
   };
-  win.on('resize', persist);
-  win.on('move', persist);
-  win.on('maximize', persist);
-  win.on('unmaximize', persist);
+  win.on('maximize', sendMaximized(true));
+  win.on('unmaximize', sendMaximized(false));
 
+  const disposePersist = attachWindowStatePersistence(win);
+  win.on('closed', disposePersist);
+
+  // Defense-in-depth: even though `app.on('web-contents-created')` (index.ts)
+  // registers a global handler, the per-window handler ensures policy is in
+  // place even if event ordering ever drifts.
   win.webContents.setWindowOpenHandler((details) => {
-    void shell.openExternal(details.url);
+    openSafeExternal(details.url);
     return { action: 'deny' };
   });
 
@@ -106,12 +156,12 @@ export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
 }
 
 /**
- * Crée une fenêtre détachée qui rend une seule session (sans sidebar). Le
- * renderer détecte le mode via le hash `#detached=<sessionId>`. La fenêtre
- * détachée ne persiste pas sa taille (chaque ouverture utilise les défauts)
- * et n'a pas de menu auto-hide pour ne pas interférer avec la fenêtre
- * principale. Les events PTY sont broadcastés à toutes les BrowserWindows
- * (cf. ipc.ts), donc les deux fenêtres restent synchronisées.
+ * Create a detached window that renders a single session (no sidebar). The
+ * renderer detects the mode via the URL hash (`#detached=<sessionId>`).
+ * Detached windows do not persist their size (each open uses the defaults)
+ * and have `autoHideMenuBar: true` to avoid interfering with the main
+ * window. PTY events are broadcast to all BrowserWindows (see ipc.ts), so
+ * both windows stay in sync.
  */
 export function createDetachedWindow(sessionId: string): BrowserWindow {
   const isDarwin = process.platform === 'darwin';
@@ -133,15 +183,21 @@ export function createDetachedWindow(sessionId: string): BrowserWindow {
   });
 
   win.on('ready-to-show', () => win.show());
-  win.on('maximize', () => win.webContents.send(IPC.windowMaximizedChanged, true));
-  win.on('unmaximize', () => win.webContents.send(IPC.windowMaximizedChanged, false));
+
+  const sendMaximized = (v: boolean) => (): void => {
+    if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send(IPC.windowMaximizedChanged, v);
+    }
+  };
+  win.on('maximize', sendMaximized(true));
+  win.on('unmaximize', sendMaximized(false));
 
   win.webContents.setWindowOpenHandler((details) => {
-    void shell.openExternal(details.url);
+    openSafeExternal(details.url);
     return { action: 'deny' };
   });
 
-  // Hash route — le renderer lit `window.location.hash` au boot.
+  // Hash-route the renderer to single-session mode.
   const hash = `detached=${encodeURIComponent(sessionId)}`;
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}#${hash}`);
@@ -153,11 +209,11 @@ export function createDetachedWindow(sessionId: string): BrowserWindow {
 }
 
 /**
- * En dev, Windows ne livre pas les toasts natifs si l'AppUserModel.ID n'est
- * pas associé à un raccourci dans le Start Menu. En prod, electron-builder
- * pose automatiquement le bon AUMID sur le `.lnk` créé par NSIS — donc rien
- * à faire. Pour le dev mode, on génère un raccourci `vMux (Dev).lnk` une
- * seule fois via PowerShell. Idempotent.
+ * In dev mode, Windows does not deliver native toast notifications unless the
+ * AppUserModel.ID is associated with a Start Menu shortcut. In prod, NSIS
+ * creates that shortcut with the correct AUMID — nothing to do. For dev, we
+ * generate `vMux (Dev).lnk` once via PowerShell. Idempotent. Best-effort:
+ * any failure only loses dev-time notifications, never blocks boot.
  */
 export async function ensureDevShortcutForNotifications(aumid: string): Promise<void> {
   if (process.platform !== 'win32') return;
@@ -172,7 +228,10 @@ export async function ensureDevShortcutForNotifications(aumid: string): Promise<
   const shortcutPath = path.join(startMenu, 'vMux (Dev).lnk');
   try {
     await fs.promises.mkdir(startMenu, { recursive: true });
-    const exists = await fs.promises.access(shortcutPath).then(() => true).catch(() => false);
+    const exists = await fs.promises
+      .access(shortcutPath)
+      .then(() => true)
+      .catch(() => false);
     if (exists) return;
     const exe = process.execPath;
     const script = [
@@ -189,22 +248,22 @@ export async function ensureDevShortcutForNotifications(aumid: string): Promise<
         ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
         { windowsHide: true }
       );
-      // Timeout dur 10s : sur certaines configs (profil corrompu, AV qui scanne),
-      // powershell.exe peut freezer à l'init. On préfère perdre les notifs en
-      // dev plutôt que bloquer le boot du main process.
+      // Hard 10s timeout — on some configs (corrupt profile, AV scanning
+      // PowerShell), powershell.exe can freeze at init. Better to lose dev
+      // notifications than block main-process boot.
       const killer = setTimeout(() => {
         try {
           child.kill('SIGKILL');
         } catch {
-          /* déjà mort */
+          /* already dead */
         }
       }, 10_000);
       const cleanup = (): void => {
         clearTimeout(killer);
         resolve();
       };
-      child.on('exit', cleanup);
-      child.on('error', cleanup);
+      child.once('exit', cleanup);
+      child.once('error', cleanup);
     });
     log.info(`[notif] dev shortcut prepared at ${shortcutPath} (aumid=${aumid})`);
   } catch (err) {
@@ -212,9 +271,10 @@ export async function ensureDevShortcutForNotifications(aumid: string): Promise<
   }
 }
 
-/** Synchronise `app.setLoginItemSettings` avec la valeur du setting autoLaunch.
- *  En dev mode on ne touche à rien (le path est electron.exe, pas vMux.exe).
- *  Linux : Electron 41+ supporte setLoginItemSettings via les .desktop files. */
+/** Sync `app.setLoginItemSettings` with the `autoLaunch` setting. In dev we
+ *  do nothing — the executable path is electron.exe, not vMux.exe, and we
+ *  don't want to register the dev binary at login. Linux: Electron 41+
+ *  supports setLoginItemSettings via `.desktop` files in `~/.config/autostart`. */
 export function syncAutoLaunch(enabled: boolean): void {
   if (is.dev) return;
   try {
@@ -227,8 +287,7 @@ export function syncAutoLaunch(enabled: boolean): void {
     } else if (process.platform === 'darwin') {
       app.setLoginItemSettings({ openAtLogin: enabled, openAsHidden: true });
     } else if (process.platform === 'linux') {
-      // Electron pose un .desktop dans ~/.config/autostart. Pas de --hidden ici
-      // car les WMs Linux ne le proposent pas uniformément.
+      // No --hidden on linux: window managers don't honor it uniformly.
       app.setLoginItemSettings({ openAtLogin: enabled });
     }
     log.info(`[autolaunch] openAtLogin=${enabled}`);

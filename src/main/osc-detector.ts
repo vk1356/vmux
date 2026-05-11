@@ -7,11 +7,11 @@ import type { DetectedEvent, PaneId } from '@shared/types';
  * partiel/absent. vMux les capture côté main process et les route vers le
  * service de notifications natives Windows déjà en place.
  *
- * Format OSC : `ESC ] Ps ; Pt ST` où :
- *  - `ESC ]` = `\x1b\x5d`
- *  - `Ps` = paramètre numérique (ex. 9, 52, 777)
- *  - `Pt` = payload texte
- *  - `ST` = string terminator, soit `BEL` (`\x07`), soit `ESC \` (`\x1b\x5c`)
+ * Format OSC : `<OSC-introducer> Ps ; Pt <ST>` où :
+ *  - OSC introducer  : `ESC ]` (7-bit, 0x1b 0x5d) OU `0x9d` (8-bit C1)
+ *  - `Ps`            : paramètre numérique (ex. 9, 52, 777)
+ *  - `Pt`            : payload texte
+ *  - String Terminator : `BEL` (0x07), `ESC \` (0x1b 0x5c) OU `0x9c` (8-bit C1)
  *
  * Séquences supportées :
  *  - **OSC 9** (iTerm2 growl)        : `\x1b]9;<message>\x07`
@@ -38,32 +38,66 @@ interface RawOsc {
 }
 
 /**
+ * Cherche le prochain introducer OSC à partir de `from`. Renvoie l'index du
+ * char qui débute la séquence (`ESC` ou `0x9d`), et la longueur de
+ * l'introducer (2 pour `ESC ]`, 1 pour `0x9d`).
+ */
+function nextOscIntroducer(s: string, from: number): { idx: number; len: number } | null {
+  let best = -1;
+  let bestLen = 0;
+  // ESC ] (7-bit)
+  const i7 = s.indexOf('\x1b]', from);
+  if (i7 !== -1) {
+    best = i7;
+    bestLen = 2;
+  }
+  // 0x9d (8-bit C1) — rare mais conforme ECMA-48
+  const i8 = s.indexOf('\x9d', from);
+  if (i8 !== -1 && (best === -1 || i8 < best)) {
+    best = i8;
+    bestLen = 1;
+  }
+  if (best === -1) return null;
+  return { idx: best, len: bestLen };
+}
+
+/**
  * Itère les OSC complets dans un chunk. Les OSC non terminés (terminateur
  * absent — chunk coupé en plein milieu) sont ignorés ; vu que pty-manager
  * agrège les chunks à 60Hz, c'est rare en pratique.
+ *
+ * Terminateurs acceptés : BEL (0x07), ST 7-bit (ESC \\ = 0x1b 0x5c), ST 8-bit (0x9c).
  *
  * On ne désencapsule PAS récursivement — un OSC ne peut pas en contenir un
  * autre selon l'ECMA-48.
  */
 export function* parseOsc(chunk: string): Generator<RawOsc> {
   let i = 0;
-  while (i < chunk.length) {
-    const start = chunk.indexOf('\x1b]', i);
-    if (start === -1) return;
-    const dataStart = start + 2;
-    // Cherche le terminateur le plus proche (BEL ou ST).
+  const n = chunk.length;
+  while (i < n) {
+    const intro = nextOscIntroducer(chunk, i);
+    if (intro === null) return;
+    const dataStart = intro.idx + intro.len;
+    // Cherche le terminateur le plus proche parmi BEL / ESC \ / 0x9c.
     const belIdx = chunk.indexOf('\x07', dataStart);
-    const stIdx = chunk.indexOf('\x1b\\', dataStart);
-    let endIdx: number;
-    let endLen: number;
-    if (belIdx === -1 && stIdx === -1) return; // OSC non terminé — abandon
-    if (belIdx !== -1 && (stIdx === -1 || belIdx < stIdx)) {
+    const st7Idx = chunk.indexOf('\x1b\\', dataStart);
+    const st8Idx = chunk.indexOf('\x9c', dataStart);
+    // Sélectionne le plus petit index valide.
+    let endIdx = -1;
+    let endLen = 0;
+    if (belIdx !== -1) {
       endIdx = belIdx;
       endLen = 1;
-    } else {
-      endIdx = stIdx;
+    }
+    if (st7Idx !== -1 && (endIdx === -1 || st7Idx < endIdx)) {
+      endIdx = st7Idx;
       endLen = 2;
     }
+    if (st8Idx !== -1 && (endIdx === -1 || st8Idx < endIdx)) {
+      endIdx = st8Idx;
+      endLen = 1;
+    }
+    if (endIdx === -1) return; // OSC non terminé — abandon
     const rawLen = endIdx - dataStart;
     if (rawLen > MAX_OSC_PAYLOAD) {
       // Skip suspiciously large payload (probable binaire/leak), avance après terminateur.
@@ -86,8 +120,11 @@ export function* parseOsc(chunk: string): Generator<RawOsc> {
  * la session+agent et focus le bon pane au clic).
  */
 export function detectOscEvents(paneId: PaneId, chunk: string): DetectedEvent[] {
-  // Fast path : la majorité des chunks PTY ne contiennent pas d'OSC.
-  if (!chunk || chunk.indexOf('\x1b]') === -1) return [];
+  // Fast path : la majorité des chunks PTY ne contiennent aucun OSC. On teste
+  // les deux introducers (7-bit + 8-bit) en O(n) via indexOf — bien plus
+  // rapide qu'instancier le générateur pour rien.
+  if (!chunk) return [];
+  if (chunk.indexOf('\x1b]') === -1 && chunk.indexOf('\x9d') === -1) return [];
 
   const out: DetectedEvent[] = [];
   const ts = Date.now();
@@ -101,7 +138,7 @@ export function detectOscEvents(paneId: PaneId, chunk: string): DetectedEvent[] 
       out.push({
         paneId,
         kind: 'notify',
-        title: msg.slice(0, MAX_TITLE_LEN),
+        title: msg.length > MAX_TITLE_LEN ? msg.slice(0, MAX_TITLE_LEN) : msg,
         message: '',
         timestamp: ts
       });
@@ -110,16 +147,18 @@ export function detectOscEvents(paneId: PaneId, chunk: string): DetectedEvent[] 
       // seul qui nous intéresse — d'autres existent ("dynamic_color" etc.) mais
       // pas pour des notifs user.
       if (!pt.startsWith('notify;')) continue;
-      const rest = pt.slice('notify;'.length);
+      const rest = pt.slice(7); // 'notify;'.length === 7
       const semi = rest.indexOf(';');
-      const title = (semi === -1 ? rest : rest.slice(0, semi)).trim();
-      const body = semi === -1 ? '' : rest.slice(semi + 1).trim();
+      const titleRaw = semi === -1 ? rest : rest.slice(0, semi);
+      const title = titleRaw.trim();
       if (!title) continue;
+      const bodyRaw = semi === -1 ? '' : rest.slice(semi + 1);
+      const body = bodyRaw.trim();
       out.push({
         paneId,
         kind: 'notify',
-        title: title.slice(0, MAX_TITLE_LEN),
-        message: body.slice(0, MAX_BODY_LEN),
+        title: title.length > MAX_TITLE_LEN ? title.slice(0, MAX_TITLE_LEN) : title,
+        message: body.length > MAX_BODY_LEN ? body.slice(0, MAX_BODY_LEN) : body,
         timestamp: ts
       });
     }

@@ -15,10 +15,14 @@ export function quoteShLiteral(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-/** Polyfill cross-platform pour requestIdleCallback (renderer-only en pratique). */
+/** Polyfill cross-platform pour requestIdleCallback (renderer-only en pratique).
+ *  Sans `any` : on capture la signature optionnelle depuis `globalThis`. */
+interface IdleHost {
+  requestIdleCallback?: (cb: () => void) => unknown;
+}
 export function whenIdle(cb: () => void, fallbackMs = 200): void {
-  const g = globalThis as unknown as { requestIdleCallback?: (cb: () => void) => void };
-  if (typeof g.requestIdleCallback === 'function') g.requestIdleCallback(cb);
+  const ric = (globalThis as IdleHost).requestIdleCallback;
+  if (typeof ric === 'function') ric(cb);
   else setTimeout(cb, fallbackMs);
 }
 

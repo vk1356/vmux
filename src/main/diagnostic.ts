@@ -46,25 +46,59 @@ interface DiagnosticReport {
   recentLogs: string;
 }
 
+// Pré-compile les regex de scrubbing — appelées 200x par diagnostic.
+// La regex homedir est invalidée à la volée puisque os.homedir() peut changer
+// rarement (impersonation Windows) mais en pratique c'est constant.
+const HOME_DIR = os.homedir();
+const HOME_DIR_RE = HOME_DIR
+  ? new RegExp(HOME_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+  : null;
+// Capture `key:value` ou `key=value` où key ∈ {bearer, api_key, token, password, secret}.
+// On group la valeur séparément pour la remplacer sans toucher le label.
+const SECRET_KV_RE = /\b(bearer|api[_-]?key|token|password|secret)\s*([:=])\s*\S+/gi;
+const TOKEN_RE = /\b(?:sk|pk|ghp|ghs|gho|github_pat)[_-][A-Za-z0-9]{20,}/g;
+
+// Limite hard sur la taille du log lu pour le diagnostic : ~512 KB max.
+// Si le user a `maxSize=0` (rotation off) ou que le fichier a été restauré
+// depuis un backup, on évite de tenter de charger 200 MB en RAM.
+const MAX_LOG_READ_BYTES = 512 * 1024;
+const RECENT_LOG_LINES = 200;
+
 /** Pour un chemin Windows/POSIX, remplace le préfixe homedir par `~` pour ne
  *  pas leak le username dans un fichier partageable. */
 function redactHome(p: string | undefined): string | undefined {
   if (!p) return p;
-  const home = os.homedir();
-  if (home && p.startsWith(home)) return '~' + p.slice(home.length);
+  if (HOME_DIR && p.startsWith(HOME_DIR)) return '~' + p.slice(HOME_DIR.length);
   return p;
 }
 
 /** Scrub une ligne de log de tout ce qui ressemble à un secret. */
 function scrubLogLine(line: string): string {
-  return (
-    line
-      // Remplace les chemins absolus contenant le homedir.
-      .replace(new RegExp(os.homedir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '~')
-      // API keys / tokens (Bearer, x-api-key, sk-/pk-/ghp-/ghs-, etc.).
-      .replace(/(?:bearer|api[_-]?key|token|password|secret)\s*[:=]\s*\S+/gi, '$&'.split(/[:=]/)[0] + '=<redacted>')
-      .replace(/\b(?:sk|pk|ghp|ghs|gho|github_pat)[_-][A-Za-z0-9]{20,}/g, '<redacted-token>')
-  );
+  let out = line;
+  if (HOME_DIR_RE) {
+    // Reset car flag /g garde lastIndex entre appels.
+    HOME_DIR_RE.lastIndex = 0;
+    out = out.replace(HOME_DIR_RE, '~');
+  }
+  out = out.replace(SECRET_KV_RE, (_full, label: string, sep: string) => `${label}${sep}<redacted>`);
+  out = out.replace(TOKEN_RE, '<redacted-token>');
+  return out;
+}
+
+/** Lit les N derniers octets d'un fichier sans charger tout en RAM. */
+async function tailFile(filePath: string, maxBytes: number): Promise<string> {
+  const handle = await fsp.open(filePath, 'r');
+  try {
+    const stat = await handle.stat();
+    const size = stat.size;
+    const start = size > maxBytes ? size - maxBytes : 0;
+    const length = Math.min(size, maxBytes);
+    const buf = Buffer.alloc(length);
+    await handle.read(buf, 0, length, start);
+    return buf.toString('utf-8');
+  } finally {
+    await handle.close();
+  }
 }
 
 /** Génère un rapport de diagnostic anonymisé en JSON. */
@@ -73,15 +107,16 @@ export async function generateDiagnostic(): Promise<DiagnosticReport> {
   const agents = await checkAgents(DEFAULT_AGENTS);
   const settings = getSettings();
 
-  // Lit les 200 dernières lignes du log si possible, en scrubbant les patterns
-  // de secrets (tokens API, paths absolus, etc.).
+  // Lit les dernières lignes du log (capées à 512 KB + 200 lignes) en scrubbant
+  // les patterns de secrets (tokens API, paths absolus, etc.).
   let recentLogs = '';
   try {
     const logPath = log.transports.file.getFile().path;
-    const content = await fsp.readFile(logPath, 'utf-8');
-    const lines = content.split(/\r?\n/).slice(-200).map(scrubLogLine);
+    const content = await tailFile(logPath, MAX_LOG_READ_BYTES);
+    const lines = content.split(/\r?\n/).slice(-RECENT_LOG_LINES).map(scrubLogLine);
     recentLogs = lines.join('\n');
-  } catch {
+  } catch (err) {
+    log.warn('[diagnostic] could not read log file', err);
     recentLogs = '(log file not available)';
   }
 
@@ -142,6 +177,7 @@ export async function generateDiagnostic(): Promise<DiagnosticReport> {
 export async function saveDiagnosticTo(filePath: string): Promise<void> {
   const report = await generateDiagnostic();
   await fsp.writeFile(filePath, JSON.stringify(report, null, 2), 'utf-8');
+  log.info(`[diagnostic] saved report to ${redactHome(filePath)}`);
 }
 
 /** Suggestion de chemin par défaut. */
@@ -149,3 +185,45 @@ export function defaultDiagnosticFilename(): string {
   const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   return path.join(os.homedir(), 'Desktop', `vmux-diagnostic-${ts}.json`);
 }
+
+// ============================================================
+// Log rotation / configuration
+// ============================================================
+//
+// electron-log file transport rotation : par défaut, maxSize = 1 MB → rotate
+// vers `{filename}.old.log`. Donc historique = 2 MB max, déjà ok. On surcharge
+// uniquement pour : (a) bumper la limite à 5 MB par fichier (= 10 MB total)
+// pour avoir plus d'historique sur des bugs longs à reproduire, (b) appliquer
+// un format daté lisible, (c) capper la profondeur d'introspection des objets
+// loggés (évite des stack traces 10MB qui crash le log lui-même).
+//
+// IMPORTANT : `archiveLogFn` reste le défaut electron-log (rename `.old.log`).
+// On ne le redéfinit pas en async/fs.rm parce que electron-log appelle
+// archiveLogFn DANS l'event loop main + s'attend à du sync. Une fs.rm async
+// laisserait le main rotation-broken pendant le flush.
+
+// Auto-configured on module import — diagnostic.ts est importé via ipc.ts au
+// boot, donc avant tout log significatif. Idempotent : si l'utilisateur a déjà
+// re-tuné `log.transports.file.maxSize` ailleurs, on respecte sa valeur tant
+// qu'elle est > 0.
+(function configureLogging(): void {
+  try {
+    if (!log.transports.file.maxSize || log.transports.file.maxSize <= 1024 * 1024) {
+      log.transports.file.maxSize = 5 * 1024 * 1024; // 5 MB par fichier, ~10 MB total
+    }
+    log.transports.file.format =
+      '[{y}-{m}-{d} {h}:{i}:{s}.{ms}] [{level}] [{processType}] {text}';
+    log.transports.file.inspectOptions = { depth: 4, maxArrayLength: 50 };
+
+    // Scrubbing global : tout ce qui part vers le fichier passe par scrubLogLine.
+    // Évite les fuites accidentelles (log.error(err) où err.config.headers.authorization).
+    log.hooks.push((message, _transport, transportName) => {
+      if (transportName !== 'file') return message;
+      const scrubbed = message.data.map((d) => (typeof d === 'string' ? scrubLogLine(d) : d));
+      return { ...message, data: scrubbed };
+    });
+  } catch {
+    // electron-log non encore initialisé ou config readonly — on ignore plutôt
+    // que de bloquer le boot.
+  }
+})();

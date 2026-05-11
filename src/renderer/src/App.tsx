@@ -1,4 +1,15 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type JSX } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+  type CSSProperties,
+  type JSX
+} from 'react';
 import { TitleBar } from './components/TitleBar';
 import { UpdateBanner } from './components/UpdateBanner';
 import { Sidebar } from './components/Sidebar';
@@ -76,12 +87,14 @@ export function App(): JSX.Element {
   );
   // Onboarding : affiché tant que settings.onboardingCompleted !== true. On
   // attend que les settings soient chargés (settings === null au boot) pour
-  // éviter un flash de l'overlay si l'user a déjà skip.
+  // éviter un flash de l'overlay si l'user a déjà skip. Un ref garantit qu'on
+  // n'ouvre l'overlay qu'une seule fois (sinon close → settings update → re-open).
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const onboardingShownRef = useRef(false);
   useEffect(() => {
-    if (settings && settings.onboardingCompleted !== true) {
-      setOnboardingOpen(true);
-    }
+    if (onboardingShownRef.current || !settings) return;
+    onboardingShownRef.current = true;
+    if (settings.onboardingCompleted !== true) setOnboardingOpen(true);
   }, [settings]);
   const closeOnboarding = useCallback((completed: boolean): void => {
     setOnboardingOpen(false);
@@ -134,8 +147,16 @@ export function App(): JSX.Element {
     }
   }, [activeSessionId, sessions, clearAttention]);
 
+  // agents.check spawn un process where.exe par agent : on l'évite si le dialog
+  // se ferme. AbortController garantit qu'un check en vol ne pousse pas son
+  // résultat dans le store après que le dialog se soit refermé.
   useEffect(() => {
-    if (newSessionOpen) void window.cmux.agents.check().then(setAgentAvailability);
+    if (!newSessionOpen) return;
+    const ac = new AbortController();
+    void window.cmux.agents.check().then((r) => {
+      if (!ac.signal.aborted) setAgentAvailability(r);
+    });
+    return (): void => ac.abort();
   }, [newSessionOpen, setAgentAvailability]);
 
   // Raccourcis clavier globaux — extrait dans useGlobalKeybindings.
@@ -164,33 +185,62 @@ export function App(): JSX.Element {
     }
   });
 
+  // useTransition : ouvrir un dialog lazy déclenche le chargement d'un chunk
+  // + suspense fallback. On marque ces updates comme non-urgents pour ne pas
+  // bloquer le clic dans l'UI (React 19 garde la frame réactive pendant le load).
+  const [, startDialogTransition] = useTransition();
+
   // Handlers stables pour limiter les re-renders des composants memo (Sidebar, TabBar).
   const openNewSession = useCallback(() => {
     setNewSessionDefaultCwd(undefined);
-    setNewSessionOpen(true);
+    startDialogTransition(() => setNewSessionOpen(true));
   }, []);
   const closeNewSession = useCallback(() => {
     setNewSessionOpen(false);
     setNewSessionDefaultCwd(undefined);
   }, []);
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const openSettings = useCallback(() => startDialogTransition(() => setSettingsOpen(true)), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
-  const openShortcuts = useCallback(() => setShortcutsOpen(true), []);
+  const openShortcuts = useCallback(() => startDialogTransition(() => setShortcutsOpen(true)), []);
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
-  const openNotifs = useCallback(() => setNotifsOpen(true), []);
+  const openNotifs = useCallback(() => startDialogTransition(() => setNotifsOpen(true)), []);
   const closeNotifs = useCallback(() => setNotifsOpen(false), []);
   const closeSnippets = useCallback(() => setSnippetsOpen(false), []);
-  const openMcp = useCallback(() => setMcpOpen(true), []);
+  const openMcp = useCallback(() => startDialogTransition(() => setMcpOpen(true)), []);
   const closeMcp = useCallback(() => setMcpOpen(false), []);
+  const cancelCloseConfirm = useCallback(() => setCloseConfirm(null), []);
+  const confirmCloseSession = useCallback(() => {
+    setCloseConfirm((cur) => {
+      if (!cur) return null;
+      void window.cmux.sessions.remove(cur.sessionId);
+      removeSession(cur.sessionId);
+      return null;
+    });
+  }, [removeSession]);
 
-  const active = sessions.find((s) => s.id === activeSessionId);
+  // sessions est un array stable par référence sous useShallow tant qu'aucune
+  // session change, mais .find recomputerait quand même : on memo pour stabiliser
+  // les props passées à TabBar/SnippetsPicker.
+  const active = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? null,
+    [sessions, activeSessionId]
+  );
 
   // Window title dynamique : Electron synchronise document.title → titre natif.
   useEffect(() => {
     const suffix = active ? ` — ${active.name}${active.branch ? ` · ${active.branch}` : ''}` : '';
     document.title = `vMux${suffix}`;
   }, [active?.id, active?.name, active?.branch]);
+
+  // Style inline du grid sidebar — memo pour éviter une nouvelle ref à chaque
+  // render (sinon le div parent invalide ses children stylesheet diff).
+  const bodyGridStyle = useMemo<CSSProperties>(
+    () => ({
+      gridTemplateColumns: sidebar.collapsed ? '0 0 1fr' : `${sidebar.widthPx}px 1px 1fr`
+    }),
+    [sidebar.collapsed, sidebar.widthPx]
+  );
 
   return (
     <div className="app">
@@ -199,9 +249,7 @@ export function App(): JSX.Element {
 
       <div
         className={`app-body ${sidebar.collapsed ? 'sidebar-collapsed' : ''}`}
-        style={{
-          gridTemplateColumns: sidebar.collapsed ? '0 0 1fr' : `${sidebar.widthPx}px 1px 1fr`
-        }}
+        style={bodyGridStyle}
       >
         <Sidebar onNewSession={openNewSession} onOpenSettings={openSettings} />
 
@@ -265,7 +313,7 @@ export function App(): JSX.Element {
         {shortcutsOpen && <ShortcutsOverlay open={shortcutsOpen} onClose={closeShortcuts} />}
         {notifsOpen && <NotificationCenter open={notifsOpen} onClose={closeNotifs} />}
         {snippetsOpen && (
-          <SnippetsPicker open={snippetsOpen} session={active ?? null} onClose={closeSnippets} />
+          <SnippetsPicker open={snippetsOpen} session={active} onClose={closeSnippets} />
         )}
         {closeConfirm && (
           <ConfirmDialog
@@ -274,12 +322,8 @@ export function App(): JSX.Element {
             title="Fermer la session"
             message={`La session « ${closeConfirm.name} » a un agent en cours. Toutes les exécutions seront tuées. Continuer ?`}
             confirmLabel="Fermer la session"
-            onCancel={() => setCloseConfirm(null)}
-            onConfirm={() => {
-              void window.cmux.sessions.remove(closeConfirm.sessionId);
-              removeSession(closeConfirm.sessionId);
-              setCloseConfirm(null);
-            }}
+            onCancel={cancelCloseConfirm}
+            onConfirm={confirmCloseSession}
           />
         )}
       </Suspense>

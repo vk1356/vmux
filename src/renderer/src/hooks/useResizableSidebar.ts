@@ -31,7 +31,11 @@ interface Options {
  * - persist le ratio en pourcentage à la fin du drag
  * - auto-collapse responsive avec respect du toggle manuel
  *
- * Extrait d'App.tsx pour cloisonner ~50 lignes de plomberie DOM.
+ * Perf : pendant le drag, mousemove écrit dans un ref + planifie un rAF
+ * qui appelle setState UNE fois par frame. Sans rAF, on déclenchait un
+ * re-render React par pixel (≥60/s soutenu → 600/s sur trackpad).
+ * Le listener mousemove utilise `passive: true` pour ne pas bloquer le
+ * compositor sur scroll horizontal.
  */
 export function useResizableSidebar(opts: Options): ResizableSidebar {
   const [widthPx, setWidthPx] = useState(opts.initial);
@@ -39,19 +43,45 @@ export function useResizableSidebar(opts: Options): ResizableSidebar {
   const draggingRef = useRef(false);
   const userToggledRef = useRef(false);
   // Refs live pour lire les options et la largeur courante dans onUp sans
-  // ré-attacher mousemove/mouseup à chaque pixel déplacé. Avant : `[widthPx,
-  // opts]` en deps → re-add/remove des handlers à chaque setWidthPx, soit ~1
-  // listener add+remove par pixel pendant un drag.
+  // ré-attacher mousemove/mouseup à chaque pixel déplacé. Assignés en body
+  // (avant les effects) pour garantir que les handlers du premier mount
+  // voient déjà la bonne valeur — équivalent au pattern useEvent proposal.
   const widthRef = useRef(widthPx);
+  widthRef.current = widthPx;
   const optsRef = useRef(opts);
-  useEffect(() => {
-    widthRef.current = widthPx;
-  }, [widthPx]);
-  useEffect(() => {
-    optsRef.current = opts;
-  }, [opts]);
+  optsRef.current = opts;
 
   useEffect(() => {
+    const ac = new AbortController();
+    const { signal } = ac;
+    // rAF coalesce : un seul setState par frame, peu importe le débit
+    // d'évents mousemove (trackpads sub-pixel ≥ 240Hz).
+    let pendingPx: number | null = null;
+    let rafId = 0;
+
+    const flush = (): void => {
+      rafId = 0;
+      if (pendingPx === null) return;
+      const next = pendingPx;
+      pendingPx = null;
+      widthRef.current = next;
+      setWidthPx(next);
+    };
+
+    const finishDrag = (): void => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.cursor = '';
+      // Force le dernier flush avant de persister, sinon le pct stocké
+      // peut être 1 frame en retard sur la position finale du curseur.
+      if (rafId !== 0) {
+        cancelAnimationFrame(rafId);
+        flush();
+      }
+      const pct = Math.round((widthRef.current / window.innerWidth) * 100);
+      optsRef.current.onPersistRatio(pct);
+    };
+
     const onMove = (e: MouseEvent): void => {
       if (!draggingRef.current) return;
       // Si le user a relâché le bouton hors de la fenêtre, on rate le mouseup —
@@ -61,28 +91,26 @@ export function useResizableSidebar(opts: Options): ResizableSidebar {
         return;
       }
       const o = optsRef.current;
-      const px = clamp(e.clientX, o.min, o.max);
-      setWidthPx(px);
+      pendingPx = clamp(e.clientX, o.min, o.max);
+      if (rafId === 0) rafId = requestAnimationFrame(flush);
     };
-    const finishDrag = (): void => {
-      if (!draggingRef.current) return;
-      draggingRef.current = false;
-      document.body.style.cursor = '';
-      const pct = Math.round((widthRef.current / window.innerWidth) * 100);
-      optsRef.current.onPersistRatio(pct);
-    };
-    const onBlur = (): void => finishDrag();
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', finishDrag);
+
+    window.addEventListener('mousemove', onMove, { passive: true, signal });
+    window.addEventListener('mouseup', finishDrag, { signal });
     // Mouse leaks hors Electron window (taskbar, autre écran) : pas de mouseup.
     // window blur OU pointerup global termine proprement le drag.
-    window.addEventListener('blur', onBlur);
-    window.addEventListener('pointerup', finishDrag);
+    window.addEventListener('blur', finishDrag, { signal });
+    window.addEventListener('pointerup', finishDrag, { signal });
+
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', finishDrag);
-      window.removeEventListener('blur', onBlur);
-      window.removeEventListener('pointerup', finishDrag);
+      ac.abort();
+      if (rafId !== 0) cancelAnimationFrame(rafId);
+      // Si on unmount au milieu d'un drag, restore le curseur sans persister
+      // (l'unmount = teardown, pas un endDrag user-intentionnel).
+      if (draggingRef.current) {
+        draggingRef.current = false;
+        document.body.style.cursor = '';
+      }
     };
   }, []);
 
@@ -92,19 +120,18 @@ export function useResizableSidebar(opts: Options): ResizableSidebar {
   }, []);
 
   // Auto-collapse quand la fenêtre est étroite (mobile-like).
+  // Threshold lu via ref → un seul listener resize pour la vie du hook.
   useEffect(() => {
+    const ac = new AbortController();
     const onResize = (): void => {
       if (userToggledRef.current) return;
-      const w = window.innerWidth;
-      setCollapsed((cur) => {
-        const shouldCollapse = w < opts.autoCollapseThreshold;
-        return shouldCollapse !== cur ? shouldCollapse : cur;
-      });
+      const shouldCollapse = window.innerWidth < optsRef.current.autoCollapseThreshold;
+      setCollapsed((cur) => (shouldCollapse !== cur ? shouldCollapse : cur));
     };
     onResize();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, [opts.autoCollapseThreshold]);
+    window.addEventListener('resize', onResize, { passive: true, signal: ac.signal });
+    return () => ac.abort();
+  }, []);
 
   const toggleCollapsed = useCallback((): void => {
     userToggledRef.current = true;

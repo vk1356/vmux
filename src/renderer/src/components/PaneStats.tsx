@@ -1,9 +1,34 @@
-import { memo, useEffect, useMemo, useRef, type JSX } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { Cpu, MemoryStick } from 'lucide-react';
 import { useSessionStore, STATS_WINDOW, type PaneStatsHistory } from '../store/sessions';
 
 /** Float32Array vide partagé pour les renders sans data — évite une alloc par render. */
 const EMPTY_F32 = new Float32Array(0);
+
+/** Intl.NumberFormat singletons — instancier un formatter coûte ~0.1ms, ce qui
+ *  est négligeable mais multiplié par 10 panes × 0.5Hz redraw = 50 allocs/s
+ *  qu'on évite. Plus important : `toFixed`+concat alloue 2-3 strings ; format()
+ *  réutilise un pool interne. */
+const CPU_FMT_LOW = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1
+});
+const CPU_FMT_HIGH = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 0
+});
+const MEM_FMT_DEC = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1
+});
+const MEM_FMT_INT = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 0
+});
+
+/** Intervalle minimum entre deux redraws de canvas. Les samples arrivent à 0.5Hz
+ *  (toutes les 2s) côté main mais d'autres triggers re-render le composant
+ *  (cpuColor recalc, parent re-render) ; on plafonne à un redraw / 500ms pour
+ *  garantir un rendu fluide même sous spam. */
+const REDRAW_THROTTLE_MS = 500;
 
 /** Floor d'auto-scale RAM : 128 MB. Sous ce seuil, on étire jusqu'à 128 pour
  *  ne pas amplifier le bruit d'un process qui tourne à 5 MB. */
@@ -45,6 +70,12 @@ function PaneStatsImpl({ paneId, compact = false }: Props): JSX.Element | null {
   const systemMemoryTotal = useSessionStore((s) => s.systemStats?.memoryTotal ?? 0);
   const canvasCpuRef = useRef<HTMLCanvasElement>(null);
   const canvasMemRef = useRef<HTMLCanvasElement>(null);
+  // Refs pour throttle du redraw : on coalesce les bursts (re-renders multiples
+  // dans la même fenêtre 500ms) en un seul rAF/draw.
+  const lastDrawAtRef = useRef(0);
+  const pendingDrawRef = useRef<number | null>(null);
+  // Cache de la dernière draw pour pouvoir re-jouer dans le timer.
+  const [drawTick, setDrawTick] = useState(0);
 
   // Couleur CPU dynamique selon la charge — recalculé à chaque last update.
   const cpuColor = useMemo(() => {
@@ -56,27 +87,48 @@ function PaneStatsImpl({ paneId, compact = false }: Props): JSX.Element | null {
   }, [stats?.last, stats?.cores]);
 
   useEffect(() => {
-    if (PREFERS_REDUCED_MOTION) {
-      // Mode statique : ne dessine que la dernière valeur (point), pas la courbe
-      // qui évoluerait à chaque tick.
-      drawStaticDot(canvasCpuRef.current, stats?.cpu, cpuColor);
-      drawStaticDot(canvasMemRef.current, stats?.memory, '#3b82f6');
-      return;
+    const now = performance.now();
+    const elapsed = now - lastDrawAtRef.current;
+    if (elapsed >= REDRAW_THROTTLE_MS) {
+      lastDrawAtRef.current = now;
+      if (PREFERS_REDUCED_MOTION) {
+        drawStaticDot(canvasCpuRef.current, stats?.cpu, cpuColor);
+        drawStaticDot(canvasMemRef.current, stats?.memory, '#3b82f6');
+      } else {
+        drawSparkline(canvasCpuRef.current, stats?.cpu ?? EMPTY_F32, cpuColor, {
+          min: 0,
+          softMax: CPU_FLOOR_PCT * (stats?.cores ?? 1)
+        });
+        drawSparkline(canvasMemRef.current, stats?.memory ?? EMPTY_F32, '#3b82f6', {
+          min: 0,
+          softMax: RAM_FLOOR_BYTES,
+          refLine: systemMemoryTotal > 0 ? systemMemoryTotal * 0.1 : undefined,
+          refColor: 'rgba(244, 63, 94, 0.3)'
+        });
+      }
+    } else if (pendingDrawRef.current == null) {
+      // Coalesce les bursts : un seul timer en flight, qui bump le tick pour
+      // re-jouer l'effect avec les valeurs à jour (pas de stale closure).
+      pendingDrawRef.current = window.setTimeout(() => {
+        pendingDrawRef.current = null;
+        setDrawTick((t) => t + 1);
+      }, REDRAW_THROTTLE_MS - elapsed);
     }
-    drawSparkline(canvasCpuRef.current, stats?.cpu ?? EMPTY_F32, cpuColor, {
-      min: 0,
-      // CPU en raw pidusage (×cores) — softMax = 30% × cores, ramené à %machine ≈ 30
-      softMax: CPU_FLOOR_PCT * (stats?.cores ?? 1)
-    });
-    drawSparkline(canvasMemRef.current, stats?.memory ?? EMPTY_F32, '#3b82f6', {
-      min: 0,
-      softMax: RAM_FLOOR_BYTES,
-      // Ligne de référence "10% RAM système" — visuellement aide à savoir si
-      // ce pane est gourmand sur la machine.
-      refLine: systemMemoryTotal > 0 ? systemMemoryTotal * 0.1 : undefined,
-      refColor: 'rgba(244, 63, 94, 0.3)'
-    });
-  }, [stats?.cpu, stats?.memory, stats?.cores, cpuColor, systemMemoryTotal]);
+    // PAS de cleanup ici : ça invaliderait le timer entre deux re-renders
+    // rapprochés et l'on ne dessinerait jamais. L'unmount cleanup est géré
+    // par l'effect dédié ci-dessous.
+  }, [stats?.cpu, stats?.memory, stats?.cores, cpuColor, systemMemoryTotal, drawTick]);
+
+  // Cleanup au unmount uniquement — vide le timer pendant pour ne pas
+  // setState sur composant démonté (React warning).
+  useEffect(() => {
+    return () => {
+      if (pendingDrawRef.current != null) {
+        clearTimeout(pendingDrawRef.current);
+        pendingDrawRef.current = null;
+      }
+    };
+  }, []);
 
   if (!stats || !stats.last) {
     return compact ? null : (
@@ -126,14 +178,14 @@ export const PaneStats = memo(PaneStatsImpl);
 
 function formatCpu(pct: number): string {
   if (pct < 0.1) return '<0.1%';
-  if (pct < 10) return `${pct.toFixed(1)}%`;
-  return `${Math.round(pct)}%`;
+  if (pct < 10) return `${CPU_FMT_LOW.format(pct)}%`;
+  return `${CPU_FMT_HIGH.format(pct)}%`;
 }
 
 function formatMb(mb: number): string {
-  if (mb < 100) return `${mb.toFixed(1)}M`;
-  if (mb < 1024) return `${Math.round(mb)}M`;
-  return `${(mb / 1024).toFixed(1)}G`;
+  if (mb < 100) return `${MEM_FMT_DEC.format(mb)}M`;
+  if (mb < 1024) return `${MEM_FMT_INT.format(mb)}M`;
+  return `${MEM_FMT_DEC.format(mb / 1024)}G`;
 }
 
 function statsTooltip(stats: PaneStatsHistory, sysMemTotal: number): string {

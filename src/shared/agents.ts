@@ -1,7 +1,11 @@
-import type { AgentPreset } from './types';
+import type { AgentId, AgentPreset } from './types';
 
 // Les commandes sont les binaires PATH attendus. Sous Windows, .cmd / .exe sont
 // résolus automatiquement par PowerShell via PATHEXT.
+//
+// `satisfies AgentPreset[]` (au lieu de l'annotation directe) garde le tableau
+// mutable pour les consumers qui acceptent `AgentPreset[]` (checkAgents…) tout
+// en validant la conformité à la shape exacte.
 export const DEFAULT_AGENTS: AgentPreset[] = [
   {
     id: 'claude-code',
@@ -64,6 +68,9 @@ export function findAgent(id: string): AgentPreset | undefined {
 
 export type AgentOverride = Partial<Pick<AgentPreset, 'command' | 'args' | 'env'>>;
 
+/** Map d'overrides par agentId — typage strict côté key au lieu de `Record<string, …>`. */
+export type AgentOverridesMap = Partial<Record<AgentId, AgentOverride>>;
+
 /**
  * Merge un preset avec son override utilisateur (configuré dans Settings).
  * Permet à l'utilisateur de remapper la commande (`claude` → `claude-dev`)
@@ -71,17 +78,16 @@ export type AgentOverride = Partial<Pick<AgentPreset, 'command' | 'args' | 'env'
  */
 export function resolveAgent(
   id: string,
-  overrides?: Record<string, AgentOverride | undefined>
+  overrides?: AgentOverridesMap
 ): AgentPreset | undefined {
   const preset = findAgent(id);
   if (!preset) return undefined;
-  const o = overrides?.[id];
+  const o = overrides?.[preset.id];
   if (!o) return preset;
   return {
     ...preset,
     command: o.command ?? preset.command,
     args: o.args ?? preset.args,
-    env: { ...(preset.env || {}), ...(o.env || {}) }
+    env: { ...(preset.env ?? {}), ...(o.env ?? {}) }
   };
 }
-

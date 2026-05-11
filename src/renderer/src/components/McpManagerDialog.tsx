@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type JSX } from 'react';
+import { useEffect, useId, useRef, useState, type JSX } from 'react';
 import { X, Plus, Trash2, Edit3, Power, Server } from 'lucide-react';
 import type { McpServer, McpServerType } from '@shared/types';
 import { useT } from '../i18n';
-import { useFocusTrap } from '../hooks/useFocusTrap';
+
+ensureDialogBackdropStyle();
 
 interface Props {
   open: boolean;
@@ -35,8 +36,8 @@ export function McpManagerDialog({ open, onClose }: Props): JSX.Element | null {
   // toggle = état stocké côté disque, double-fire flicker / état incohérent.
   const savingRef = useRef(false);
   const togglingRef = useRef(new Set<string>());
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(dialogRef, open);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
 
   const refresh = async (): Promise<void> => {
     setLoading(true);
@@ -51,17 +52,23 @@ export function McpManagerDialog({ open, onClose }: Props): JSX.Element | null {
   };
 
   useEffect(() => {
-    if (!open) return;
-    setEdit(null);
-    void refresh();
-    void window.cmux.mcp.configPath().then(setConfigPath);
+    const d = dialogRef.current;
+    if (!d) return;
+    if (open && !d.open) {
+      d.showModal();
+      setEdit(null);
+      void refresh();
+      void window.cmux.mcp.configPath().then(setConfigPath);
+    } else if (!open && d.open) {
+      d.close();
+    }
   }, [open]);
 
   if (!open) return null;
 
   const handleSave = async (): Promise<void> => {
     if (!edit) return;
-    if (savingRef.current) return;       // anti-double-fire synchrone
+    if (savingRef.current) return; // anti-double-fire synchrone
     savingRef.current = true;
     setError(null);
     try {
@@ -107,105 +114,112 @@ export function McpManagerDialog({ open, onClose }: Props): JSX.Element | null {
     }
   };
 
+  const onBackdropClick = (e: React.MouseEvent<HTMLDialogElement>): void => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
   return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div
-        className="dialog"
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('mcpTitle')}
-        style={{ width: 'min(720px, 92vw)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="dialog-header">
-          <div className="dialog-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Server size={14} /> {t('mcpTitle')}
-          </div>
-          <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
-            <X size={14} />
-          </button>
+    <dialog
+      ref={dialogRef}
+      className="dialog vmux-dialog"
+      style={{ ...dialogResetStyle, width: 'min(720px, 92vw)' }}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={onBackdropClick}
+      aria-labelledby={titleId}
+    >
+      <div className="dialog-header">
+        <div
+          className="dialog-title"
+          id={titleId}
+          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+        >
+          <Server size={14} /> {t('mcpTitle')}
         </div>
+        <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
+          <X size={14} />
+        </button>
+      </div>
 
-        <div className="dialog-body" style={{ overflowY: 'auto', maxHeight: '70vh' }}>
-          {edit ? (
-            <McpEditForm
-              draft={edit}
-              onChange={setEdit}
-              onCancel={() => {
-                setEdit(null);
-                setError(null);
-              }}
-              onSave={() => void handleSave()}
-              error={error}
-            />
-          ) : (
-            <>
-              <div className="hint" style={{ marginBottom: 12 }}>
-                {t('mcpHint')}
+      <div className="dialog-body" style={{ overflowY: 'auto', maxHeight: '70vh' }}>
+        {edit ? (
+          <McpEditForm
+            draft={edit}
+            onChange={setEdit}
+            onCancel={() => {
+              setEdit(null);
+              setError(null);
+            }}
+            onSave={() => void handleSave()}
+            error={error}
+          />
+        ) : (
+          <>
+            <div className="hint" style={{ marginBottom: 12 }}>
+              {t('mcpHint')}
+            </div>
+            {error && (
+              <div
+                role="alert"
+                style={{
+                  padding: '8px 10px',
+                  border: '1px solid var(--danger, #c0392b)',
+                  borderRadius: 6,
+                  color: 'var(--danger, #c0392b)',
+                  fontSize: 12,
+                  marginBottom: 12
+                }}
+              >
+                {error}
               </div>
-              {error && (
-                <div
-                  style={{
-                    padding: '8px 10px',
-                    border: '1px solid var(--danger, #c0392b)',
-                    borderRadius: 6,
-                    color: 'var(--danger, #c0392b)',
-                    fontSize: 12,
-                    marginBottom: 12
-                  }}
-                >
-                  {error}
-                </div>
-              )}
-              {loading ? (
-                <div className="hint">…</div>
-              ) : servers.length === 0 ? (
-                <div className="palette-empty" style={{ padding: 24, textAlign: 'center' }}>
-                  <div>{t('mcpEmpty')}</div>
-                  <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-                    {t('mcpEmptyHint')}
-                  </div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {servers.map((s) => (
-                    <McpServerRow
-                      key={s.name}
-                      server={s}
-                      onEdit={() =>
-                        setEdit({
-                          originalName: s.name,
-                          server: { ...s, args: s.args ?? [], env: s.env ?? {} }
-                        })
-                      }
-                      onRemove={() => void handleRemove(s.name)}
-                      onToggle={() => void handleToggle(s.name)}
-                    />
-                  ))}
-                </div>
-              )}
-              {configPath && (
-                <div className="hint" style={{ marginTop: 16, fontSize: 11 }}>
-                  {t('mcpConfigPathLabel')} <code>{configPath}</code>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {!edit && (
-          <div className="dialog-footer">
-            <span className="hint" style={{ flex: 1 }}>
-              {t('mcpFooterHint')}
-            </span>
-            <button className="btn primary" onClick={() => setEdit(emptyDraft())}>
-              <Plus size={12} /> {t('mcpAdd')}
-            </button>
-          </div>
+            )}
+            {loading ? (
+              <div className="hint">…</div>
+            ) : servers.length === 0 ? (
+              <div className="palette-empty" style={{ padding: 24, textAlign: 'center' }}>
+                <div>{t('mcpEmpty')}</div>
+                <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>{t('mcpEmptyHint')}</div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {servers.map((s) => (
+                  <McpServerRow
+                    key={s.name}
+                    server={s}
+                    onEdit={() =>
+                      setEdit({
+                        originalName: s.name,
+                        server: { ...s, args: s.args ?? [], env: s.env ?? {} }
+                      })
+                    }
+                    onRemove={() => void handleRemove(s.name)}
+                    onToggle={() => void handleToggle(s.name)}
+                  />
+                ))}
+              </div>
+            )}
+            {configPath && (
+              <div className="hint" style={{ marginTop: 16, fontSize: 11 }}>
+                {t('mcpConfigPathLabel')} <code>{configPath}</code>
+              </div>
+            )}
+          </>
         )}
       </div>
-    </div>
+
+      {!edit && (
+        <div className="dialog-footer">
+          <span className="hint" style={{ flex: 1 }}>
+            {t('mcpFooterHint')}
+          </span>
+          <button className="btn primary" onClick={() => setEdit(emptyDraft())}>
+            <Plus size={12} /> {t('mcpAdd')}
+          </button>
+        </div>
+      )}
+    </dialog>
   );
 }
 
@@ -220,7 +234,9 @@ function McpServerRow({ server, onEdit, onRemove, onToggle }: RowProps): JSX.Ele
   const t = useT();
   const summary =
     server.type === 'stdio'
-      ? `${server.command ?? ''}${server.args && server.args.length > 0 ? ' ' + server.args.join(' ') : ''}`
+      ? `${server.command ?? ''}${
+          server.args && server.args.length > 0 ? ' ' + server.args.join(' ') : ''
+        }`
       : server.url ?? '';
   return (
     <div
@@ -313,6 +329,12 @@ interface FormProps {
 function McpEditForm({ draft, error, onChange, onSave, onCancel }: FormProps): JSX.Element {
   const t = useT();
   const s = draft.server;
+  const nameId = useId();
+  const typeId = useId();
+  const commandId = useId();
+  const argsId = useId();
+  const envId = useId();
+  const urlId = useId();
 
   const setField = <K extends keyof McpServer>(key: K, value: McpServer[K]): void => {
     onChange({ ...draft, server: { ...s, [key]: value } });
@@ -357,6 +379,7 @@ function McpEditForm({ draft, error, onChange, onSave, onCancel }: FormProps): J
 
       {error && (
         <div
+          role="alert"
           style={{
             padding: '8px 10px',
             border: '1px solid var(--danger, #c0392b)',
@@ -370,19 +393,27 @@ function McpEditForm({ draft, error, onChange, onSave, onCancel }: FormProps): J
       )}
 
       <div className="field">
-        <label className="field-label">{t('mcpFieldName')}</label>
+        <label className="field-label" htmlFor={nameId}>
+          {t('mcpFieldName')}
+        </label>
         <input
+          id={nameId}
           type="text"
           value={s.name}
           onChange={(e) => setField('name', e.target.value)}
           placeholder="my-server"
           autoFocus
+          autoComplete="off"
+          spellCheck={false}
         />
       </div>
 
       <div className="field">
-        <label className="field-label">{t('mcpFieldType')}</label>
+        <label className="field-label" htmlFor={typeId}>
+          {t('mcpFieldType')}
+        </label>
         <select
+          id={typeId}
           value={s.type}
           onChange={(e) => setField('type', e.target.value as McpServerType)}
         >
@@ -395,44 +426,63 @@ function McpEditForm({ draft, error, onChange, onSave, onCancel }: FormProps): J
       {s.type === 'stdio' ? (
         <>
           <div className="field">
-            <label className="field-label">{t('mcpFieldCommand')}</label>
+            <label className="field-label" htmlFor={commandId}>
+              {t('mcpFieldCommand')}
+            </label>
             <input
+              id={commandId}
               type="text"
               value={s.command ?? ''}
               onChange={(e) => setField('command', e.target.value)}
               placeholder="npx"
+              autoComplete="off"
+              spellCheck={false}
             />
           </div>
           <div className="field">
-            <label className="field-label">{t('mcpFieldArgs')}</label>
+            <label className="field-label" htmlFor={argsId}>
+              {t('mcpFieldArgs')}
+            </label>
             <input
+              id={argsId}
               type="text"
               value={argsText}
               onChange={(e) => setArgsFromText(e.target.value)}
               placeholder="-y @modelcontextprotocol/server-..."
+              autoComplete="off"
+              spellCheck={false}
             />
             <div className="hint">{t('mcpFieldArgsHint')}</div>
           </div>
           <div className="field">
-            <label className="field-label">{t('mcpFieldEnv')}</label>
+            <label className="field-label" htmlFor={envId}>
+              {t('mcpFieldEnv')}
+            </label>
             <textarea
+              id={envId}
               value={envText}
               onChange={(e) => setEnvFromText(e.target.value)}
               placeholder="KEY=value"
               rows={3}
               style={{ fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
+              spellCheck={false}
             />
             <div className="hint">{t('mcpFieldEnvHint')}</div>
           </div>
         </>
       ) : (
         <div className="field">
-          <label className="field-label">{t('mcpFieldUrl')}</label>
+          <label className="field-label" htmlFor={urlId}>
+            {t('mcpFieldUrl')}
+          </label>
           <input
+            id={urlId}
             type="text"
             value={s.url ?? ''}
             onChange={(e) => setField('url', e.target.value)}
             placeholder="https://example.com/mcp"
+            autoComplete="off"
+            spellCheck={false}
           />
         </div>
       )}
@@ -447,4 +497,32 @@ function McpEditForm({ draft, error, onChange, onSave, onCancel }: FormProps): J
       </div>
     </div>
   );
+}
+
+const dialogResetStyle: React.CSSProperties = {
+  padding: 0,
+  border: 0,
+  background: 'transparent',
+  maxWidth: 'unset',
+  maxHeight: 'unset',
+  overflow: 'visible',
+  color: 'inherit'
+};
+
+function ensureDialogBackdropStyle(): void {
+  if (typeof document === 'undefined') return;
+  const id = 'vmux-dialog-backdrop-style';
+  if (document.getElementById(id)) return;
+  const el = document.createElement('style');
+  el.id = id;
+  el.textContent = `
+dialog.vmux-dialog { margin: auto; inset: 0; }
+dialog.vmux-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: vmuxDialogBackdropFadeIn 120ms ease-out;
+}
+@keyframes vmuxDialogBackdropFadeIn { from { opacity: 0; } }
+`;
+  document.head.appendChild(el);
 }

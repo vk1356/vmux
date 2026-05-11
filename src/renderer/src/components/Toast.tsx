@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type JSX } from 'react';
+import { useCallback, useEffect, useState, type JSX } from 'react';
 import { Globe, Rocket, CheckCircle2, XCircle, FlaskConical, Sparkles, Bell, X } from 'lucide-react';
 import type { DetectedEventKind } from '@shared/types';
 import { useSessionStore, type ToastItem } from '../store/sessions';
@@ -38,14 +38,34 @@ interface Props {
 function Toast({ toast, remove }: Props): JSX.Element {
   const t = useT();
   const onClose = useCallback(() => remove(toast.id), [remove, toast.id]);
+  // Pause auto-dismiss sur hover/focus pour ne pas perdre une notif en train
+  // d'être lue. Le timer est re-créé proprement à chaque transition pause↔run,
+  // toujours cleanup dans le return.
+  const [paused, setPaused] = useState(false);
+
   useEffect(() => {
-    const handle = window.setTimeout(onClose, TOAST_TIMEOUT);
-    return () => window.clearTimeout(handle);
-  }, [onClose]);
+    if (paused) return;
+    const id = window.setTimeout(onClose, TOAST_TIMEOUT);
+    return () => window.clearTimeout(id);
+  }, [onClose, paused]);
 
   return (
-    <div className={`toast toast-${toast.kind}`}>
-      <div className="toast-icon">{iconFor(toast)}</div>
+    <div
+      className={`toast toast-${toast.kind}`}
+      // role=status + aria-live=polite : annoncé par les lecteurs d'écran sans
+      // interrompre la lecture courante. aria-atomic=true pour relire le toast
+      // entier (titre + body) plutôt qu'un diff partiel.
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
+    >
+      <div className="toast-icon" aria-hidden>
+        {iconFor(toast)}
+      </div>
       <div className="toast-body">
         <div className="toast-title">{toast.title}</div>
         {toast.body && <div className="toast-sub">{toast.body}</div>}
@@ -74,7 +94,7 @@ function Toast({ toast, remove }: Props): JSX.Element {
         )}
       </div>
       <button className="btn-icon toast-close" onClick={onClose} aria-label={t('toastClose')}>
-        <X size={12} />
+        <X size={12} aria-hidden />
       </button>
     </div>
   );

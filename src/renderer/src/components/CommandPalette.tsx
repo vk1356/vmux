@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import {
+  memo,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type JSX
+} from 'react';
 import {
   Bot,
   CornerDownLeft,
@@ -20,7 +29,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { allPaneIds } from '@shared/tree';
 import type { AgentPreset, Session, TerminalPane } from '@shared/types';
 import { useT, type TFunction } from '../i18n';
-import { useFocusTrap } from '../hooks/useFocusTrap';
+
+// Style ::backdrop injecté une seule fois — voir ConfirmDialog pour le rationale.
+ensureDialogBackdropStyle();
 
 interface Props {
   open: boolean;
@@ -47,7 +58,13 @@ interface CommandItem {
 // par famille (panes / sessions / urls / agents) localisée.
 // ============================================================
 
-function buildAppActions(t: TFunction, onClose: () => void, onNewSession: () => void, onOpenSettings: () => void, onOpenMcp: () => void): CommandItem[] {
+function buildAppActions(
+  t: TFunction,
+  onClose: () => void,
+  onNewSession: () => void,
+  onOpenSettings: () => void,
+  onOpenMcp: () => void
+): CommandItem[] {
   return [
     {
       id: 'action:new-session',
@@ -137,7 +154,13 @@ function buildPaneActions(t: TFunction, active: Session, onClose: () => void): C
   ];
 }
 
-function buildSessionItems(t: TFunction, sessions: Session[], activeSessionId: string | null, setActiveSession: (id: string) => void, onClose: () => void): CommandItem[] {
+function buildSessionItems(
+  t: TFunction,
+  sessions: Session[],
+  activeSessionId: string | null,
+  setActiveSession: (id: string) => void,
+  onClose: () => void
+): CommandItem[] {
   const out: CommandItem[] = [];
   for (const s of sessions) {
     if (s.id === activeSessionId) continue;
@@ -165,9 +188,7 @@ function buildPaneItems(t: TFunction, active: Session, onClose: () => void): Com
     if (!p) continue;
     const label =
       p.label ||
-      (p.kind === 'terminal'
-        ? `${(p as TerminalPane).agentId} pane`
-        : `Preview ${p.url}`);
+      (p.kind === 'terminal' ? `${(p as TerminalPane).agentId} pane` : `Preview ${p.url}`);
     out.push({
       id: `pane:${id}`,
       label: `Focus: ${label}`,
@@ -218,7 +239,12 @@ function buildUrlItems(t: TFunction, active: Session, onClose: () => void): Comm
   return out;
 }
 
-function buildAgentItems(t: TFunction, agents: AgentPreset[], onClose: () => void, onNewSession: () => void): CommandItem[] {
+function buildAgentItems(
+  t: TFunction,
+  agents: AgentPreset[],
+  onClose: () => void,
+  onNewSession: () => void
+): CommandItem[] {
   return agents.map((a) => ({
     id: `agent:${a.id}`,
     label: t('cmdLaunchAgent', { agent: a.label }),
@@ -244,7 +270,13 @@ function buildAgentItems(t: TFunction, agents: AgentPreset[], onClose: () => voi
   }));
 }
 
-function buildSessionFinalActions(t: TFunction, active: Session, onClose: () => void, removeSession: (id: string) => void, upsertSession: (s: Session) => void): CommandItem[] {
+function buildSessionFinalActions(
+  t: TFunction,
+  active: Session,
+  onClose: () => void,
+  removeSession: (id: string) => void,
+  upsertSession: (s: Session) => void
+): CommandItem[] {
   return [
     {
       id: 'action:remove-session',
@@ -300,19 +332,35 @@ export function CommandPalette({
 
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
+  // Defer le query pour le filtrage : la frappe reste 100% urgente (input fluide),
+  // le filtrage de la liste s'exécute quand le main thread est libre.
+  const deferredQuery = useDeferredValue(query);
+  const inputId = useId();
+  const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(dialogRef, open);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  // showModal/close : focus-trap + restore-focus à l'opener sont gratuits côté natif.
+  useEffect(() => {
+    const d = dialogRef.current;
+    if (!d) return;
+    if (open && !d.open) {
+      d.showModal();
+      setQuery('');
+      setSelected(0);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    } else if (!open && d.open) {
+      d.close();
+    }
+  }, [open]);
 
   const items: CommandItem[] = useMemo(() => {
     const active = sessions.find((s) => s.id === activeSessionId);
     const out: CommandItem[] = [
       ...buildAppActions(t, onClose, onNewSession, onOpenSettings, onOpenMcp)
     ];
-    if (active) {
-      out.push(...buildPaneActions(t, active, onClose));
-    }
+    if (active) out.push(...buildPaneActions(t, active, onClose));
     out.push(...buildSessionItems(t, sessions, activeSessionId, setActiveSession, onClose));
     if (active) {
       out.push(...buildPaneItems(t, active, onClose));
@@ -337,33 +385,37 @@ export function CommandPalette({
     t
   ]);
 
-  // Fuzzy filtering
-  const filtered = useMemo(() => {
-    if (!query.trim()) return items;
-    const q = query.toLowerCase();
-    return items
-      .map((item) => ({
+  // Pré-calcul des chaînes de recherche pour éviter le `toLowerCase` à chaque
+  // keystroke. La table est invalidée quand `items` change (mêmes deps que items).
+  const searchable = useMemo(
+    () =>
+      items.map((item) => ({
         item,
-        score: fuzzyScore(`${item.label} ${item.hint ?? ''} ${item.searchExtras ?? ''}`.toLowerCase(), q)
-      }))
-      .filter(({ score }) => score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map(({ item }) => item);
-  }, [items, query]);
+        haystack: `${item.label} ${item.hint ?? ''} ${item.searchExtras ?? ''}`.toLowerCase()
+      })),
+    [items]
+  );
 
-  useEffect(() => {
-    if (open) {
-      setQuery('');
-      setSelected(0);
-      requestAnimationFrame(() => inputRef.current?.focus());
+  // Fuzzy filter : prefix > substring > subsequence. Zero-dep, O(n*|q|).
+  // On utilise deferredQuery → la frappe ne bloque pas pendant le scoring.
+  const filtered = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    if (!q) return items;
+    const scored: { item: CommandItem; score: number }[] = [];
+    for (const { item, haystack } of searchable) {
+      const s = score(haystack, q);
+      if (s > 0) scored.push({ item, score: s });
     }
-  }, [open]);
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map((x) => x.item);
+  }, [searchable, deferredQuery, items]);
 
+  // Reset selected quand le query (deferred) change la liste filtrée.
   useEffect(() => {
     setSelected(0);
-  }, [query]);
+  }, [deferredQuery]);
 
-  // Scroll selected into view
+  // Scroll selected into view (block: nearest pour éviter les jumps).
   useEffect(() => {
     if (!listRef.current) return;
     const el = listRef.current.querySelector<HTMLElement>(`[data-idx="${selected}"]`);
@@ -371,6 +423,14 @@ export function CommandPalette({
   }, [selected]);
 
   if (!open) return null;
+
+  // Group items by group label (pré-calculé hors render pour stable mapping).
+  const grouped: { group: string; items: CommandItem[] }[] = [];
+  for (const item of filtered) {
+    const last = grouped[grouped.length - 1];
+    if (last && last.group === item.group) last.items.push(item);
+    else grouped.push({ group: item.group, items: [item] });
+  }
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'ArrowDown') {
@@ -383,99 +443,207 @@ export function CommandPalette({
       e.preventDefault();
       const item = filtered[selected];
       if (item) void item.run();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
     }
+    // Esc → géré par le native cancel event du <dialog>.
   };
 
-  // Group items by group label
-  const grouped: { group: string; items: CommandItem[] }[] = [];
-  for (const item of filtered) {
-    const last = grouped[grouped.length - 1];
-    if (last && last.group === item.group) last.items.push(item);
-    else grouped.push({ group: item.group, items: [item] });
-  }
+  const onBackdropClick = (e: React.MouseEvent<HTMLDialogElement>): void => {
+    if (e.target === e.currentTarget) onClose();
+  };
 
   let runningIdx = 0;
+  const activeDescendantId = filtered.length > 0 ? `${listId}-item-${selected}` : undefined;
+  const stale = query !== deferredQuery;
 
   return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div
-        className="palette"
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('palettePlaceholder')}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="palette-input-row">
-          <Search size={14} style={{ color: 'var(--text-dim)' }} />
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={t('palettePlaceholder')}
-          />
-          <span className="palette-hint">
-            <CornerDownLeft size={11} /> entrer
-          </span>
-        </div>
-        <div className="palette-list" ref={listRef}>
-          {filtered.length === 0 ? (
-            <div className="palette-empty">
-              <Sparkles size={20} style={{ opacity: 0.5 }} />
-              <div>{t('paletteNoResults', { q: query })}</div>
-            </div>
-          ) : (
-            grouped.map(({ group, items }) => (
-              <div key={group} className="palette-group">
-                <div className="palette-group-label">{group}</div>
-                {items.map((item) => {
-                  const idx = runningIdx++;
-                  return (
-                    <div
-                      key={item.id}
-                      data-idx={idx}
-                      className={`palette-item ${idx === selected ? 'selected' : ''}`}
-                      onClick={() => void item.run()}
-                      onMouseEnter={() => setSelected(idx)}
-                    >
-                      <span className="palette-item-icon">{item.icon}</span>
-                      <span className="palette-item-label">{item.label}</span>
-                      {item.hint && <span className="palette-item-hint">{item.hint}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            ))
-          )}
-        </div>
-        <div className="palette-footer">
-          <span><Bot size={11} /> Command palette</span>
-          <span style={{ marginLeft: 'auto', display: 'flex', gap: 12 }}>
-            <span><kbd>↑</kbd><kbd>↓</kbd> nav</span>
-            <span><kbd>↵</kbd> ouvrir</span>
-            <span><kbd>Esc</kbd> fermer</span>
-          </span>
-        </div>
+    <dialog
+      ref={dialogRef}
+      className="palette vmux-dialog"
+      style={paletteDialogStyle}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={onBackdropClick}
+      aria-labelledby={inputId}
+    >
+      <div className="palette-input-row">
+        <Search size={14} style={{ color: 'var(--text-dim)' }} />
+        <label htmlFor={inputId} className="sr-only" style={visuallyHidden}>
+          {t('palettePlaceholder')}
+        </label>
+        <input
+          id={inputId}
+          ref={inputRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder={t('palettePlaceholder')}
+          role="combobox"
+          aria-expanded
+          aria-controls={listId}
+          aria-activedescendant={activeDescendantId}
+          aria-autocomplete="list"
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <span className="palette-hint">
+          <CornerDownLeft size={11} /> entrer
+        </span>
       </div>
-    </div>
+      <div
+        className="palette-list"
+        ref={listRef}
+        id={listId}
+        role="listbox"
+        // Visual hint sur scoring en cours (frappe rapide) — opacité légère.
+        style={{ opacity: stale ? 0.6 : 1, transition: 'opacity 80ms' }}
+      >
+        {filtered.length === 0 ? (
+          <div className="palette-empty">
+            <Sparkles size={20} style={{ opacity: 0.5 }} />
+            <div>{t('paletteNoResults', { q: query })}</div>
+          </div>
+        ) : (
+          grouped.map(({ group, items: gitems }) => (
+            <div key={group} className="palette-group">
+              <div className="palette-group-label">{group}</div>
+              {gitems.map((item) => {
+                const idx = runningIdx++;
+                return (
+                  <PaletteRow
+                    key={item.id}
+                    item={item}
+                    idx={idx}
+                    selected={idx === selected}
+                    onSelect={setSelected}
+                    rowId={`${listId}-item-${idx}`}
+                  />
+                );
+              })}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="palette-footer">
+        <span>
+          <Bot size={11} /> Command palette
+        </span>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 12 }}>
+          <span>
+            <kbd>↑</kbd>
+            <kbd>↓</kbd> nav
+          </span>
+          <span>
+            <kbd>↵</kbd> ouvrir
+          </span>
+          <span>
+            <kbd>Esc</kbd> fermer
+          </span>
+        </span>
+      </div>
+    </dialog>
   );
 }
 
-// Fuzzy score : 100 si match exact, +bonus selon proximité des chars.
-function fuzzyScore(text: string, query: string): number {
-  if (!query) return 1;
-  if (text.includes(query)) return 100 - text.indexOf(query);
+// ============================================================
+// Row mémoïsée : évite de re-render toutes les rows quand seul `selected` bouge.
+// Comparaison par props (selected, idx, item.id) — React.memo suffit car item
+// est référentiellement stable (vient du useMemo de items).
+// ============================================================
+
+interface RowProps {
+  item: CommandItem;
+  idx: number;
+  selected: boolean;
+  onSelect: (idx: number) => void;
+  rowId: string;
+}
+
+const PaletteRow = memo(function PaletteRow({
+  item,
+  idx,
+  selected,
+  onSelect,
+  rowId
+}: RowProps): JSX.Element {
+  return (
+    <div
+      id={rowId}
+      data-idx={idx}
+      role="option"
+      aria-selected={selected}
+      className={`palette-item ${selected ? 'selected' : ''}`}
+      onClick={() => void item.run()}
+      onMouseEnter={() => onSelect(idx)}
+    >
+      <span className="palette-item-icon">{item.icon}</span>
+      <span className="palette-item-label">{item.label}</span>
+      {item.hint && <span className="palette-item-hint">{item.hint}</span>}
+    </div>
+  );
+});
+
+// ============================================================
+// Scoring fuzzy : prefix > word-prefix > contains > subsequence.
+// Plage : 0 (no match) → ~10000 (prefix exact).
+// ============================================================
+function score(text: string, q: string): number {
+  if (!q) return 1;
+  if (text.startsWith(q)) return 10000;
+  // Mot commençant par q (après espace) → quasi prefix.
+  const wordPrefix = text.indexOf(' ' + q);
+  if (wordPrefix !== -1) return 8000 - wordPrefix;
+  const idx = text.indexOf(q);
+  if (idx !== -1) return 5000 - idx;
+  // Subsequence : chaque char trouvé dans l'ordre.
   let ti = 0;
-  let score = 0;
-  for (const c of query) {
+  let s = 0;
+  for (const c of q) {
     const found = text.indexOf(c, ti);
     if (found === -1) return 0;
-    score += 1 / (found - ti + 1);
+    s += 1 / (found - ti + 1);
     ti = found + 1;
   }
-  return score;
+  return s;
+}
+
+const paletteDialogStyle: React.CSSProperties = {
+  padding: 0,
+  border: 0,
+  background: 'transparent',
+  maxWidth: 'unset',
+  maxHeight: 'unset',
+  overflow: 'visible',
+  color: 'inherit'
+};
+
+const visuallyHidden: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0,0,0,0)',
+  whiteSpace: 'nowrap',
+  border: 0
+};
+
+function ensureDialogBackdropStyle(): void {
+  if (typeof document === 'undefined') return;
+  const id = 'vmux-dialog-backdrop-style';
+  if (document.getElementById(id)) return;
+  const el = document.createElement('style');
+  el.id = id;
+  el.textContent = `
+dialog.vmux-dialog { margin: auto; inset: 0; }
+dialog.vmux-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: vmuxDialogBackdropFadeIn 120ms ease-out;
+}
+@keyframes vmuxDialogBackdropFadeIn { from { opacity: 0; } }
+`;
+  document.head.appendChild(el);
 }

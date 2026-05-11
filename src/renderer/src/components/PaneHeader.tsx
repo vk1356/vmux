@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type JSX } from 'react';
+import { memo, useCallback, useEffect, useState, type JSX, type MouseEvent } from 'react';
 import { X, Globe, Terminal as TerminalIcon, Moon, Clock } from 'lucide-react';
 import type { Pane, TerminalPane as TerminalPaneT } from '@shared/types';
 import { hostFromUrl } from '@shared/utils';
@@ -16,6 +16,11 @@ interface Props {
 
 /** Seuil de "stale" : pas d'output PTY depuis 5 min → on affiche 💤. */
 const STALE_THRESHOLD_MS = 5 * 60 * 1000;
+
+/** Style constants — hissés hors du composant pour rester identité-stable
+ *  d'un render à l'autre (sinon `memo` se déclenche sur chaque tick du store). */
+const DOT_STYLE = { width: 6, height: 6 } as const;
+const ICON_STYLE = { color: 'var(--info)' } as const;
 
 function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element {
   const attention = useSessionStore((s) => s.paneActivity[pane.id] ?? 'idle');
@@ -35,16 +40,30 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
   } else {
     label = label || hostFromUrl(pane.url);
     dotClass = 'running';
-    icon = <Globe size={11} style={{ color: 'var(--info)' }} />;
+    icon = <Globe size={11} style={ICON_STYLE} />;
   }
 
   const uptime = useUptime(term?.lastStartedAt);
   const isStale = useStaleness(term);
   const isTyping = useIsTyping(isRunningTerm ? term?.lastOutputAt : undefined);
 
+  // Close handler stable — sinon chaque re-render du header recrée la lambda
+  // et invalide le sub-component du bouton (négligeable mais propre).
+  const onClose = useCallback(
+    (e: MouseEvent): void => {
+      e.stopPropagation();
+      void window.cmux.panes.close(sessionId, pane.id);
+    },
+    [sessionId, pane.id]
+  );
+
+  // Style d'accent : on n'alloue que si accent défini. Hors de ce cas,
+  // on partage DOT_STYLE et le `color` du span est piloté en CSS via la classe.
+  const dotStyle = accent ? { ...DOT_STYLE, color: accent } : DOT_STYLE;
+
   return (
     <div className={`pane-header ${active ? 'active' : ''} attention-${attention}`}>
-      <span className={`session-dot ${dotClass}`} style={{ width: 6, height: 6, color: accent }} />
+      <span className={`session-dot ${dotClass}`} style={dotStyle} />
       <span className="pane-header-icon">{icon}</span>
       <span className="pane-header-label" title={label}>
         {label}
@@ -74,12 +93,10 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
       {isRunningTerm && <PaneStats paneId={pane.id} compact />}
       <button
         className="pane-header-close"
-        onClick={(e) => {
-          e.stopPropagation();
-          void window.cmux.panes.close(sessionId, pane.id);
-        }}
+        onClick={onClose}
         title={t('paneCloseTitle')}
         aria-label={t('paneCloseAria')}
+        type="button"
       >
         <X size={11} />
       </button>
@@ -90,21 +107,34 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
 export const PaneHeader = memo(PaneHeaderImpl);
 
 /** Re-render toutes les 30s pour rafraîchir l'uptime affiché. 30s = granularité
- *  utile (les minutes changent rarement, on ne perd rien à <30s). */
+ *  utile (les minutes changent rarement, on ne perd rien à <30s). On stocke
+ *  la string formatée directement et ne re-render que si elle change. */
 function useUptime(lastStartedAt: number | undefined): string | null {
-  const [, tick] = useState(0);
+  const [label, setLabel] = useState<string | null>(() =>
+    lastStartedAt ? formatDuration(Date.now() - lastStartedAt) : null
+  );
   useEffect(() => {
-    if (!lastStartedAt) return;
-    const id = setInterval(() => tick((n) => n + 1), 30_000);
+    if (!lastStartedAt) {
+      setLabel(null);
+      return;
+    }
+    // Recompute immédiatement (lastStartedAt vient peut-être de changer).
+    setLabel(formatDuration(Date.now() - lastStartedAt));
+    const id = setInterval(() => {
+      const next = formatDuration(Date.now() - lastStartedAt);
+      // setState avec valeur identique : React déjà bailout, mais on évite
+      // l'appel pour de bon (réduit le bruit dans React DevTools).
+      setLabel((prev) => (prev === next ? prev : next));
+    }, 30_000);
     return () => clearInterval(id);
   }, [lastStartedAt]);
-  if (!lastStartedAt) return null;
-  return formatDuration(Date.now() - lastStartedAt);
+  return label;
 }
 
 /** Détecte si un agent est "en train d'écrire" : output PTY < 1.5s.
- *  Tick 600ms (assez réactif pour voir le dot apparaître/disparaître sans surcharger
- *  React). 1 timer par PaneHeader monté → en pratique max ~10 panes, négligeable. */
+ *  Tick 600ms. setState bailout-aware : on ne déclenche un render que si la
+ *  valeur change réellement (avant : `setTyping(...)` à chaque tick → 1 render
+ *  toutes les 600ms par PaneHeader, même quand l'état est stable). */
 function useIsTyping(lastOutputAt: number | undefined): boolean {
   const [typing, setTyping] = useState(false);
   useEffect(() => {
@@ -113,7 +143,8 @@ function useIsTyping(lastOutputAt: number | undefined): boolean {
       return;
     }
     const check = (): void => {
-      setTyping(Date.now() - lastOutputAt < 1500);
+      const next = Date.now() - lastOutputAt < 1500;
+      setTyping((prev) => (prev === next ? prev : next));
     };
     check();
     const id = setInterval(check, 600);
@@ -126,19 +157,23 @@ function useIsTyping(lastOutputAt: number | undefined): boolean {
  *  Re-check toutes les 30s. Sur les panes morts/restart, retourne false. */
 function useStaleness(pane: TerminalPaneT | null): boolean {
   const [stale, setStale] = useState(false);
+  const lastOutputAt = pane?.lastOutputAt;
+  const status = pane?.status;
   useEffect(() => {
-    if (!pane || pane.status !== 'running' || !pane.lastOutputAt) {
+    if (!pane || status !== 'running' || !lastOutputAt) {
       setStale(false);
       return;
     }
     const check = (): void => {
-      const age = Date.now() - (pane.lastOutputAt ?? Date.now());
-      setStale(age > STALE_THRESHOLD_MS);
+      const age = Date.now() - lastOutputAt;
+      const next = age > STALE_THRESHOLD_MS;
+      setStale((prev) => (prev === next ? prev : next));
     };
     check();
     const id = setInterval(check, 30_000);
     return () => clearInterval(id);
-  }, [pane?.lastOutputAt, pane?.status]);
+    // `pane` lui-même n'est pas dans les deps : seuls les 2 fields lus comptent.
+  }, [pane, lastOutputAt, status]);
   return stale;
 }
 

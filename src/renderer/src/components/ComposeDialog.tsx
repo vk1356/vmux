@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type JSX } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type JSX } from 'react';
 import { Send, X, AlignLeft } from 'lucide-react';
 import type { Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { useT } from '../i18n';
+
+ensureDialogBackdropStyle();
 
 interface Props {
   open: boolean;
@@ -17,25 +19,39 @@ export function ComposeDialog({ open, session, onClose }: Props): JSX.Element | 
   const [text, setText] = useState('');
   const [target, setTarget] = useState<string>('');
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const targetSelectId = useId();
+  const textareaId = useId();
 
-  // Liste des terminaux de la session pour le sélecteur de cible.
-  const targets = session
-    ? allPaneIds(session.tree)
-        .map((id) => session.panes[id])
-        .filter((p): p is TerminalPane => p?.kind === 'terminal')
-    : [];
+  // Liste des terminaux de la session — mémoïsée pour stable identity.
+  const targets = useMemo(
+    () =>
+      session
+        ? allPaneIds(session.tree)
+            .map((id) => session.panes[id])
+            .filter((p): p is TerminalPane => p?.kind === 'terminal')
+        : [],
+    [session]
+  );
 
   useEffect(() => {
-    if (!open) return;
-    setText('');
-    const active = session?.activePaneId;
-    if (active && session?.panes[active]?.kind === 'terminal') {
-      setTarget(active);
-    } else if (targets[0]) {
-      setTarget(targets[0].id);
+    const d = dialogRef.current;
+    if (!d) return;
+    if (open && !d.open) {
+      d.showModal();
+      setText('');
+      const active = session?.activePaneId;
+      if (active && session?.panes[active]?.kind === 'terminal') {
+        setTarget(active);
+      } else if (targets[0]) {
+        setTarget(targets[0].id);
+      }
+      requestAnimationFrame(() => taRef.current?.focus());
+    } else if (!open && d.open) {
+      d.close();
     }
-    requestAnimationFrame(() => taRef.current?.focus());
-  }, [open, session?.activePaneId]);
+  }, [open, session?.activePaneId, session?.panes, targets]);
 
   if (!open || !session) return null;
 
@@ -53,57 +69,113 @@ export function ComposeDialog({ open, session, onClose }: Props): JSX.Element | 
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       send();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
     }
+    // Esc → native cancel event sur <dialog>.
+  };
+
+  const onBackdropClick = (e: React.MouseEvent<HTMLDialogElement>): void => {
+    if (e.target === e.currentTarget) onClose();
   };
 
   return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div className="compose" onClick={(e) => e.stopPropagation()}>
-        <div className="compose-header">
-          <div className="compose-title">
-            <AlignLeft size={14} /> Compose
-          </div>
-          <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
-            <X size={14} />
-          </button>
+    <dialog
+      ref={dialogRef}
+      className="compose vmux-dialog"
+      style={dialogResetStyle}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={onBackdropClick}
+      aria-labelledby={titleId}
+    >
+      <div className="compose-header">
+        <div className="compose-title" id={titleId}>
+          <AlignLeft size={14} /> Compose
         </div>
-        <div className="compose-target">
-          <span className="field-label">{t('composeSendTo')}</span>
-          <select
-            className="select"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-          >
-            {targets.map((tp) => (
-              <option key={tp.id} value={tp.id}>
-                {tp.label || tp.agentId}{' '}
-                {tp.id === session.activePaneId ? `(${t('statusActive')})` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-        <textarea
-          ref={taRef}
-          className="compose-textarea"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={t('composePlaceholder')}
-          spellCheck={false}
-        />
-        <div className="compose-footer">
-          <span className="hint">
-            <kbd>Ctrl+Enter</kbd> {t('composeSendHint')} · <kbd>Esc</kbd>{' '}
-            {t('composeCancelHint')}
-          </span>
-          <button className="btn primary" onClick={send} disabled={!text.trim() || !target}>
-            <Send size={13} /> {t('composeSendHint')}
-          </button>
-        </div>
+        <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
+          <X size={14} />
+        </button>
       </div>
-    </div>
+      <div className="compose-target">
+        <label htmlFor={targetSelectId} className="field-label">
+          {t('composeSendTo')}
+        </label>
+        <select
+          id={targetSelectId}
+          className="select"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+        >
+          {targets.map((tp) => (
+            <option key={tp.id} value={tp.id}>
+              {tp.label || tp.agentId}{' '}
+              {tp.id === session.activePaneId ? `(${t('statusActive')})` : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+      <label htmlFor={textareaId} className="sr-only" style={visuallyHidden}>
+        {t('composePlaceholder')}
+      </label>
+      <textarea
+        id={textareaId}
+        ref={taRef}
+        className="compose-textarea"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={onKey}
+        placeholder={t('composePlaceholder')}
+        spellCheck={false}
+      />
+      <div className="compose-footer">
+        <span className="hint">
+          <kbd>Ctrl+Enter</kbd> {t('composeSendHint')} · <kbd>Esc</kbd> {t('composeCancelHint')}
+        </span>
+        <button className="btn primary" onClick={send} disabled={!text.trim() || !target}>
+          <Send size={13} /> {t('composeSendHint')}
+        </button>
+      </div>
+    </dialog>
   );
+}
+
+const dialogResetStyle: React.CSSProperties = {
+  padding: 0,
+  border: 0,
+  background: 'transparent',
+  maxWidth: 'unset',
+  maxHeight: 'unset',
+  overflow: 'visible',
+  color: 'inherit'
+};
+
+const visuallyHidden: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0,0,0,0)',
+  whiteSpace: 'nowrap',
+  border: 0
+};
+
+function ensureDialogBackdropStyle(): void {
+  if (typeof document === 'undefined') return;
+  const id = 'vmux-dialog-backdrop-style';
+  if (document.getElementById(id)) return;
+  const el = document.createElement('style');
+  el.id = id;
+  el.textContent = `
+dialog.vmux-dialog { margin: auto; inset: 0; }
+dialog.vmux-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: vmuxDialogBackdropFadeIn 120ms ease-out;
+}
+@keyframes vmuxDialogBackdropFadeIn { from { opacity: 0; } }
+`;
+  document.head.appendChild(el);
 }

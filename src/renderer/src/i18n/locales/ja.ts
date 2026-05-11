@@ -1,5 +1,6 @@
 // Lazy-loaded locale chunk. See i18n/index.ts.
-const JA: Record<string, string> = {
+import type { LocaleCatalog } from '..';
+const JA = {
   appTagline: 'AIマルチエージェント・オーケストレーター',
   heroTitleA: '複数のAIエージェントを、',
   heroTitleB: '一つのウィンドウで。',
@@ -261,7 +262,7 @@ const JA: Record<string, string> = {
   'agentDesc.aider': 'CLI の AI ペアプログラマー',
   'agentDesc.gemini': 'Google Gemini CLI',
   'agentDesc.shell': '生の PowerShell、エージェントなし'
-};
+} satisfies LocaleCatalog;
 
 
 export default JA;

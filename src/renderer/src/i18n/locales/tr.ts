@@ -1,5 +1,6 @@
 // Lazy-loaded locale chunk. See i18n/index.ts.
-const TR: Record<string, string> = {
+import type { LocaleCatalog } from '..';
+const TR = {
   appTagline: 'AI çoklu-ajan orkestratörü',
   heroTitleA: 'Birden çok AI ajanı,',
   heroTitleB: 'tek pencere.',
@@ -262,7 +263,7 @@ const TR: Record<string, string> = {
   'agentDesc.aider': "CLI'da AI çift programcı",
   'agentDesc.gemini': 'Google Gemini CLI',
   'agentDesc.shell': 'Saf PowerShell, ajan yok'
-};
+} satisfies LocaleCatalog;
 
 
 export default TR;

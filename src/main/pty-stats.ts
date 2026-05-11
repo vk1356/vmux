@@ -39,6 +39,15 @@ class PtyStatsCollector extends EventEmitter {
    *  Avant ce seuil, on flag `primed: false` pour que l'UI affiche "calculating…"
    *  plutôt qu'un faux 0%. */
   private polledOnce = new Set<PaneId>();
+  /** Cache des arbres de processus par root pid. pidtree fait un spawn de
+   *  wmic/Get-CimInstance sur Windows : cher (~30-50ms). On le recalcule
+   *  toutes les `TREE_TTL_MS` ou quand un pid disparaît. */
+  private treeCache = new Map<number, { pids: number[]; ts: number }>();
+  /** Re-entrancy guard : un poll lent pourrait chevaucher le suivant
+   *  (pidtree + pidusage = parfois >2s sur machine chargée). */
+  private collecting = false;
+  /** Shutdown guard : annule les emits en vol après teardown. */
+  private aborted = false;
   /** Nombre de cœurs logiques — capturé une fois au boot. Utilisé pour
    *  normaliser le CPU côté UI sans relire `os.cpus()` à chaque sample. */
   private static readonly CORES = Math.max(1, os.cpus().length);
@@ -48,8 +57,14 @@ class PtyStatsCollector extends EventEmitter {
    *  pour ne pas peser sur la boucle main process (chaque poll = 1 tick
    *  microtask + N appels syscall via pidusage). */
   private static readonly POLL_INTERVAL_MS = 2000;
+  /** TTL du cache de tree : 6s = 3 polls. Au-delà, on rescanne au cas où
+   *  l'agent aurait spawn de nouveaux enfants (build subprocess, tests, …). */
+  private static readonly TREE_TTL_MS = 6000;
 
   setPid(paneId: PaneId, pid: number): void {
+    // Si le pid change pour ce pane (restart), invalide aussi son cache d'arbre.
+    const prev = this.pids.get(paneId);
+    if (prev !== undefined && prev !== pid) this.treeCache.delete(prev);
     this.pids.set(paneId, pid);
     // Restart d'un pane → on reset son flag primed pour rejouer "calculating…".
     this.polledOnce.delete(paneId);
@@ -57,6 +72,8 @@ class PtyStatsCollector extends EventEmitter {
   }
 
   removePane(paneId: PaneId): void {
+    const prev = this.pids.get(paneId);
+    if (prev !== undefined) this.treeCache.delete(prev);
     this.pids.delete(paneId);
     this.polledOnce.delete(paneId);
     if (this.pids.size === 0) this.stop();
@@ -64,8 +81,22 @@ class PtyStatsCollector extends EventEmitter {
 
   /** Pas de panes vivants → arrête le timer. Évite des polls vides. */
   private ensureRunning(): void {
-    if (this.timer || this.pids.size === 0) return;
-    this.timer = setInterval(() => void this.collect(), PtyStatsCollector.POLL_INTERVAL_MS);
+    if (this.timer || this.pids.size === 0 || this.aborted) return;
+    this.timer = setInterval(() => {
+      // Re-entrancy guard : si le poll précédent n'est pas terminé (pidtree
+      // lent sur Win sous charge), on skip ce tick plutôt que d'empiler des
+      // collects qui se marcheraient dessus pour le cache.
+      if (this.collecting) return;
+      this.collecting = true;
+      this.collect()
+        .catch((err) => log.debug('[stats] collect threw', err))
+        .finally(() => {
+          this.collecting = false;
+        });
+    }, PtyStatsCollector.POLL_INTERVAL_MS);
+    // Permet à Node de quitter même si le timer est encore vivant (sinon
+    // shutdown forcé bloque le main process).
+    if (typeof this.timer.unref === 'function') this.timer.unref();
   }
 
   private stop(): void {
@@ -74,21 +105,59 @@ class PtyStatsCollector extends EventEmitter {
       this.timer = null;
     }
     this.prevCpuTimes = null;
+    this.treeCache.clear();
   }
 
   /** Pour un PID donné, retourne pid + tous ses descendants. Sur Windows, c'est
    *  crucial : `pty.pid` pointe sur `pwsh.exe` (le wrapper) mais l'agent
    *  (`claude`/`codex`/`node.exe` enfant) tourne dans un sous-processus.
-   *  Sans cette agrégation, les stats restent figées sur le shell idle. */
+   *  Sans cette agrégation, les stats restent figées sur le shell idle.
+   *
+   *  Caché TREE_TTL_MS pour éviter de spawn wmic/Get-CimInstance à chaque
+   *  poll (≥30ms par appel sur Windows, dominait le coût du collect). */
   private async treePids(rootPid: number): Promise<number[]> {
+    const cached = this.treeCache.get(rootPid);
+    const now = Date.now();
+    if (cached && now - cached.ts < PtyStatsCollector.TREE_TTL_MS) {
+      return cached.pids;
+    }
     try {
       const children = await pidtree(rootPid);
       // pidtree renvoie uniquement les descendants — on ajoute la racine.
-      return [rootPid, ...children];
+      const pids = [rootPid, ...children];
+      this.treeCache.set(rootPid, { pids, ts: now });
+      return pids;
     } catch {
       // Le process est mort ou inaccessible : on retombe sur le pid seul,
-      // pidusage gérera le throw downstream.
+      // pidusage gérera le throw downstream. Pas de cache (process zombie).
       return [rootPid];
+    }
+  }
+
+  /** Kill un arbre de processus depuis sa racine. Utilisé au shutdown pour
+   *  nettoyer les orphelins ConPTY (agent → node.exe enfants qui survivraient
+   *  au kill du pwsh wrapper). Best-effort : on swallow toutes les erreurs
+   *  (process déjà mort, EACCES, etc.). */
+  async killTrees(rootPids: number[]): Promise<void> {
+    if (rootPids.length === 0) return;
+    const allPids = new Set<number>();
+    await Promise.all(
+      rootPids.map(async (root) => {
+        try {
+          const tree = await pidtree(root);
+          allPids.add(root);
+          for (const p of tree) allPids.add(p);
+        } catch {
+          allPids.add(root);
+        }
+      })
+    );
+    for (const pid of allPids) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* déjà mort / EPERM */
+      }
     }
   }
 
@@ -117,6 +186,7 @@ class PtyStatsCollector extends EventEmitter {
   }
 
   private async collect(): Promise<void> {
+    if (this.aborted) return;
     const entries = Array.from(this.pids.entries());
     if (entries.length === 0) return;
     const ts = Date.now();
@@ -134,22 +204,28 @@ class PtyStatsCollector extends EventEmitter {
     // Étape 2 : flatten et dedupe pour un seul appel pidusage batché.
     const allPids = Array.from(new Set(trees.flatMap((t) => t.pids)));
     let stats: Record<number, { cpu: number; memory: number }> = {};
-    try {
-      stats = await pidusage(allPids);
-    } catch {
-      // Au moins un PID mort dans le batch : retombe sur du per-pid pour ne
-      // pas perdre les autres.
-      await Promise.all(
-        allPids.map(async (pid) => {
-          try {
-            const s = await pidusage(pid);
-            stats[pid] = { cpu: s.cpu, memory: s.memory };
-          } catch {
-            /* pid mort — on saute */
-          }
-        })
-      );
+    if (allPids.length > 0) {
+      try {
+        stats = await pidusage(allPids);
+      } catch {
+        // Au moins un PID mort dans le batch : retombe sur du per-pid pour ne
+        // pas perdre les autres. Limite la concurrence implicite — Promise.all
+        // sur 50+ pidusage calls peut générer 50+ syscalls simultanés sur
+        // Windows (chacun fait des appels GetProcessTimes/PSAPI).
+        await Promise.all(
+          allPids.map(async (pid) => {
+            try {
+              const s = await pidusage(pid);
+              stats[pid] = { cpu: s.cpu, memory: s.memory };
+            } catch {
+              /* pid mort — on saute, invalide le cache si présent */
+              this.treeCache.delete(pid);
+            }
+          })
+        );
+      }
     }
+    if (this.aborted) return;
 
     // Étape 3 : somme par pane.
     const samples: PaneStatSample[] = [];
@@ -185,9 +261,11 @@ class PtyStatsCollector extends EventEmitter {
         // process actif, on l'enlève de la map pour libérer le timer.
         this.pids.delete(tree.paneId);
         this.polledOnce.delete(tree.paneId);
+        this.treeCache.delete(tree.rootPid);
         log.debug(`[stats] pane ${tree.paneId} (root pid=${tree.rootPid}) has no live process`);
       }
     }
+    if (this.aborted) return;
     if (samples.length > 0) this.emit('stats', samples);
 
     // Étape 4 : stats système globales — émis même si aucun pane vivant ne reste,
@@ -208,9 +286,12 @@ class PtyStatsCollector extends EventEmitter {
   }
 
   shutdown(): void {
+    this.aborted = true;
     this.stop();
     this.pids.clear();
     this.polledOnce.clear();
+    this.treeCache.clear();
+    this.removeAllListeners();
   }
 
   override on<K extends keyof Events>(e: K, l: (...a: Events[K]) => void): this {

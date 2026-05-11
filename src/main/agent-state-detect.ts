@@ -15,6 +15,10 @@
  * NB : la décision finale `idle` vs `generating` ne peut pas être prise par cette
  * fonction seule (il faut connaître le delta de temps depuis le dernier chunk).
  * Voir `pty-manager.ts` qui combine ce détecteur avec un timer d'inactivité.
+ *
+ * Perf : tous les patterns "thinking" sont FUSIONNÉS dans une seule regex
+ * alternation — un seul scan du tail (800 chars max) par chunk, au lieu de 5
+ * scans séquentiels. Engine V8 traite l'alternation en une passe NFA.
  */
 
 import { detectsNeedsInput } from './needs-input-detect';
@@ -32,29 +36,48 @@ const SCAN_WINDOW = 800;
  *   précédé par un glyphe d'animation typique. Pour éviter les faux positifs
  *   on exige aussi la présence d'un marqueur fort (`esc to interrupt` ou
  *   un glyphe de spinner).
+ *
+ * Le set de glyphes est dédoublonné (l'ancienne version avait `✻` deux fois).
  */
-const SPINNER_GLYPHS = '[✻✶✢✻*·•○◔◑◕◐◓◒◧◨◩◪◫◰◱◲◳]';
-const THINKING_PATTERNS: RegExp[] = [
-  // Marqueur le plus fiable de Claude Code : "(esc to interrupt)" sur le statut.
-  /\(esc to interrupt\)/i,
-  // Glyphe de spinner + verbe-ing + ellipsis (Claude rotate ces verbes)
-  new RegExp(`${SPINNER_GLYPHS}\\s+[A-Z][a-z]+ing[…\\.]{1,3}`),
-  // "Thinking…" / "Thinking..." en début de ligne (codex, cursor)
-  // Pas de flag `i` — Claude Code/codex/cursor utilisent toujours la
-  // capitalisation initiale, et la version lowercase apparaît dans des messages
-  // utilisateur cités (faux positifs).
-  /(?:^|\n)\s*Thinking[…\.]{1,3}/,
-  // Codex CLI : "[Reasoning]" ou "Reasoning…"
-  /(?:^|\n)\s*Reasoning[…\.]{0,3}/,
-  // Aider : "Thinking…" pendant l'attente du modèle
-  /\bAnalyzing[…\.]{1,3}/i
-];
+const SPINNER_GLYPHS = '[✻✶✢*·•○◔◑◕◐◓◒◧◨◩◪◫◰◱◲◳]';
+
+/**
+ * Regex fusionnée. Comporte plusieurs sous-patterns en alternation :
+ *  1. `(esc to interrupt)` — marqueur le plus fiable de Claude Code (case-i).
+ *  2. spinner glyph + Verb-ing + ellipsis (case-SENSITIVE — voir ci-dessous).
+ *  3. "Thinking…" / "Thinking..." en début de ligne (case-SENSITIVE).
+ *  4. Codex "Reasoning…" en début de ligne.
+ *  5. Aider "Analyzing…" n'importe où (case-i).
+ *
+ * Pourquoi pas `i` global ? La capitalisation est un signal fort de spinner
+ * (Claude/codex/cursor utilisent toujours Title-case "Thinking", la version
+ * lowercase apparaît dans du texte cité par l'utilisateur → faux positifs).
+ * On garde donc TWO regexes : une case-sensitive (patterns 2+3+4) et une
+ * case-insensitive (patterns 1+5). Toujours plus efficace que 5 regex
+ * séparées.
+ */
+const THINKING_CI_RE = /\(esc to interrupt\)|\bAnalyzing[….]{1,3}/i;
+
+const THINKING_CS_RE = new RegExp(
+  [
+    // Glyphe de spinner + verbe-ing + ellipsis (Claude rotate ces verbes)
+    `${SPINNER_GLYPHS}\\s+[A-Z][a-z]+ing[….]{1,3}`,
+    // "Thinking…" en début de ligne (codex, cursor, claude)
+    '(?:^|\\n)\\s*Thinking[….]{1,3}',
+    // Codex CLI : "Reasoning…" / "Reasoning"
+    '(?:^|\\n)\\s*Reasoning[….]{0,3}'
+  ].join('|')
+);
 
 /** Détecte si le tail montre un spinner "thinking" actif. */
 export function detectsThinking(tailStripped: string): boolean {
+  if (!tailStripped) return false;
   const tail =
     tailStripped.length > SCAN_WINDOW ? tailStripped.slice(-SCAN_WINDOW) : tailStripped;
-  return THINKING_PATTERNS.some((re) => re.test(tail));
+  // Test la regex la plus discriminante en premier (case-insensitive : moins
+  // de patterns, mais l'un d'eux — "esc to interrupt" — est le marqueur le
+  // plus fiable et le plus fréquent dans la pratique Claude Code).
+  return THINKING_CI_RE.test(tail) || THINKING_CS_RE.test(tail);
 }
 
 /**

@@ -1,6 +1,15 @@
 // Mini parser CLI pour `vMux.exe new --agent X --prompt Y --cwd Z`.
-// Pas de dépendance externe — on parse à la main car le besoin est minimaliste.
+//
+// On utilise `util.parseArgs` (Node ≥ 18.3, stable Node ≥ 20) — pas de regex
+// donc pas de risque de catastrophic backtracking, et la forme `--flag=value`,
+// `--flag value` et `--` sont gérées nativement.
+//
+// Sur Windows, ConPTY/CreateProcess split l'argv côté OS : les chemins quotés
+// (`"C:\Program Files\foo"`) arrivent déjà sous forme d'un seul argv slot sans
+// les guillemets. On n'a donc pas à les déparser ici.
 
+import { parseArgs, type ParseArgsConfig } from 'node:util';
+import log from 'electron-log/main';
 import type { AgentId } from '@shared/types';
 
 export type CliCommand =
@@ -25,42 +34,70 @@ const VALID_AGENTS: ReadonlySet<AgentId> = new Set([
   'shell'
 ]);
 
+const PARSE_OPTIONS = {
+  agent: { type: 'string', short: 'a' },
+  prompt: { type: 'string', short: 'p' },
+  cwd: { type: 'string', short: 'd' },
+  name: { type: 'string', short: 'n' },
+  help: { type: 'boolean', short: 'h' },
+  hidden: { type: 'boolean' }
+} as const satisfies NonNullable<ParseArgsConfig['options']>;
+
 /** Parse argv pour extraire une commande vMux. Retourne {kind:'none'} si rien
  *  ne correspond — l'app boot normalement. */
 export function parseCliArgs(argv: readonly string[]): CliCommand {
   // En prod : argv[0] = vMux.exe, argv[1] = first user arg.
-  // En dev : argv contient electron + chemin script + args. On scan dans tous les cas.
-  const args = argv.slice(1);
-  // --hidden : flag passé par auto-launch Windows pour démarrer minimisé.
-  if (args.includes('--hidden')) {
-    return { kind: 'hidden' };
+  // En dev : argv contient electron + chemin script + args.
+  // On filtre les artefacts (chemins .exe / .js / electron) AVANT parseArgs
+  // pour qu'il ne les confonde pas avec des positionnels.
+  const cleaned: string[] = [];
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (!a) continue;
+    // Skip les chemins absolus de l'interpréteur Electron en dev.
+    if (i === 1 && (a.endsWith('.js') || a.endsWith('.exe') || a.endsWith('main/index.js'))) {
+      continue;
+    }
+    cleaned.push(a);
   }
-  // Help peut être une commande positionnelle (`vmux help`) ou un flag global
-  // (`vmux --help` / `vmux -h`). On gère les flags en premier car ils
-  // seraient filtrés par `args.find` en-dessous.
-  if (args.includes('--help') || args.includes('-h')) {
-    return { kind: 'help' };
-  }
-  const first = args.find((a) => !a.startsWith('-') && !a.endsWith('.js') && !a.endsWith('.exe'));
 
-  if (!first) return { kind: 'none' };
-  const cmd = first.toLowerCase();
-
-  if (cmd === 'help') {
-    return { kind: 'help' };
-  }
-  if (cmd === 'focus') {
-    return { kind: 'focus' };
-  }
-  if (cmd !== 'new') {
+  let parsed: ReturnType<typeof parseArgs>;
+  try {
+    parsed = parseArgs({
+      args: cleaned,
+      options: PARSE_OPTIONS,
+      strict: false, // tolère les flags inconnus — un mauvais flag ne doit pas crasher l'app
+      allowPositionals: true
+    });
+  } catch (err) {
+    // parseArgs throw si la valeur d'une option est manquante en mode strict.
+    // strict:false évite ça, mais on garde un fallback défensif.
+    log.warn('[cli] parseArgs failed', err);
     return { kind: 'none' };
   }
 
-  const agent = readFlag(args, '--agent', '-a');
-  const prompt = readFlag(args, '--prompt', '-p');
-  const cwd = readFlag(args, '--cwd', '-d');
-  const name = readFlag(args, '--name', '-n');
+  const flags = parsed.values as {
+    agent?: string;
+    prompt?: string;
+    cwd?: string;
+    name?: string;
+    help?: boolean;
+    hidden?: boolean;
+  };
+  const positionals = parsed.positionals;
 
+  if (flags.hidden) return { kind: 'hidden' };
+  if (flags.help) return { kind: 'help' };
+
+  // Première positionnelle non-interpréteur. parseArgs nous l'a déjà filtrée.
+  const first = positionals[0]?.toLowerCase();
+  if (!first) return { kind: 'none' };
+
+  if (first === 'help') return { kind: 'help' };
+  if (first === 'focus') return { kind: 'focus' };
+  if (first !== 'new') return { kind: 'none' };
+
+  const agent = flags.agent;
   if (!agent || !VALID_AGENTS.has(agent as AgentId)) {
     // Sans --agent valide on ne peut rien faire : on retourne 'none' pour que
     // l'app boot normalement (l'user verra le hero avec ses sessions).
@@ -70,32 +107,10 @@ export function parseCliArgs(argv: readonly string[]): CliCommand {
   return {
     kind: 'new',
     agentId: agent as AgentId,
-    prompt,
-    cwd,
-    name
+    prompt: flags.prompt,
+    cwd: flags.cwd,
+    name: flags.name
   };
-}
-
-/** Lit une valeur de flag : `--foo bar` ou `--foo=bar`. */
-function readFlag(args: readonly string[], long: string, short?: string): string | undefined {
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === long || a === short) {
-      // Garde-fou : `vmux new --agent` (sans valeur) ou `--agent --prompt …`
-      // (la valeur suivante est un autre flag) ⇒ on retourne undefined
-      // pour que le parser remonte 'none' au lieu d'utiliser '--prompt' comme valeur d'agent.
-      const next = args[i + 1];
-      if (next === undefined || next.startsWith('-')) return undefined;
-      return next;
-    }
-    if (a.startsWith(`${long}=`)) {
-      return a.slice(long.length + 1);
-    }
-    if (short && a.startsWith(`${short}=`)) {
-      return a.slice(short.length + 1);
-    }
-  }
-  return undefined;
 }
 
 export const CLI_HELP = `vMux — Windows multi-agent AI orchestrator

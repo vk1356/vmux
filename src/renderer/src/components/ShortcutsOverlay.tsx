@@ -1,7 +1,9 @@
-import { useRef, type JSX } from 'react';
+import { useEffect, useId, useRef, type JSX } from 'react';
 import { X, Keyboard } from 'lucide-react';
 import { useT, type TKey } from '../i18n';
-import { useFocusTrap } from '../hooks/useFocusTrap';
+
+// Idempotent — voir ConfirmDialog pour le rationale détaillé.
+ensureDialogBackdropStyle();
 
 interface Props {
   open: boolean;
@@ -62,59 +64,101 @@ const GROUPS: GroupSpec[] = [
 
 export function ShortcutsOverlay({ open, onClose }: Props): JSX.Element | null {
   const t = useT();
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(dialogRef, open);
+  const titleId = useId();
+  const ref = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const d = ref.current;
+    if (!d) return;
+    if (open && !d.open) d.showModal();
+    else if (!open && d.open) d.close();
+  }, [open]);
+
   if (!open) return null;
+
+  const onBackdropClick = (e: React.MouseEvent<HTMLDialogElement>): void => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
   return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div
-        className="shortcuts-overlay"
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('shortcutsTitle')}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="dialog-header">
-          <div className="dialog-title">
-            <Keyboard size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
-            {t('shortcutsTitle')}
-          </div>
-          <button className="btn-icon" onClick={onClose} aria-label={t('shortcutsClose')}>
-            <X size={14} />
-          </button>
+    <dialog
+      ref={ref}
+      className="shortcuts-overlay vmux-dialog"
+      style={dialogResetStyle}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={onBackdropClick}
+      aria-labelledby={titleId}
+    >
+      <div className="dialog-header">
+        <div className="dialog-title" id={titleId}>
+          <Keyboard size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+          {t('shortcutsTitle')}
         </div>
-        <div className="shortcuts-grid">
-          {GROUPS.map((g) => (
-            <div key={g.titleKey} className="shortcuts-group">
-              <div className="shortcuts-group-title">{t(g.titleKey)}</div>
-              {g.items.map((s) => {
-                // Cas spécial : pour la rangée "drag file" et "📋 button", la
-                // colonne `keys` est elle-même une clé i18n (texte plutôt qu'un
-                // raccourci). On détecte les `shortcutsItem*` pour traduire.
-                const keysLabel = s.keys.startsWith('shortcutsItem')
-                  ? t(s.keys as TKey)
-                  : s.keys;
-                return (
-                  <div key={s.keys + s.labelKey} className="shortcut-row">
-                    <span className="shortcut-keys">{keysLabel}</span>
-                    <span className="shortcut-label">{t(s.labelKey)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-        <div className="dialog-footer">
-          <span className="hint">
-            {t('shortcutsCloseHint', { q: '?', esc: 'Esc' })
-              .split(/(\?|Esc)/)
-              .map((part, i) =>
-                part === '?' || part === 'Esc' ? <kbd key={i}>{part}</kbd> : <span key={i}>{part}</span>
-              )}
-          </span>
-        </div>
+        <button className="btn-icon" onClick={onClose} aria-label={t('shortcutsClose')}>
+          <X size={14} />
+        </button>
       </div>
-    </div>
+      <div className="shortcuts-grid">
+        {GROUPS.map((g) => (
+          <div key={g.titleKey} className="shortcuts-group">
+            <div className="shortcuts-group-title">{t(g.titleKey)}</div>
+            {g.items.map((s) => {
+              // Cas spécial : pour la rangée "drag file" et "📋 button", la
+              // colonne `keys` est elle-même une clé i18n (texte plutôt qu'un
+              // raccourci). On détecte les `shortcutsItem*` pour traduire.
+              const keysLabel = s.keys.startsWith('shortcutsItem')
+                ? t(s.keys as TKey)
+                : s.keys;
+              return (
+                <div key={s.keys + s.labelKey} className="shortcut-row">
+                  <span className="shortcut-keys">{keysLabel}</span>
+                  <span className="shortcut-label">{t(s.labelKey)}</span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="dialog-footer">
+        <span className="hint">
+          {t('shortcutsCloseHint', { q: '?', esc: 'Esc' })
+            .split(/(\?|Esc)/)
+            .map((part, i) =>
+              part === '?' || part === 'Esc' ? <kbd key={i}>{part}</kbd> : <span key={i}>{part}</span>
+            )}
+        </span>
+      </div>
+    </dialog>
   );
+}
+
+const dialogResetStyle: React.CSSProperties = {
+  padding: 0,
+  border: 0,
+  background: 'transparent',
+  maxWidth: 'unset',
+  maxHeight: 'unset',
+  overflow: 'visible',
+  color: 'inherit'
+};
+
+function ensureDialogBackdropStyle(): void {
+  if (typeof document === 'undefined') return;
+  const id = 'vmux-dialog-backdrop-style';
+  if (document.getElementById(id)) return;
+  const el = document.createElement('style');
+  el.id = id;
+  el.textContent = `
+dialog.vmux-dialog { margin: auto; inset: 0; }
+dialog.vmux-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: vmuxDialogBackdropFadeIn 120ms ease-out;
+}
+@keyframes vmuxDialogBackdropFadeIn { from { opacity: 0; } }
+`;
+  document.head.appendChild(el);
 }

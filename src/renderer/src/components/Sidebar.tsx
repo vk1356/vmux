@@ -1,4 +1,12 @@
-import { memo, useCallback, useMemo, useState, type JSX, type MouseEvent } from 'react';
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useMemo,
+  useState,
+  type JSX,
+  type MouseEvent
+} from 'react';
 import {
   Plus,
   X,
@@ -23,18 +31,25 @@ interface Props {
   onOpenSettings: () => void;
 }
 
-function classifySession(s: Session): SessionItemMeta {
+/** Classifie une session ET compte ses panes runnings/total — single pass sur
+ *  les paneIds pour éviter le double-sweep (avant : classifySession +
+ *  totalRunning faisaient chacun `allPaneIds` séparément). */
+function classifySession(s: Session): SessionItemMeta & { running: number } {
   let isRunning = false;
   let isError = false;
   let isExited = false;
+  let running = 0;
   for (const id of allPaneIds(s.tree)) {
     const p = s.panes[id];
     if (p?.kind !== 'terminal') continue;
-    if (p.status === 'running' || p.status === 'starting') isRunning = true;
+    if (p.status === 'running' || p.status === 'starting') {
+      isRunning = true;
+      running++;
+    }
     if (p.status === 'error') isError = true;
     if (p.status === 'exited') isExited = true;
   }
-  return { session: s, isRunning, isError, isExited };
+  return { session: s, isRunning, isError, isExited, running };
 }
 
 function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
@@ -67,29 +82,37 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [filter, setFilter] = useState('');
+  // Le filtrage est défilé : l'input reste réactif même quand la liste est
+  // grosse (le keystroke ne bloque pas sur le filterReduce). React 19.
+  const deferredFilter = useDeferredValue(filter);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [colorPickerFor, setColorPickerFor] = useState<string | null>(null);
   // Idle section : déployée par défaut. L'user peut la replier manuellement.
   const [idleCollapsed, setIdleCollapsed] = useState(false);
 
+  // Étape 1 : classifier toutes les sessions une seule fois. On en tire les
+  // groupes ET le totalRunning sans re-traverser les arbres.
+  const classified = useMemo(() => sessions.map(classifySession), [sessions]);
+
+  // Étape 2 : filtrer sur la query (defer pour ne pas bloquer la saisie).
   const filtered = useMemo(() => {
-    if (!filter.trim()) return sessions;
-    const q = filter.toLowerCase();
-    return sessions.filter(
-      (s) =>
+    const q = deferredFilter.trim().toLowerCase();
+    if (!q) return classified;
+    return classified.filter(({ session: s }) => {
+      return (
         s.name.toLowerCase().includes(q) ||
         (s.branch ?? '').toLowerCase().includes(q) ||
         s.cwd.toLowerCase().includes(q)
-    );
-  }, [sessions, filter]);
+      );
+    });
+  }, [classified, deferredFilter]);
 
   const groups = useMemo(() => {
     const pinned: SessionItemMeta[] = [];
     const active: SessionItemMeta[] = [];
     const idle: SessionItemMeta[] = [];
-    for (const s of filtered) {
-      const meta = classifySession(s);
-      if (s.pinned) pinned.push(meta);
+    for (const meta of filtered) {
+      if (meta.session.pinned) pinned.push(meta);
       else if (meta.isRunning) active.push(meta);
       else idle.push(meta);
     }
@@ -98,14 +121,9 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
 
   const totalRunning = useMemo(() => {
     let n = 0;
-    for (const s of sessions) {
-      for (const id of allPaneIds(s.tree)) {
-        const p = s.panes[id];
-        if (p?.kind === 'terminal' && (p.status === 'running' || p.status === 'starting')) n++;
-      }
-    }
+    for (const c of classified) n += c.running;
     return n;
-  }, [sessions]);
+  }, [classified]);
 
   const onRemove = useCallback(
     async (e: MouseEvent, s: Session): Promise<void> => {
@@ -169,7 +187,10 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
 
   const onCancelRename = useCallback(() => setRenamingId(null), []);
   const onChangeRename = useCallback((v: string) => setRenameValue(v), []);
-  const onActivate = useCallback((id: string) => setActiveSession(id), [setActiveSession]);
+  const onActivate = useCallback(
+    (id: string) => setActiveSession(id),
+    [setActiveSession]
+  );
   const onFocusPane = useCallback((sessionId: string, paneId: string) => {
     void window.cmux.panes.focus(sessionId, paneId);
   }, []);
@@ -188,6 +209,9 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
     },
     [reorderSessions]
   );
+
+  const toggleIdleCollapsed = useCallback(() => setIdleCollapsed((v) => !v), []);
+  const clearFilter = useCallback(() => setFilter(''), []);
 
   const renderItem = (meta: SessionItemMeta): JSX.Element => (
     <SessionItem
@@ -222,7 +246,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
   );
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" aria-label={t('sidebarTitle')}>
       <div className="sidebar-header">
         <div className="sidebar-header-row">
           <div className="sidebar-brand">
@@ -235,6 +259,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
               onClick={onOpenSettings}
               title={t('actionSettings')}
               aria-label={t('actionSettings')}
+              type="button"
             >
               <SettingsIcon size={14} />
             </button>
@@ -243,6 +268,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
               onClick={onNewSession}
               title={t('actionNewSession')}
               aria-label={t('actionNewSession')}
+              type="button"
             >
               <Plus size={15} strokeWidth={2.5} />
             </button>
@@ -268,13 +294,15 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             spellCheck={false}
+            aria-label={t('sidebarFilter')}
           />
           {filter && (
             <button
               className="sidebar-search-clear"
-              onClick={() => setFilter('')}
+              onClick={clearFilter}
               title={t('actionClearFilter')}
               aria-label={t('actionClearFilter')}
+              type="button"
             >
               <X size={10} />
             </button>
@@ -282,7 +310,12 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
         </div>
       )}
 
-      <div className="session-list">
+      <div
+        className="session-list"
+        role="listbox"
+        aria-label={t('sidebarTitle')}
+        aria-activedescendant={activeSessionId ?? undefined}
+      >
         {sessions.length === 0 ? (
           <div className="sidebar-empty">
             <div className="sidebar-empty-icon">
@@ -290,7 +323,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
             </div>
             <div className="sidebar-empty-title">{t('sidebarEmptyTitle')}</div>
             <span className="sidebar-empty-body">{t('sidebarEmptyBody')}</span>
-            <button className="btn primary sidebar-empty-cta" onClick={onNewSession}>
+            <button className="btn primary sidebar-empty-cta" onClick={onNewSession} type="button">
               <Plus size={12} strokeWidth={2.5} />
               {t('sidebarEmptyCta')}
             </button>
@@ -329,7 +362,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
                 tone="idle"
                 collapsible
                 collapsed={idleCollapsed}
-                onToggle={() => setIdleCollapsed((v) => !v)}
+                onToggle={toggleIdleCollapsed}
               >
                 {groups.idle.map(renderItem)}
               </SidebarSection>
@@ -367,6 +400,7 @@ function SidebarSection({
       <button
         className={`sidebar-section-header ${collapsible ? 'collapsible' : ''}`}
         onClick={collapsible ? onToggle : undefined}
+        aria-expanded={collapsible ? !collapsed : undefined}
         type="button"
       >
         {collapsible &&

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import { uuid } from '@shared/utils';
 import { clearPaneData } from './paneDataBus';
 import type {
@@ -21,6 +22,9 @@ import type {
  *  une fuite mémoire ou un agent qui ralentit, vs l'ancien 30s qui ne
  *  permettait que de voir l'instant présent. */
 export const STATS_WINDOW = 150;
+
+/** Cap dur sur l'historique d'events détectés (push/shift en tête). */
+export const EVENT_HISTORY_CAP = 200;
 
 export interface PaneStatsHistory {
   /** CPU% — fenêtre circulaire ; ordre chronologique (plus ancien en [0]).
@@ -53,6 +57,13 @@ export interface ToastItem {
   ts: number;
 }
 
+export interface EventHistoryEntry {
+  event: DetectedEvent;
+  sessionId: string;
+  sessionName: string;
+  readAt?: number;
+}
+
 interface SessionStore {
   sessions: Session[];
   /** Index dérivé sessionId → Session — maintenu en parallèle de `sessions`.
@@ -70,8 +81,8 @@ interface SessionStore {
   /** Derniers events par session (pour badges sidebar). */
   lastEventBySession: Record<string, DetectedEvent>;
   toasts: ToastItem[];
-  /** Historique des events détectés (cap 200) — utilisé par le NotificationCenter. */
-  eventHistory: Array<{ event: DetectedEvent; sessionId: string; sessionName: string; readAt?: number }>;
+  /** Historique des events détectés (cap EVENT_HISTORY_CAP) — utilisé par le NotificationCenter. */
+  eventHistory: EventHistoryEntry[];
   /** Niveau d'attention par pane — `idle` quand le user a focus, sinon escalade. */
   paneActivity: Record<PaneId, PaneAttention>;
   /** État live de l'agent IA par pane (idle/thinking/generating/needs-input).
@@ -123,24 +134,46 @@ interface SessionStore {
 /** Ordre d'escalade des niveaux d'attention. Exporté pour les composants qui
  *  doivent comparer des niveaux entre eux (sidebar agrégeant les panes). */
 export type AttentionLevel = PaneAttention;
-export const ATTENTION_RANK: Record<AttentionLevel, number> = {
+export const ATTENTION_RANK: Readonly<Record<AttentionLevel, number>> = {
   idle: 0,
   activity: 1,
   alert: 2,
   'needs-input': 3
 };
-const ATTENTION_LEVEL = ATTENTION_RANK;
 
-// Zustand v5 : la forme curried `create<T>()(...)` est requise pour bénéficier
-// de l'inférence de types et rester compatible avec les middlewares (cf. docs
-// Zustand v5 — migrating to v5).
 /** Reconstruit l'index sessionsById depuis un array. */
-function indexSessions(arr: Session[]): Record<string, Session> {
+function indexSessions(arr: readonly Session[]): Record<string, Session> {
   const idx: Record<string, Session> = {};
   for (const s of arr) idx[s.id] = s;
   return idx;
 }
 
+/** Purge auxiliaire — supprime les entrées par-paneId qui n'existent plus
+ *  dans la session après un closePane. Évite une fuite progressive de
+ *  paneStats / paneActivity / paneAgentState lors d'un churn intra-session. */
+function purgePaneMaps<V>(
+  map: Record<PaneId, V>,
+  removedPaneIds: readonly PaneId[]
+): { changed: boolean; next: Record<PaneId, V> } {
+  let changed = false;
+  let next = map;
+  for (const pid of removedPaneIds) {
+    if (pid in next) {
+      if (!changed) {
+        next = { ...map };
+        changed = true;
+      }
+      delete next[pid];
+    }
+  }
+  return { changed, next };
+}
+
+// Zustand v5 : la forme curried `create<T>()(...)` est requise pour bénéficier
+// de l'inférence de types et rester compatible avec les middlewares (cf. docs
+// Zustand v5 — migrating to v5). Pas de middleware ici : aucun consumer
+// transient (toutes les lectures passent par useSessionStore en React) et
+// devtools/persist ajouteraient bundle + cost runtime sans bénéfice.
 export const useSessionStore = create<SessionStore>()((set) => ({
   sessions: [],
   sessionsById: {},
@@ -223,25 +256,34 @@ export const useSessionStore = create<SessionStore>()((set) => ({
   upsertSession: (s) =>
     set((state) => {
       // Lookup via sessionsById (O(1)) plutôt qu'un findIndex (O(N)).
-      // Si la session n'a pas changé en référence ET en contenu shallow, on
-      // skip pour ne pas déclencher de re-render inutile.
       const existing = state.sessionsById[s.id];
       if (existing === s) return {};
-      // Purge les buffers pending paneDataBus pour les panes qui ont disparu
-      // dans l'update (closePane individuel). Sinon le bus accumule des chunks
-      // pour des panes morts jusqu'au removeSession.
+      // Détecte les panes fermés intra-session (closePane individuel) pour
+      // purger TOUTES les structures par-paneId — sinon le store accumule
+      // ad vitam des stats / attention / agent-state pour des panes morts.
+      const removedPaneIds: PaneId[] = [];
       if (existing) {
         for (const oldId of Object.keys(existing.panes)) {
-          if (!(oldId in s.panes)) clearPaneData(oldId);
+          if (!(oldId in s.panes)) removedPaneIds.push(oldId);
         }
       }
+      for (const pid of removedPaneIds) clearPaneData(pid);
+
       const sessions = existing
         ? state.sessions.map((x) => (x.id === s.id ? s : x))
         : [...state.sessions, s];
+
+      const paneStatsPurge = purgePaneMaps(state.paneStats, removedPaneIds);
+      const paneActivityPurge = purgePaneMaps(state.paneActivity, removedPaneIds);
+      const paneAgentPurge = purgePaneMaps(state.paneAgentState, removedPaneIds);
+
       return {
         sessions,
         sessionsById: { ...state.sessionsById, [s.id]: s },
-        activeSessionId: state.activeSessionId ?? s.id
+        activeSessionId: state.activeSessionId ?? s.id,
+        ...(paneStatsPurge.changed ? { paneStats: paneStatsPurge.next } : null),
+        ...(paneActivityPurge.changed ? { paneActivity: paneActivityPurge.next } : null),
+        ...(paneAgentPurge.changed ? { paneAgentState: paneAgentPurge.next } : null)
       };
     }),
 
@@ -255,25 +297,15 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       void _drop;
       // Purge les stats CPU/RAM des panes fermés — évite une fuite mémoire
       // sur les longues sessions (chaque pane gardait ses 150 samples ad vitam).
-      let paneStats = state.paneStats;
-      let paneActivity = state.paneActivity;
-      let paneAgentState = state.paneAgentState;
-      if (paneIds.length > 0) {
-        paneStats = { ...state.paneStats };
-        paneActivity = { ...state.paneActivity };
-        paneAgentState = { ...state.paneAgentState };
-        for (const pid of paneIds) {
-          delete paneStats[pid];
-          delete paneActivity[pid];
-          delete paneAgentState[pid];
-        }
-      }
+      const paneStatsPurge = purgePaneMaps(state.paneStats, paneIds);
+      const paneActivityPurge = purgePaneMaps(state.paneActivity, paneIds);
+      const paneAgentPurge = purgePaneMaps(state.paneAgentState, paneIds);
       return {
         sessions,
         sessionsById,
-        paneStats,
-        paneActivity,
-        paneAgentState,
+        paneStats: paneStatsPurge.next,
+        paneActivity: paneActivityPurge.next,
+        paneAgentState: paneAgentPurge.next,
         activeSessionId:
           state.activeSessionId === id ? sessions[0]?.id ?? null : state.activeSessionId
       };
@@ -300,6 +332,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       const id = t.id ?? `${t.kind}-${uuid()}`;
       // Dédup robuste : kind + title + body + paneId. Sans body, on dédoublonnait
       // par accident des events différents qui partageaient un titre.
+      const now = Date.now();
       const filtered = state.toasts.filter(
         (x) =>
           !(
@@ -307,25 +340,34 @@ export const useSessionStore = create<SessionStore>()((set) => ({
             x.title === t.title &&
             (x.body ?? '') === (t.body ?? '') &&
             (x.paneId ?? '') === (t.paneId ?? '') &&
-            Date.now() - x.ts < 3000
+            now - x.ts < 3000
           )
       );
-      return { toasts: [...filtered, { ...t, id, ts: Date.now() }] };
+      return { toasts: [...filtered, { ...t, id, ts: now }] };
     }),
 
   removeToast: (id) =>
-    set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+    set((state) => {
+      // Short-circuit : si l'id n'est pas présent, ne pas allouer un nouveau
+      // tableau (évite un re-render de tous les Toast).
+      if (!state.toasts.some((t) => t.id === id)) return {};
+      return { toasts: state.toasts.filter((t) => t.id !== id) };
+    }),
 
   recordEvent: (sessionId, event) =>
     set((state) => {
       const sess = state.sessionsById[sessionId];
-      const entry = {
+      const entry: EventHistoryEntry = {
         event,
         sessionId,
         sessionName: sess?.name ?? 'Session inconnue'
       };
-      // Cap 200, plus récents en tête.
-      const eventHistory = [entry, ...state.eventHistory].slice(0, 200);
+      // Cap EVENT_HISTORY_CAP, plus récents en tête. Évite slice() quand on
+      // est encore sous le cap (sous-tableau identique en contenu).
+      const eventHistory =
+        state.eventHistory.length >= EVENT_HISTORY_CAP
+          ? [entry, ...state.eventHistory.slice(0, EVENT_HISTORY_CAP - 1)]
+          : [entry, ...state.eventHistory];
       return {
         lastEventBySession: { ...state.lastEventBySession, [sessionId]: event },
         eventHistory
@@ -345,7 +387,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       return { eventHistory };
     }),
 
-  clearEventHistory: () => set({ eventHistory: [] }),
+  clearEventHistory: () =>
+    set((state) => (state.eventHistory.length === 0 ? {} : { eventHistory: [] })),
 
   bumpAttention: (paneId, level) =>
     set((state) => {
@@ -360,7 +403,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
         if (activeSess?.activePaneId === paneId) return {};
       }
       const cur = state.paneActivity[paneId] ?? 'idle';
-      const next = ATTENTION_LEVEL[level] > ATTENTION_LEVEL[cur] ? level : cur;
+      const next = ATTENTION_RANK[level] > ATTENTION_RANK[cur] ? level : cur;
       if (next === cur) return {};
       return { paneActivity: { ...state.paneActivity, [paneId]: next } };
     }),
@@ -368,8 +411,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
   clearAttention: (paneId) =>
     set((state) => {
       if (!(paneId in state.paneActivity)) return {};
-      const { [paneId]: _, ...rest } = state.paneActivity;
-      void _;
+      const { [paneId]: _drop, ...rest } = state.paneActivity;
+      void _drop;
       return { paneActivity: rest };
     }),
 
@@ -382,8 +425,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       // retombe sur 'idle' si la clé est absente.
       if (agentState === 'idle') {
         if (!(paneId in state.paneAgentState)) return {};
-        const { [paneId]: _, ...rest } = state.paneAgentState;
-        void _;
+        const { [paneId]: _drop, ...rest } = state.paneAgentState;
+        void _drop;
         return { paneAgentState: rest };
       }
       return { paneAgentState: { ...state.paneAgentState, [paneId]: agentState } };
@@ -436,3 +479,39 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       return { systemStats: sample, systemCpuHistory: next };
     })
 }));
+
+// ============================================================
+// Selector hooks — exports stables typés
+// ============================================================
+//
+// Convention v5 : utiliser `useShallow` pour les selectors qui retournent un
+// objet/array dérivé (sinon : risque de boucle infinie). Pour les selectors
+// scalaires (string, number, boolean, ref directe), pas besoin de useShallow
+// — l'équalité par défaut === suffit.
+
+/** Session par id — O(1) via l'index. Retourne `undefined` si inexistante. */
+export const useSessionById = (id: string | null | undefined): Session | undefined =>
+  useSessionStore((s) => (id ? s.sessionsById[id] : undefined));
+
+/** Settings courants — peut être null pendant le boot. */
+export const useSettings = (): AppSettings | null => useSessionStore((s) => s.settings);
+
+/** Niveau d'attention pour un pane (retombe sur 'idle' si absent). */
+export const usePaneActivity = (paneId: PaneId): PaneAttention =>
+  useSessionStore((s) => s.paneActivity[paneId] ?? 'idle');
+
+/** État live d'agent pour un pane (retombe sur 'idle' si absent). */
+export const usePaneAgentState = (paneId: PaneId): AgentRunState =>
+  useSessionStore((s) => s.paneAgentState[paneId] ?? 'idle');
+
+/** Stats CPU/RAM pour un pane (ref-stable tant que le pane ne reçoit pas de sample). */
+export const usePaneStats = (paneId: PaneId): PaneStatsHistory | undefined =>
+  useSessionStore((s) => s.paneStats[paneId]);
+
+/** True si le sync-input est activé pour cette session. */
+export const useIsSyncSession = (sessionId: string): boolean =>
+  useSessionStore((s) => s.syncSessions.has(sessionId));
+
+/** Re-export `useShallow` pour que les call-sites n'aient pas à connaître
+ *  le chemin v5 `zustand/react/shallow`. */
+export { useShallow };

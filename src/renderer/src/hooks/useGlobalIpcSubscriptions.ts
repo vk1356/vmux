@@ -11,6 +11,10 @@ import type { PaneAttention } from '@shared/types';
  *
  * Tous les handlers ressuscitent l'état via useSessionStore.getState() pour
  * éviter les closures stales — l'effet ne se ré-attache jamais après mount.
+ *
+ * AbortSignal garde les promises de bootstrap (settings/sessions/agents) de
+ * pousser leur résultat dans le store après unmount — important en dev
+ * StrictMode (mount/cleanup/mount) et lors d'un refresh manuel HMR.
  */
 export function useGlobalIpcSubscriptions(): void {
   useEffect(() => {
@@ -19,27 +23,50 @@ export function useGlobalIpcSubscriptions(): void {
     // (chacune coûte un selector run par store update), ni d'un dep-array qui
     // re-mount tout l'effet sous StrictMode et risque de doubler les listeners IPC.
     const {
-      setSessions, setAgents, setAgentAvailability, setSettings, setActiveSession,
-      upsertSession, addToast, recordEvent, patchPane, bumpAttention,
-      setAgentState, pushStatSamples, pushSystemStats
+      setSessions,
+      setAgents,
+      setAgentAvailability,
+      setSettings,
+      setActiveSession,
+      upsertSession,
+      addToast,
+      recordEvent,
+      patchPane,
+      bumpAttention,
+      setAgentState,
+      pushStatSamples,
+      pushSystemStats
     } = useSessionStore.getState();
 
-    void window.cmux.agents.list().then(setAgents);
+    const ac = new AbortController();
+    const { signal } = ac;
+
+    void window.cmux.agents.list().then((r) => {
+      if (!signal.aborted) setAgents(r);
+    });
     // agents.check spawn un process where.exe par agent — déféré à l'idle.
-    import('@shared/utils').then(({ whenIdle }) =>
-      whenIdle(() => void window.cmux.agents.check().then(setAgentAvailability))
-    );
+    void import('@shared/utils').then(({ whenIdle }) => {
+      if (signal.aborted) return;
+      whenIdle(() => {
+        if (signal.aborted) return;
+        void window.cmux.agents.check().then((r) => {
+          if (!signal.aborted) setAgentAvailability(r);
+        });
+      });
+    });
     // Boot order : on charge settings AVANT sessions et on seed activeSessionId
     // depuis lastActiveSessionId. Comme ça, quand setSessions fire, sa logique
     // de fallback ("garde l'active si valide, sinon sessions[0]") va préserver
     // la dernière session ouverte si elle existe encore. Sans ce seed, on
     // retombait toujours sur sessions[0] au boot.
     void window.cmux.settings.get().then(async (s) => {
+      if (signal.aborted) return;
       setSettings(s);
       if (s.lastActiveSessionId) {
         setActiveSession(s.lastActiveSessionId);
       }
       const sessions = await window.cmux.sessions.list();
+      if (signal.aborted) return;
       setSessions(sessions);
     });
 
@@ -129,11 +156,16 @@ export function useGlobalIpcSubscriptions(): void {
       void window.cmux.panes.focus(sessionId, paneId);
     });
     // Custom notification sound — main demande au renderer de jouer un .wav/.mp3.
+    // On garde une ref sur l'élément Audio courant pour pouvoir l'arrêter à
+    // l'unmount (évite un son qui continue après refresh HMR).
+    let currentAudio: HTMLAudioElement | null = null;
     const offNotifSound = window.cmux.notif.onPlaySound((path) => {
+      if (signal.aborted) return;
       try {
         const url = path.startsWith('file:') ? path : `file:///${path.replace(/\\/g, '/')}`;
         const audio = new Audio(url);
         audio.volume = 0.7;
+        currentAudio = audio;
         void audio.play().catch(() => {
           /* ignore — fichier introuvable / format non supporté */
         });
@@ -166,6 +198,7 @@ export function useGlobalIpcSubscriptions(): void {
           }, 400);
         });
     return () => {
+      ac.abort();
       offSession();
       offStatus();
       offUrls();
@@ -178,6 +211,15 @@ export function useGlobalIpcSubscriptions(): void {
       offNotifSound();
       offActiveSubscribe();
       if (persistTimer) clearTimeout(persistTimer);
+      if (currentAudio) {
+        try {
+          currentAudio.pause();
+          currentAudio.src = '';
+        } catch {
+          /* ignore */
+        }
+        currentAudio = null;
+      }
     };
     // Mount-once effect : toutes les actions sont lues via getState() (refs
     // stables Zustand 5). Aucun re-mount à craindre — sauf StrictMode dev qui

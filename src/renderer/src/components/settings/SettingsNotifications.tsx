@@ -1,4 +1,4 @@
-import type { JSX } from 'react';
+import { useId, type JSX } from 'react';
 import { Globe, Music } from 'lucide-react';
 import type { AppSettings } from '@shared/types';
 import { useT } from '../../i18n';
@@ -10,10 +10,16 @@ interface Props {
 
 export function SettingsNotifications({ settings, apply }: Props): JSX.Element {
   const t = useT();
+  const enabledId = useId();
+  const soundId = useId();
+  const previewToastId = useId();
+  const previewAutoId = useId();
+  const previewSplitId = useId();
   return (
     <>
-      <label className="checkbox-row">
+      <label className="checkbox-row" htmlFor={enabledId}>
         <input
+          id={enabledId}
           type="checkbox"
           checked={settings.notificationsEnabled}
           onChange={(e) => void apply({ notificationsEnabled: e.target.checked })}
@@ -25,8 +31,11 @@ export function SettingsNotifications({ settings, apply }: Props): JSX.Element {
       </div>
 
       <div className="field" style={{ marginTop: 8 }}>
-        <label className="field-label">{t('fieldNotifSound')}</label>
+        <label className="field-label" htmlFor={soundId}>
+          {t('fieldNotifSound')}
+        </label>
         <select
+          id={soundId}
           className="select"
           value={settings.notificationSound}
           onChange={(e) =>
@@ -52,6 +61,7 @@ export function SettingsNotifications({ settings, apply }: Props): JSX.Element {
             }}
           >
             <button
+              type="button"
               className="btn"
               onClick={async () => {
                 const p = await window.cmux.dialog.pickSoundFile();
@@ -76,6 +86,7 @@ export function SettingsNotifications({ settings, apply }: Props): JSX.Element {
                   {t('notifSoundCurrent')} {settings.notificationSoundPath}
                 </code>
                 <button
+                  type="button"
                   className="btn ghost"
                   onClick={() => void apply({ notificationSoundPath: undefined })}
                 >
@@ -90,16 +101,18 @@ export function SettingsNotifications({ settings, apply }: Props): JSX.Element {
       <div className="dialog-section-title" style={{ marginTop: 16 }}>
         <Globe size={12} /> {t('sectionPreviewLocalhost')}
       </div>
-      <label className="checkbox-row">
+      <label className="checkbox-row" htmlFor={previewToastId}>
         <input
+          id={previewToastId}
           type="checkbox"
           checked={settings.previewToastEnabled}
           onChange={(e) => void apply({ previewToastEnabled: e.target.checked })}
         />
         {t('fieldPreviewToast')}
       </label>
-      <label className="checkbox-row">
+      <label className="checkbox-row" htmlFor={previewAutoId}>
         <input
+          id={previewAutoId}
           type="checkbox"
           checked={settings.previewAutoOpen}
           onChange={(e) => void apply({ previewAutoOpen: e.target.checked })}
@@ -107,10 +120,11 @@ export function SettingsNotifications({ settings, apply }: Props): JSX.Element {
         {t('fieldPreviewAutoOpen')}
       </label>
       <div className="field" style={{ marginTop: 8 }}>
-        <label className="field-label">
+        <label className="field-label" htmlFor={previewSplitId}>
           {t('fieldPreviewSplit')} ({settings.previewDefaultSplit}%)
         </label>
         <input
+          id={previewSplitId}
           type="range"
           min={30}
           max={70}

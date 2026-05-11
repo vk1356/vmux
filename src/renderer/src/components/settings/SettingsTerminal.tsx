@@ -1,4 +1,4 @@
-import type { JSX } from 'react';
+import { useId, useMemo, type JSX } from 'react';
 import type { AppSettings } from '@shared/types';
 import { useLocale, useT } from '../../i18n';
 
@@ -12,16 +12,30 @@ const SHELL_PRESETS = [
   { value: 'powershell', label: 'Windows PowerShell 5 (powershell)' },
   { value: 'cmd', label: 'cmd.exe' },
   { value: 'bash', label: 'Git Bash (bash)' }
-];
+] as const;
 
 export function SettingsTerminal({ settings, apply }: Props): JSX.Element {
   const t = useT();
   const locale = useLocale();
+  const shellId = useId();
+  const scrollbackId = useId();
+  const copySelId = useId();
+  const pasteRcId = useId();
+  const webglId = useId();
+
+  const scrollbackFormatted = useMemo(
+    () => new Intl.NumberFormat(locale).format(settings.scrollback),
+    [locale, settings.scrollback]
+  );
+
   return (
     <>
       <div className="field">
-        <label className="field-label">{t('fieldShell')}</label>
+        <label className="field-label" htmlFor={shellId}>
+          {t('fieldShell')}
+        </label>
         <select
+          id={shellId}
           className="select"
           value={settings.defaultShell}
           onChange={(e) => void apply({ defaultShell: e.target.value })}
@@ -35,11 +49,11 @@ export function SettingsTerminal({ settings, apply }: Props): JSX.Element {
         <div className="hint">{t('fieldShellHint')}</div>
       </div>
       <div className="field">
-        <label className="field-label">
-          {t('fieldScrollback')} (
-          {new Intl.NumberFormat(locale).format(settings.scrollback)} {t('scrollbackUnit')})
+        <label className="field-label" htmlFor={scrollbackId}>
+          {t('fieldScrollback')} ({scrollbackFormatted} {t('scrollbackUnit')})
         </label>
         <input
+          id={scrollbackId}
           type="range"
           min={1000}
           max={50000}
@@ -48,24 +62,27 @@ export function SettingsTerminal({ settings, apply }: Props): JSX.Element {
           onChange={(e) => void apply({ scrollback: Number(e.target.value) })}
         />
       </div>
-      <label className="checkbox-row">
+      <label className="checkbox-row" htmlFor={copySelId}>
         <input
+          id={copySelId}
           type="checkbox"
           checked={settings.copyOnSelection}
           onChange={(e) => void apply({ copyOnSelection: e.target.checked })}
         />
         {t('fieldCopyOnSelect')}
       </label>
-      <label className="checkbox-row">
+      <label className="checkbox-row" htmlFor={pasteRcId}>
         <input
+          id={pasteRcId}
           type="checkbox"
           checked={settings.pasteOnRightClick}
           onChange={(e) => void apply({ pasteOnRightClick: e.target.checked })}
         />
         {t('fieldPasteRightClick')}
       </label>
-      <label className="checkbox-row">
+      <label className="checkbox-row" htmlFor={webglId}>
         <input
+          id={webglId}
           type="checkbox"
           checked={settings.webglRenderer}
           onChange={(e) => void apply({ webglRenderer: e.target.checked })}

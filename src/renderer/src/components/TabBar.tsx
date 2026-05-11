@@ -1,6 +1,16 @@
-import { useMemo, useState, type JSX, type MouseEvent } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+  type KeyboardEvent,
+  type MouseEvent
+} from 'react';
 import { Globe, RotateCw, X, Edit3, Layers, Keyboard, ExternalLink } from 'lucide-react';
-import type { Session, TerminalPane } from '@shared/types';
+import type { AgentPreset, Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
 import { hostFromUrl } from '@shared/utils';
 import { useSessionStore } from '../store/sessions';
@@ -21,7 +31,10 @@ interface MenuState {
   y: number;
 }
 
-export function TabBar({ session, onShowShortcuts, detached = false }: Props): JSX.Element {
+const ICON_GLOBE_STYLE = { color: 'var(--info)' } as const;
+const DOT_STYLE = { width: 7, height: 7 } as const;
+
+function TabBarImpl({ session, onShowShortcuts, detached = false }: Props): JSX.Element {
   const t = useT();
   const { agents, upsertSession, paneActivity, eventHistory } = useSessionStore(
     useShallow((s) => ({
@@ -34,8 +47,16 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renamingPaneId, setRenamingPaneId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const tablistRef = useRef<HTMLDivElement>(null);
 
-  const paneIds = allPaneIds(session.tree);
+  const paneIds = useMemo(() => allPaneIds(session.tree), [session.tree]);
+
+  // Lookup O(1) par agentId — évitait un `agents.find()` par tab.
+  const agentById = useMemo(() => {
+    const map: Record<string, AgentPreset> = {};
+    for (const a of agents) map[a.id] = a;
+    return map;
+  }, [agents]);
 
   // Compteur d'events non lus par pane — calculé une fois par render plutôt
   // que par tab. Filtre sur la session courante uniquement.
@@ -49,43 +70,111 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
     return out;
   }, [eventHistory, session.id]);
 
-  const onClickTab = async (paneId: string): Promise<void> => {
-    await window.cmux.panes.focus(session.id, paneId);
-  };
+  const onClickTab = useCallback(
+    (paneId: string): void => {
+      void window.cmux.panes.focus(session.id, paneId);
+    },
+    [session.id]
+  );
 
-  const onRightClick = (e: MouseEvent, paneId: string): void => {
+  const onRightClick = useCallback((e: MouseEvent, paneId: string): void => {
     e.preventDefault();
     setMenu({ paneId, x: e.clientX, y: e.clientY });
-  };
+  }, []);
 
-  const closeMenu = (): void => setMenu(null);
+  const closeMenu = useCallback((): void => setMenu(null), []);
 
-  const renamePane = (paneId: string, currentLabel: string): void => {
+  const renamePane = useCallback((paneId: string, currentLabel: string): void => {
     setRenamingPaneId(paneId);
     setRenameValue(currentLabel);
-    closeMenu();
-  };
+    setMenu(null);
+  }, []);
 
-  const commitRename = async (paneId: string): Promise<void> => {
-    setRenamingPaneId(null);
-    const r = await window.cmux.panes.rename(session.id, paneId, renameValue);
-    if (r.ok && r.data) upsertSession(r.data);
-  };
+  const commitRename = useCallback(
+    async (paneId: string): Promise<void> => {
+      setRenamingPaneId(null);
+      const r = await window.cmux.panes.rename(session.id, paneId, renameValue);
+      if (r.ok && r.data) upsertSession(r.data);
+    },
+    [renameValue, session.id, upsertSession]
+  );
 
-  const restartPane = async (paneId: string): Promise<void> => {
-    closeMenu();
-    await window.cmux.panes.restart(session.id, paneId);
-  };
+  const restartPane = useCallback(
+    async (paneId: string): Promise<void> => {
+      setMenu(null);
+      await window.cmux.panes.restart(session.id, paneId);
+    },
+    [session.id]
+  );
 
-  const closePane = async (paneId: string): Promise<void> => {
-    closeMenu();
-    const r = await window.cmux.panes.close(session.id, paneId);
-    if (r.ok && r.data) upsertSession(r.data);
-  };
+  const closePane = useCallback(
+    async (paneId: string): Promise<void> => {
+      setMenu(null);
+      const r = await window.cmux.panes.close(session.id, paneId);
+      if (r.ok && r.data) upsertSession(r.data);
+    },
+    [session.id, upsertSession]
+  );
+
+  // Navigation clavier sur le tablist — pattern ARIA officiel. ArrowLeft/Right
+  // déplace le focus + active la tab. Home/End vont aux extrémités. Un seul
+  // handler sur le parent plutôt qu'un onKeyDown par tab.
+  const onTablistKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>): void => {
+      if (renamingPaneId) return;
+      if (paneIds.length === 0) return;
+      const activeIdx = paneIds.indexOf(session.activePaneId ?? '');
+      let next: number | null = null;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        next = activeIdx < 0 ? 0 : (activeIdx + 1) % paneIds.length;
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        next = activeIdx <= 0 ? paneIds.length - 1 : activeIdx - 1;
+      } else if (e.key === 'Home') {
+        next = 0;
+      } else if (e.key === 'End') {
+        next = paneIds.length - 1;
+      } else if (e.key === 'Delete' && session.activePaneId) {
+        e.preventDefault();
+        void closePane(session.activePaneId);
+        return;
+      }
+      if (next !== null) {
+        e.preventDefault();
+        onClickTab(paneIds[next]);
+      }
+    },
+    [paneIds, session.activePaneId, renamingPaneId, onClickTab, closePane]
+  );
+
+  // Échap ferme le menu contextuel — sinon il faut cliquer le backdrop.
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenu(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menu]);
+
+  // Détacher la position du menu pour éviter le sync layout read pendant render.
+  // `window.innerWidth` lu UNE fois quand le menu s'ouvre, pas à chaque render.
+  const menuStyle = useMemo<React.CSSProperties | null>(() => {
+    if (!menu) return null;
+    const left = Math.min(menu.x, window.innerWidth - 200);
+    return { left, top: menu.y };
+  }, [menu]);
+
+  const menuPane = menu ? session.panes[menu.paneId] : null;
 
   return (
     <>
-      <div className="tab-bar-list">
+      <div
+        className="tab-bar-list"
+        role="tablist"
+        aria-orientation="horizontal"
+        onKeyDown={onTablistKeyDown}
+        ref={tablistRef}
+      >
         {paneIds.map((id) => {
           const pane = session.panes[id];
           if (!pane) return null;
@@ -97,12 +186,12 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
           let dotClass = 'idle';
           if (pane.kind === 'terminal') {
             const term = pane as TerminalPane;
-            const agent = agents.find((a) => a.id === term.agentId);
+            const agent = agentById[term.agentId];
             label = label || agent?.label || term.agentId;
             dotClass = term.status;
           } else {
             label = label || hostFromUrl(pane.url);
-            icon = <Globe size={11} style={{ color: 'var(--info)' }} />;
+            icon = <Globe size={11} style={ICON_GLOBE_STYLE} />;
             dotClass = 'running';
           }
 
@@ -110,52 +199,26 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
           const unread = unreadByPane[id] ?? 0;
 
           return (
-            <div
+            <Tab
               key={id}
-              className={`tab ${isActive ? 'active' : ''} attention-${attention}`}
-              onClick={() => void onClickTab(id)}
-              onContextMenu={(e) => onRightClick(e, id)}
-              onDoubleClick={() => renamePane(id, label)}
-              title="Click = focus · Double-click = renommer · Clic-droit = menu"
-            >
-              <span className={`session-dot ${dotClass}`} style={{ width: 7, height: 7 }} />
-              {icon}
-              {isRenaming ? (
-                <input
-                  autoFocus
-                  className="tab-rename-input"
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={() => void commitRename(id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void commitRename(id);
-                    else if (e.key === 'Escape') setRenamingPaneId(null);
-                  }}
-                />
-              ) : (
-                <span className="tab-label">{label}</span>
-              )}
-              {unread > 0 && (
-                <span
-                  className="tab-unread"
-                  title={`${unread} événement${unread > 1 ? 's' : ''} non lu${unread > 1 ? 's' : ''}`}
-                >
-                  {unread > 99 ? '99+' : unread}
-                </span>
-              )}
-              <button
-                className="tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void closePane(id);
-                }}
-                title={t('paneCloseTitle')}
-                aria-label={t('paneCloseAria')}
-              >
-                <X size={11} />
-              </button>
-            </div>
+              paneId={id}
+              label={label}
+              icon={icon}
+              dotClass={dotClass}
+              isActive={isActive}
+              isRenaming={isRenaming}
+              renameValue={renameValue}
+              attention={attention}
+              unread={unread}
+              t={t}
+              onClickTab={onClickTab}
+              onRightClick={onRightClick}
+              onStartRename={renamePane}
+              onChangeRename={setRenameValue}
+              onCommitRename={commitRename}
+              onCancelRename={() => setRenamingPaneId(null)}
+              onClosePane={closePane}
+            />
           );
         })}
       </div>
@@ -167,6 +230,7 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
             onClick={() => void window.cmux.window.detachSession(session.id)}
             title={t('paneDetachWindowTitle')}
             aria-label={t('paneDetachWindowAria')}
+            type="button"
           >
             <ExternalLink size={12} />
             <span className="tab-shortcuts-btn-label">{t('paneDetachWindowLabel')}</span>
@@ -177,6 +241,7 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
           onClick={onShowShortcuts}
           title="Raccourcis clavier — appuie sur ?"
           aria-label="Raccourcis clavier"
+          type="button"
         >
           <Keyboard size={12} />
           <span className="tab-shortcuts-btn-label">Shortcuts</span>
@@ -184,30 +249,36 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
         </button>
       </div>
 
-      {menu && (
+      {menu && menuStyle && (
         <>
           <div className="menu-backdrop" onClick={closeMenu} />
-          <div
-            className="context-menu"
-            style={{ left: Math.min(menu.x, window.innerWidth - 200), top: menu.y }}
-          >
+          <div className="context-menu" style={menuStyle} role="menu">
             <button
               className="context-menu-item"
               onClick={() => {
-                const p = session.panes[menu.paneId];
-                if (p) renamePane(menu.paneId, p.label || '');
+                if (menuPane) renamePane(menu.paneId, menuPane.label || '');
               }}
+              role="menuitem"
+              type="button"
             >
-              <Edit3 size={12} /> {t('actionRenameHint').split('—')[0].trim() || t('actionRenameHint')}
+              <Edit3 size={12} />{' '}
+              {t('actionRenameHint').split('—')[0].trim() || t('actionRenameHint')}
             </button>
-            {session.panes[menu.paneId]?.kind === 'terminal' && (
-              <button className="context-menu-item" onClick={() => void restartPane(menu.paneId)}>
+            {menuPane?.kind === 'terminal' && (
+              <button
+                className="context-menu-item"
+                onClick={() => void restartPane(menu.paneId)}
+                role="menuitem"
+                type="button"
+              >
                 <RotateCw size={12} /> {t('paneRestart')}
               </button>
             )}
             <button
               className="context-menu-item danger"
               onClick={() => void closePane(menu.paneId)}
+              role="menuitem"
+              type="button"
             >
               <X size={12} /> {t('shortcutsItemClosePane')}
             </button>
@@ -218,6 +289,8 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
                   closeMenu();
                   void window.cmux.panes.relayout(session.id, 'tiled');
                 }}
+                role="menuitem"
+                type="button"
               >
                 <Layers size={12} /> {t('shortcutsItemRetile')}
               </button>
@@ -229,3 +302,107 @@ export function TabBar({ session, onShowShortcuts, detached = false }: Props): J
   );
 }
 
+export const TabBar = memo(TabBarImpl);
+
+// ---------------------------------------------------------------------------
+// Tab : extraite + memoizée. Avant, toute la liste re-render dès qu'un seul
+// pane changeait d'attention/unread/label. Maintenant React skip les tabs
+// dont les props (toutes primitives) restent stables.
+// ---------------------------------------------------------------------------
+
+interface TabProps {
+  paneId: string;
+  label: string;
+  icon: JSX.Element | null;
+  dotClass: string;
+  isActive: boolean;
+  isRenaming: boolean;
+  renameValue: string;
+  attention: string;
+  unread: number;
+  t: ReturnType<typeof useT>;
+  onClickTab: (paneId: string) => void;
+  onRightClick: (e: MouseEvent, paneId: string) => void;
+  onStartRename: (paneId: string, label: string) => void;
+  onChangeRename: (v: string) => void;
+  onCommitRename: (paneId: string) => Promise<void>;
+  onCancelRename: () => void;
+  onClosePane: (paneId: string) => Promise<void>;
+}
+
+const Tab = memo(function Tab({
+  paneId,
+  label,
+  icon,
+  dotClass,
+  isActive,
+  isRenaming,
+  renameValue,
+  attention,
+  unread,
+  t,
+  onClickTab,
+  onRightClick,
+  onStartRename,
+  onChangeRename,
+  onCommitRename,
+  onCancelRename,
+  onClosePane
+}: TabProps): JSX.Element {
+  return (
+    <div
+      className={`tab ${isActive ? 'active' : ''} attention-${attention}`}
+      onClick={() => onClickTab(paneId)}
+      onContextMenu={(e) => onRightClick(e, paneId)}
+      onDoubleClick={() => onStartRename(paneId, label)}
+      title="Click = focus · Double-click = renommer · Clic-droit = menu"
+      role="tab"
+      id={`tab-${paneId}`}
+      aria-selected={isActive}
+      aria-controls={`panel-${paneId}`}
+      tabIndex={isActive ? 0 : -1}
+    >
+      <span className={`session-dot ${dotClass}`} style={DOT_STYLE} />
+      {icon}
+      {isRenaming ? (
+        <input
+          autoFocus
+          className="tab-rename-input"
+          value={renameValue}
+          onChange={(e) => onChangeRename(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={() => void onCommitRename(paneId)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void onCommitRename(paneId);
+            else if (e.key === 'Escape') onCancelRename();
+          }}
+          aria-label={t('actionRenameHint')}
+        />
+      ) : (
+        <span className="tab-label">{label}</span>
+      )}
+      {unread > 0 && (
+        <span
+          className="tab-unread"
+          title={`${unread} événement${unread > 1 ? 's' : ''} non lu${unread > 1 ? 's' : ''}`}
+          aria-label={`${unread} unread`}
+        >
+          {unread > 99 ? '99+' : unread}
+        </span>
+      )}
+      <button
+        className="tab-close"
+        onClick={(e) => {
+          e.stopPropagation();
+          void onClosePane(paneId);
+        }}
+        title={t('paneCloseTitle')}
+        aria-label={t('paneCloseAria')}
+        type="button"
+        tabIndex={-1}
+      >
+        <X size={11} />
+      </button>
+    </div>
+  );
+});

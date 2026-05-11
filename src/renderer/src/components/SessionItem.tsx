@@ -382,7 +382,80 @@ function SessionItemImpl(props: Props): JSX.Element {
   );
 }
 
-export const SessionItem = memo(SessionItemImpl);
+/**
+ * Custom equality pour SessionItem — la version shallow par défaut de memo()
+ * re-render à chaque mutation de paneActivity / paneAgentState / lastEvent
+ * même si rien de visible pour CET item n'a changé. On compare uniquement les
+ * champs qui peuvent altérer le rendu de cet item :
+ *   - identité + nom + état de la session
+ *   - état UI (active, renaming, drag-over, color picker)
+ *   - attention/agent state des panes de cette session uniquement
+ *
+ * Les callbacks sont supposés stables (useCallback côté Sidebar) — comparaison
+ * référentielle suffisante.
+ */
+function arePropsEqual(prev: Props, next: Props): boolean {
+  const ps = prev.meta.session;
+  const ns = next.meta.session;
+  if (ps.id !== ns.id) return false;
+  if (ps.name !== ns.name) return false;
+  if (ps.pinned !== ns.pinned) return false;
+  if (ps.branch !== ns.branch) return false;
+  if (ps.cwd !== ns.cwd) return false;
+  if (ps.colorOverride !== ns.colorOverride) return false;
+  if (ps.activePaneId !== ns.activePaneId) return false;
+  // Le tree (panes) peut bouger sans changer la session ID — comparer par ref
+  // est suffisant ici car le store immute le tree quand il change.
+  if (ps.tree !== ns.tree) return false;
+  if (ps.panes !== ns.panes) return false;
+
+  if (prev.meta.isRunning !== next.meta.isRunning) return false;
+  if (prev.meta.isError !== next.meta.isError) return false;
+  if (prev.meta.isExited !== next.meta.isExited) return false;
+
+  if (prev.isActive !== next.isActive) return false;
+  if (prev.isRenaming !== next.isRenaming) return false;
+  // renameValue n'est lu QUE quand isRenaming=true : on évite des re-renders
+  // de tous les autres items qui voient renameValue muter (state remonté dans
+  // Sidebar pour des raisons de focus).
+  if (next.isRenaming && prev.renameValue !== next.renameValue) return false;
+  if (prev.dragOverId !== next.dragOverId && (prev.dragOverId === ps.id || next.dragOverId === ns.id)) return false;
+  if (prev.colorPickerOpen !== next.colorPickerOpen) return false;
+
+  // paneActivity / paneAgentState : on compare uniquement les ids des panes
+  // de CETTE session — un changement dans une autre session ne doit pas
+  // forcer ce SessionItem à re-render.
+  const paneIds = allPaneIds(ns.tree);
+  for (const id of paneIds) {
+    if (prev.paneActivity[id] !== next.paneActivity[id]) return false;
+    if (prev.paneAgentState[id] !== next.paneAgentState[id]) return false;
+  }
+
+  if (prev.lastEvent !== next.lastEvent) return false;
+  if (prev.agents !== next.agents) return false;
+  if (prev.t !== next.t) return false;
+
+  // Callbacks supposés stables — comparaison référentielle.
+  if (prev.onActivate !== next.onActivate) return false;
+  if (prev.onStartRename !== next.onStartRename) return false;
+  if (prev.onChangeRename !== next.onChangeRename) return false;
+  if (prev.onCommitRename !== next.onCommitRename) return false;
+  if (prev.onCancelRename !== next.onCancelRename) return false;
+  if (prev.onTogglePin !== next.onTogglePin) return false;
+  if (prev.onRestartAll !== next.onRestartAll) return false;
+  if (prev.onRemove !== next.onRemove) return false;
+  if (prev.onOpenColorPicker !== next.onOpenColorPicker) return false;
+  if (prev.onPickColor !== next.onPickColor) return false;
+  if (prev.onDragStart !== next.onDragStart) return false;
+  if (prev.onDragOver !== next.onDragOver) return false;
+  if (prev.onDragLeave !== next.onDragLeave) return false;
+  if (prev.onDrop !== next.onDrop) return false;
+  if (prev.onFocusPane !== next.onFocusPane) return false;
+
+  return true;
+}
+
+export const SessionItem = memo(SessionItemImpl, arePropsEqual);
 
 interface AgentStatePillProps {
   state: AgentRunState;

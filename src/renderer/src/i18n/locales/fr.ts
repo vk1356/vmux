@@ -1,7 +1,9 @@
 // Lazy-loaded locale chunk. Importé via import.meta.glob dans i18n/index.ts.
-// Type lâche : c'est index.ts qui valide via Partial<Record<TKey, string>>
-// au moment du translate (fallback EN sur clé manquante).
-const FR: Record<string, string> = {
+// `satisfies LocaleCatalog` : TS vérifie que toutes les clés correspondent
+// à `TKey` (typos détectées à la compilation) tout en autorisant l'omission
+// (fallback EN runtime).
+import type { LocaleCatalog } from '..';
+const FR = {
   appTagline: 'orchestrateur multi-agents IA',
   heroTitleA: 'Plusieurs agents IA,',
   heroTitleB: 'une seule fenêtre.',
@@ -370,6 +372,6 @@ const FR: Record<string, string> = {
   mcpConfigPathLabel: 'Config :',
   mcpFooterHint: 'Relance tes agents pour qu\'ils prennent en compte les changements.',
   cmdMcpServers: 'Gérer les serveurs MCP'
-};
+} satisfies LocaleCatalog;
 
 export default FR;

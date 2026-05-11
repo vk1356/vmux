@@ -32,7 +32,7 @@ export function UpdateBanner(): JSX.Element | null {
 
   if (status.kind === 'available') {
     return (
-      <div className="update-banner update-banner-available">
+      <div className="update-banner update-banner-available" role="status" aria-live="polite">
         <Download size={14} />
         <div className="update-banner-text">
           <strong>{t('bannerAvailable')}</strong>
@@ -57,7 +57,12 @@ export function UpdateBanner(): JSX.Element | null {
     const pct = Math.round(status.percent);
     const mbs = (status.bytesPerSecond / 1024 / 1024).toFixed(1);
     return (
-      <div className="update-banner update-banner-downloading">
+      <div
+        className="update-banner update-banner-downloading"
+        role="status"
+        aria-live="polite"
+        aria-atomic="false"
+      >
         <RefreshCw size={14} className="spin" />
         <div className="update-banner-text">
           <strong>{t('bannerDownloading', { pct })}</strong>
@@ -72,7 +77,7 @@ export function UpdateBanner(): JSX.Element | null {
 
   if (status.kind === 'downloaded') {
     return (
-      <div className="update-banner update-banner-ready">
+      <div className="update-banner update-banner-ready" role="status" aria-live="polite">
         <CheckCircle2 size={14} />
         <div className="update-banner-text">
           <strong>{t('bannerReady')}</strong>
@@ -95,7 +100,7 @@ export function UpdateBanner(): JSX.Element | null {
 
   if (status.kind === 'error') {
     return (
-      <div className="update-banner update-banner-error">
+      <div className="update-banner update-banner-error" role="alert" aria-live="assertive">
         <AlertTriangle size={14} />
         <div className="update-banner-text">
           <strong>{t('bannerError')}</strong>

@@ -29,16 +29,115 @@ export { isNewer };
  *   l'install immédiat au lieu d'attendre le quit).
  * - Tous les paths d'erreur envoient un statut UpdateStatus avec un `code`
  *   traduisible côté renderer.
+ *
+ * Sécurité Windows : `verifyUpdateCodeSignature:false` côté package.json est
+ * intentionnel (vMux n'est pas codesigné — coût certif). electron-updater
+ * vérifie cependant TOUJOURS le SHA512 du `.exe` contre le manifest `latest.yml`
+ * publié sur GitHub. Tampering nécessite donc compromettre la release GitHub,
+ * pas juste un MITM réseau. Ne PAS retirer cette logique.
  */
 
-let updateRecheckInterval: NodeJS.Timeout | null = null;
+// ──────────────────────────────────────────────────────────────────────────
+// State global au module (single-flight + cleanup au quit)
+// ──────────────────────────────────────────────────────────────────────────
 
-export function stopAutoUpdater(): void {
-  if (updateRecheckInterval) {
-    clearInterval(updateRecheckInterval);
-    updateRecheckInterval = null;
-  }
+/** Évite la double-init si setupAutoUpdater est rappelé (hot-reload, refactor). */
+let setupCalled = false;
+/** Polling interval ID — clear au quit. */
+let recheckInterval: NodeJS.Timeout | null = null;
+/** Boot timer + backoff timer — clear au quit pour ne pas garder l'event loop vivant. */
+const pendingTimers = new Set<NodeJS.Timeout>();
+/** AbortControllers des fetch en cours — abort() forcé à quitTime. */
+const inflightAborts = new Set<AbortController>();
+/** Listeners enregistrés sur autoUpdater pour pouvoir les détacher au quit. */
+const updaterListeners: Array<{
+  event: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fn: (...args: any[]) => void;
+}> = [];
+/** IPC channels enregistrés — unhandle au quit pour éviter le leak entre tests. */
+const registeredIpcChannels: string[] = [];
+
+function trackTimer(t: NodeJS.Timeout): NodeJS.Timeout {
+  pendingTimers.add(t);
+  return t;
 }
+
+function clearTimer(t: NodeJS.Timeout | null): void {
+  if (!t) return;
+  clearTimeout(t);
+  pendingTimers.delete(t);
+}
+
+/** Cleanup complet — appelé depuis index.ts via `before-quit`. Idempotent. */
+export function stopAutoUpdater(): void {
+  if (recheckInterval) {
+    clearInterval(recheckInterval);
+    recheckInterval = null;
+  }
+  for (const t of pendingTimers) clearTimeout(t);
+  pendingTimers.clear();
+  for (const ctrl of inflightAborts) {
+    try {
+      ctrl.abort();
+    } catch {
+      /* déjà aborté */
+    }
+  }
+  inflightAborts.clear();
+  // Détache les event listeners pour permettre un éventuel re-setup ultérieur
+  // sans empiler les handlers.
+  for (const { event, fn } of updaterListeners) {
+    try {
+      // `removeListener` est typé sur `keyof AppUpdaterEvents` côté electron-updater.
+      // On bypasse via une vue permissive sur le module — le coupler au
+      // type-union exact nuirait à la composition lazy-import.
+      (
+        autoUpdaterModule as unknown as
+          | { removeListener: (e: string, f: (...a: unknown[]) => void) => void }
+          | null
+      )?.removeListener(event, fn);
+    } catch {
+      /* module pas chargé */
+    }
+  }
+  updaterListeners.length = 0;
+  // Unregister IPC handlers (sinon un re-setup throw "second handler").
+  for (const ch of registeredIpcChannels) {
+    try {
+      ipcMain.removeHandler(ch);
+    } catch {
+      /* pas enregistré */
+    }
+  }
+  registeredIpcChannels.length = 0;
+  setupCalled = false;
+}
+
+/** Wrap ipcMain.handle en trackant le channel pour le cleanup. */
+function registerIpcHandler(
+  channel: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handler: (...args: any[]) => Promise<unknown> | unknown
+): void {
+  // Idempotent : retire un handler résiduel d'un setup précédent avant de
+  // re-register (sinon Electron throw "Attempted to register a second handler").
+  try {
+    ipcMain.removeHandler(channel);
+  } catch {
+    /* pas enregistré, ok */
+  }
+  ipcMain.handle(channel, handler);
+  registeredIpcChannels.push(channel);
+}
+
+// Référence vers le module electron-updater chargé en lazy. Nécessaire pour le
+// removeListener au quit (cf. stopAutoUpdater).
+let autoUpdaterModule: typeof import('electron-updater').autoUpdater | null = null;
+
+// ──────────────────────────────────────────────────────────────────────────
+// GitHub API helpers
+// ──────────────────────────────────────────────────────────────────────────
 
 /** Lit owner/repo depuis app-update.yml (prod) ou retombe sur les valeurs du
  *  build config bundlé. Renvoie sous forme `owner/repo` pour l'API GitHub. */
@@ -86,13 +185,15 @@ function matchInstallerAsset(name: string): boolean {
   return /\.AppImage$/i.test(name);
 }
 
-/** Fetch JSON avec timeout dur via AbortController. Throw en cas d'erreur. */
+/** Fetch JSON avec timeout dur via AbortController. Throw en cas d'erreur.
+ *  L'AbortController est tracké globalement pour pouvoir être annulé au quit. */
 async function ghFetchLatest(repo: string, timeoutMs = 8000): Promise<LatestInfo> {
   log.info(
     `[updater] fetch https://api.github.com/repos/${repo}/releases/latest (timeout=${timeoutMs}ms)`
   );
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  inflightAborts.add(ctrl);
+  const timer = trackTimer(setTimeout(() => ctrl.abort(), timeoutMs));
   try {
     const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
       headers: {
@@ -118,7 +219,8 @@ async function ghFetchLatest(repo: string, timeoutMs = 8000): Promise<LatestInfo
       installerUrl: installer?.browser_download_url
     };
   } finally {
-    clearTimeout(timer);
+    clearTimer(timer);
+    inflightAborts.delete(ctrl);
   }
 }
 
@@ -138,7 +240,8 @@ async function manualDownloadAndPrepare(
   log.info(`[updater] manual download from ${installerUrl} → ${tmpPath}`);
 
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10 * 60 * 1000);
+  inflightAborts.add(ctrl);
+  const timer = trackTimer(setTimeout(() => ctrl.abort(), 10 * 60 * 1000));
   try {
     const res = await fetch(installerUrl, {
       signal: ctrl.signal,
@@ -174,7 +277,8 @@ async function manualDownloadAndPrepare(
     log.info(`[updater] download complete: ${tmpPath} (${transferred} bytes)`);
     return tmpPath;
   } finally {
-    clearTimeout(timer);
+    clearTimer(timer);
+    inflightAborts.delete(ctrl);
   }
 }
 
@@ -205,7 +309,7 @@ function runInstallerAndQuit(installerPath: string, sendStatus: SendStatus): voi
     });
     return;
   }
-  setTimeout(() => app.exit(0), 800);
+  trackTimer(setTimeout(() => app.exit(0), 800));
 }
 
 /**
@@ -246,18 +350,44 @@ async function runManualUpdateFlow(
     });
     return tmpPath;
   } catch (err) {
+    const e = err as Error;
+    const isAbort = e.name === 'AbortError';
     sendStatus({
       kind: 'error',
       code: 'github-api-failed',
-      message: (err as Error).message
+      message: isAbort ? 'Update aborted (app quitting or timeout)' : e.message
     });
     return null;
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Setup principal
+// ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Cadence du polling périodique en prod (4h). Choisi pour éviter tout impact
+ * sur les quotas GitHub (60 req/h non auth × utilisateurs = OK) tout en
+ * captant rapidement les releases en intra-day.
+ */
+const RECHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+/** Délai de boot avant le premier check, post window-ready, pour ne pas
+ *  rivaliser avec le first-paint du renderer. */
+const BOOT_CHECK_DELAY_MS = 3000;
+/** Plafond de backoff exponentiel sur erreur boot. */
+const MAX_BACKOFF_MS = 15 * 60 * 1000;
+
 export async function setupAutoUpdater(
   getMainWindow: () => BrowserWindow | null
 ): Promise<void> {
+  // Garde anti double-init. Sans ça, un second appel throw "Attempted to
+  // register a second handler" et empile des listeners sur autoUpdater.
+  if (setupCalled) {
+    log.warn('[updater] setupAutoUpdater called twice — ignored');
+    return;
+  }
+  setupCalled = true;
+
   const send = (status: UpdateStatus): void => {
     const w = getMainWindow();
     if (!w || w.isDestroyed() || w.webContents.isDestroyed()) return;
@@ -276,77 +406,102 @@ export async function setupAutoUpdater(
 
   /** Path du dernier installer téléchargé manuellement, prêt à être lancé. */
   let pendingManualInstaller: string | null = null;
-  /** Référence vers le module electron-updater (lazy-imported plus bas).
-   *  Quand non-null, le check primaire trigger un auto-download en background. */
-  let autoUpdaterRef: typeof import('electron-updater').autoUpdater | null = null;
   /** Anti-spam : évite de re-trigger un download si le précédent tourne déjà
    *  ou si on est passé à 'downloading' / 'downloaded'. */
   let autoDownloadTriggered = false;
+  /** Single-flight : empêche deux checkUpdates() concurrents (boot + manual
+   *  click + interval). electron-updater throw si on appelle checkForUpdates
+   *  pendant un check déjà en cours. */
+  let inflightCheck: Promise<void> | null = null;
+  /** Backoff exponentiel sur erreur boot (1m → 2m → 4m … plafond MAX_BACKOFF_MS). */
+  let consecutiveErrors = 0;
 
   /** Check primaire : API GitHub. Aucun hang possible (timeout 8s strict).
    *  Si une version plus récente est détectée ET que electron-updater est dispo,
    *  on trigger un auto-download silencieux (autoDownload=true). */
   async function checkUpdates(): Promise<void> {
-    log.info('[updater] checkUpdates() called');
-    sendStatus({ kind: 'checking' });
-    const local = app.getVersion();
-    try {
-      const latest = await ghFetchLatest(REPO);
-      log.info(`[updater] local=${local} remote=${latest.version}`);
-      if (isNewer(latest.version, local)) {
-        sendStatus({
-          kind: 'available',
-          version: latest.version,
-          releaseNotes: latest.notes
-        });
-        // Auto-download en background via electron-updater (blockmap diff).
-        // À la fermeture de l'app → install silencieux via autoInstallOnAppQuit.
-        if (autoUpdaterRef && !autoDownloadTriggered) {
-          autoDownloadTriggered = true;
-          try {
-            log.info('[updater] auto-download triggered (silent install on quit)');
-            await autoUpdaterRef.checkForUpdates();
-          } catch (e) {
-            log.warn('[updater] auto checkForUpdates failed', e);
-            // Reset le flag : si l'user clique Download manuellement plus tard,
-            // on veut bien que le flow re-tente.
-            autoDownloadTriggered = false;
+    if (inflightCheck) {
+      log.debug('[updater] checkUpdates() coalesced — check already in-flight');
+      return inflightCheck;
+    }
+    inflightCheck = (async () => {
+      log.info('[updater] checkUpdates() called');
+      sendStatus({ kind: 'checking' });
+      const local = app.getVersion();
+      try {
+        const latest = await ghFetchLatest(REPO);
+        log.info(`[updater] local=${local} remote=${latest.version}`);
+        if (isNewer(latest.version, local)) {
+          sendStatus({
+            kind: 'available',
+            version: latest.version,
+            releaseNotes: latest.notes
+          });
+          // Auto-download en background via electron-updater (blockmap diff).
+          // À la fermeture de l'app → install silencieux via autoInstallOnAppQuit.
+          if (autoUpdaterModule && !autoDownloadTriggered) {
+            autoDownloadTriggered = true;
+            try {
+              log.info('[updater] auto-download triggered (silent install on quit)');
+              await autoUpdaterModule.checkForUpdates();
+            } catch (e) {
+              log.warn('[updater] auto checkForUpdates failed', e);
+              // Reset le flag : si l'user clique Download manuellement plus tard,
+              // on veut bien que le flow re-tente.
+              autoDownloadTriggered = false;
+            }
           }
+        } else {
+          sendStatus({ kind: 'not-available', currentVersion: local });
         }
-      } else {
-        sendStatus({ kind: 'not-available', currentVersion: local });
-      }
-    } catch (err) {
-      const e = err as Error;
-      const msg =
-        e.name === 'AbortError'
+        consecutiveErrors = 0;
+      } catch (err) {
+        const e = err as Error;
+        const isAbort = e.name === 'AbortError';
+        const msg = isAbort
           ? 'Request timed out (8s) — check your connection or proxy'
           : e.message;
-      log.warn('[updater] check failed', msg);
-      sendStatus({
-        kind: 'error',
-        code: 'github-api-failed',
-        message: msg
-      });
-    }
+        log.warn('[updater] check failed', msg);
+        sendStatus({
+          kind: 'error',
+          code: 'github-api-failed',
+          message: msg
+        });
+        consecutiveErrors++;
+        // Backoff exponentiel : 60s × 2^(n-1), plafonné à 15min.
+        // Ne s'applique qu'avant la première réussite — après, le 4h-interval
+        // prend le relais. Évite le hammering en cas de panne réseau au boot.
+        if (consecutiveErrors <= 4) {
+          const delay = Math.min(
+            60_000 * 2 ** (consecutiveErrors - 1),
+            MAX_BACKOFF_MS
+          );
+          log.info(`[updater] backoff retry in ${Math.round(delay / 1000)}s`);
+          trackTimer(setTimeout(() => void checkUpdates(), delay));
+        }
+      } finally {
+        inflightCheck = null;
+      }
+    })();
+    return inflightCheck;
   }
 
-  ipcMain.handle(IPC.updateCheck, () => checkUpdates());
+  registerIpcHandler(IPC.updateCheck, () => checkUpdates());
 
   // Mode dev : pas d'electron-updater (pas d'app-update.yml). Install = no-op.
   if (is.dev) {
     log.info('[updater] dev mode — manual download only, no install');
-    ipcMain.handle(IPC.updateDownload, async () => {
+    registerIpcHandler(IPC.updateDownload, async () => {
       pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
     });
-    ipcMain.handle(IPC.updateInstall, () => {
+    registerIpcHandler(IPC.updateInstall, () => {
       sendStatus({
         kind: 'error',
         code: 'dev-mode',
         message: 'Available only in the installed app, not in dev mode.'
       });
     });
-    setTimeout(() => void checkUpdates(), 3000);
+    trackTimer(setTimeout(() => void checkUpdates(), BOOT_CHECK_DELAY_MS));
     return;
   }
 
@@ -355,42 +510,55 @@ export async function setupAutoUpdater(
   try {
     const { autoUpdater } = await import('electron-updater');
     autoUpdater.logger = log;
-    // Mode silencieux à la cmd Claude Code : background download + install au quit.
+    // Mode silencieux : background download + install au quit.
     // L'user ne voit jamais de prompt sauf s'il choisit "Install now" via le banner.
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
-    autoUpdaterRef = autoUpdater;
+    autoUpdaterModule = autoUpdater;
 
-    autoUpdater.on('download-progress', (p) =>
+    const onProgress = (p: {
+      percent: number;
+      bytesPerSecond: number;
+      transferred: number;
+      total: number;
+    }): void =>
       sendStatus({
         kind: 'downloading',
         percent: p.percent,
         bytesPerSecond: p.bytesPerSecond,
         transferred: p.transferred,
         total: p.total
-      })
-    );
-    autoUpdater.on('update-downloaded', (info) =>
+      });
+    const onDownloaded = (info: { version: string; releaseNotes?: string | unknown }): void =>
       sendStatus({
         kind: 'downloaded',
         version: info.version,
         releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined
-      })
-    );
-    autoUpdater.on('error', (err) => {
+      });
+    const onError = (err: Error): void => {
       log.warn('[updater] electron-updater event error', err.message);
       // Surface l'erreur au renderer — sinon l'UI reste figée sur "downloading"
       // si le serveur 404, si la signature ne valide pas, ou si le blockmap
       // est cassé. L'utilisateur voit alors une banner d'erreur et peut
-      // retenter manuellement.
+      // retenter manuellement. Reset le flag pour permettre une retry.
+      autoDownloadTriggered = false;
       sendStatus({
         kind: 'error',
         code: 'updater-error',
         message: err.message || 'Update error'
       });
-    });
+    };
 
-    ipcMain.handle(IPC.updateDownload, async () => {
+    autoUpdater.on('download-progress', onProgress);
+    autoUpdater.on('update-downloaded', onDownloaded);
+    autoUpdater.on('error', onError);
+    updaterListeners.push(
+      { event: 'download-progress', fn: onProgress },
+      { event: 'update-downloaded', fn: onDownloaded },
+      { event: 'error', fn: onError }
+    );
+
+    registerIpcHandler(IPC.updateDownload, async () => {
       try {
         log.info('[updater] manual download requested');
         // autoDownload=true → checkForUpdates() trigger lui-même le download.
@@ -404,7 +572,7 @@ export async function setupAutoUpdater(
       }
     });
 
-    ipcMain.handle(IPC.updateInstall, () => {
+    registerIpcHandler(IPC.updateInstall, () => {
       if (pendingManualInstaller) {
         runInstallerAndQuit(pendingManualInstaller, sendStatus);
         return;
@@ -421,14 +589,14 @@ export async function setupAutoUpdater(
       });
     });
 
-    setTimeout(() => void checkUpdates(), 3000);
-    updateRecheckInterval = setInterval(() => void checkUpdates(), 4 * 60 * 60 * 1000);
+    trackTimer(setTimeout(() => void checkUpdates(), BOOT_CHECK_DELAY_MS));
+    recheckInterval = setInterval(() => void checkUpdates(), RECHECK_INTERVAL_MS);
   } catch (err) {
     log.warn('[updater] electron-updater unavailable, manual download only', err);
-    ipcMain.handle(IPC.updateDownload, async () => {
+    registerIpcHandler(IPC.updateDownload, async () => {
       pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
     });
-    ipcMain.handle(IPC.updateInstall, () => {
+    registerIpcHandler(IPC.updateInstall, () => {
       if (pendingManualInstaller) {
         runInstallerAndQuit(pendingManualInstaller, sendStatus);
         return;
@@ -439,6 +607,6 @@ export async function setupAutoUpdater(
         message: 'No installer downloaded — re-run download first.'
       });
     });
-    setTimeout(() => void checkUpdates(), 3000);
+    trackTimer(setTimeout(() => void checkUpdates(), BOOT_CHECK_DELAY_MS));
   }
 }

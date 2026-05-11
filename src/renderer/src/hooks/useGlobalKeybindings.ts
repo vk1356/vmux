@@ -32,6 +32,43 @@ interface Args {
   actions: DialogActions;
 }
 
+/** True si l'élément actif est un input texte (covers contenteditable + role=textbox). */
+function isInputLike(el: Element | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'CANVAS') return true;
+  if ((el as HTMLElement).isContentEditable === true) return true;
+  return el.getAttribute('role') === 'textbox';
+}
+
+function anyDialogOpen(d: DialogState): boolean {
+  return (
+    d.newSessionOpen ||
+    d.settingsOpen ||
+    d.paletteOpen ||
+    d.shortcutsOpen ||
+    d.notifsOpen ||
+    d.snippetsOpen ||
+    d.closeConfirmOpen ||
+    d.onboardingOpen
+  );
+}
+
+function arrowKeyToDirection(key: string): 'left' | 'right' | 'up' | 'down' | null {
+  switch (key) {
+    case 'ArrowLeft':
+      return 'left';
+    case 'ArrowRight':
+      return 'right';
+    case 'ArrowUp':
+      return 'up';
+    case 'ArrowDown':
+      return 'down';
+    default:
+      return null;
+  }
+}
+
 /**
  * Tous les raccourcis globaux de l'application. Extrait d'App.tsx pour
  * cloisonner ~140 lignes de switch clavier.
@@ -39,6 +76,10 @@ interface Args {
  * Court-circuit : si un dialog/overlay est déjà ouvert, on ne déclenche
  * PAS les raccourcis globaux (sauf Escape). Évite l'ouverture de 2 dialogs
  * en parallèle (ex: Ctrl+K dans Settings ouvrait la palette par-dessus).
+ *
+ * Single mount : le listener est attaché UNE fois (deps `[]`). Tous les
+ * args dynamiques sont lus via refs live, et les actions Zustand via
+ * `useSessionStore.getState()` (stables par référence Zustand 5).
  */
 export function useGlobalKeybindings({
   sessions,
@@ -46,9 +87,6 @@ export function useGlobalKeybindings({
   dialogs,
   actions
 }: Args): void {
-  const toggleSync = useSessionStore((s) => s.toggleSync);
-  const removeSession = useSessionStore((s) => s.removeSession);
-
   // Refs live : sessions/activeSessionId/dialogs/actions sont des objets inline
   // créés à chaque render dans App.tsx, donc dep-array les inclure tearait
   // l'event listener à chaque render — fenêtre brève sans keybindings active +
@@ -63,132 +101,140 @@ export function useGlobalKeybindings({
   actionsRef.current = actions;
 
   useEffect(() => {
+    const ac = new AbortController();
+
     const onKey = (e: KeyboardEvent): void => {
       const dialogs = dialogsRef.current;
       const actions = actionsRef.current;
       const sessions = sessionsRef.current;
       const activeSessionId = activeSessionIdRef.current;
 
-      const aDialogIsOpen =
-        dialogs.newSessionOpen ||
-        dialogs.settingsOpen ||
-        dialogs.paletteOpen ||
-        dialogs.shortcutsOpen ||
-        dialogs.notifsOpen ||
-        dialogs.snippetsOpen ||
-        dialogs.closeConfirmOpen ||
-        dialogs.onboardingOpen;
-      if (aDialogIsOpen && e.key !== 'Escape') return;
+      if (anyDialogOpen(dialogs) && e.key !== 'Escape') return;
 
       const ctrl = e.ctrlKey || e.metaKey;
       const session = sessions.find((s) => s.id === activeSessionId);
       const activePaneId = session?.activePaneId;
+      const key = e.key.toLowerCase();
 
-      if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'n') {
-        e.preventDefault();
-        actions.setNewSessionOpen(true);
-      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        actions.setPaletteOpen(true);
-      } else if (ctrl && !e.shiftKey && e.key === '/') {
-        e.preventDefault();
-        actions.setSnippetsOpen(true);
-      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'b') {
-        // Toggle sidebar (style VS Code).
-        e.preventDefault();
-        actions.toggleSidebar();
-      } else if (ctrl && !e.shiftKey && /^[1-9]$/.test(e.key)) {
-        // Ctrl+1..9 → switche à la Nème session.
-        const idx = parseInt(e.key, 10) - 1;
-        if (sessions[idx]) {
+      // === Ctrl-only ===
+      if (ctrl && !e.shiftKey) {
+        if (key === 'n') {
           e.preventDefault();
-          useSessionStore.getState().setActiveSession(sessions[idx].id);
+          actions.setNewSessionOpen(true);
+          return;
         }
-      } else if (
-        e.key === '?' &&
-        !ctrl &&
-        !dialogs.newSessionOpen &&
-        !dialogs.settingsOpen &&
-        !dialogs.paletteOpen
-      ) {
-        // ? = ouvrir l'overlay de raccourcis (uniquement si on n'est pas déjà
-        // dans un dialog ou un input — couvre contenteditable + role=textbox).
-        const ae = document.activeElement as HTMLElement | null;
-        const inInput =
-          !!ae &&
-          (ae.tagName === 'INPUT' ||
-            ae.tagName === 'TEXTAREA' ||
-            ae.tagName === 'CANVAS' ||
-            ae.isContentEditable === true ||
-            ae.getAttribute('role') === 'textbox');
-        if (!inInput) {
+        if (key === 'k') {
           e.preventDefault();
-          actions.setShortcutsOpen(true);
+          actions.setPaletteOpen(true);
+          return;
         }
-      } else if (ctrl && e.shiftKey && e.key.toLowerCase() === 's' && session) {
-        e.preventDefault();
-        toggleSync(session.id);
-      } else if (ctrl && !e.shiftKey && e.key === ',') {
-        e.preventDefault();
-        actions.setSettingsOpen(true);
-      } else if (ctrl && e.shiftKey && e.key.toLowerCase() === 'd' && session && activePaneId) {
-        // "Add pane" — ajoute un terminal ET retile en grid 2D auto.
-        e.preventDefault();
-        void window.cmux.panes
-          .split({
+        if (e.key === '/') {
+          e.preventDefault();
+          actions.setSnippetsOpen(true);
+          return;
+        }
+        if (key === 'b') {
+          e.preventDefault();
+          actions.toggleSidebar();
+          return;
+        }
+        if (e.key === ',') {
+          e.preventDefault();
+          actions.setSettingsOpen(true);
+          return;
+        }
+        if (key === 'g' && session) {
+          e.preventDefault();
+          void window.cmux.panes.relayout(session.id, 'tiled');
+          return;
+        }
+        if (key === 'w' && activeSessionId) {
+          // Ferme la session entière — avec confirmation si un agent tourne.
+          e.preventDefault();
+          const sess = sessions.find((s) => s.id === activeSessionId);
+          if (!sess) return;
+          const hasRunning = Object.values(sess.panes).some(
+            (p) => p.kind === 'terminal' && (p.status === 'running' || p.status === 'starting')
+          );
+          if (hasRunning) {
+            actions.setCloseConfirm({ sessionId: sess.id, name: sess.name });
+          } else {
+            const { removeSession } = useSessionStore.getState();
+            void window.cmux.sessions.remove(sess.id);
+            removeSession(sess.id);
+          }
+          return;
+        }
+        if (/^[1-9]$/.test(e.key)) {
+          // Ctrl+1..9 → switche à la Nème session.
+          const idx = parseInt(e.key, 10) - 1;
+          if (sessions[idx]) {
+            e.preventDefault();
+            useSessionStore.getState().setActiveSession(sessions[idx].id);
+          }
+          return;
+        }
+      }
+
+      // === Ctrl+Shift ===
+      if (ctrl && e.shiftKey) {
+        if (key === 's' && session) {
+          e.preventDefault();
+          useSessionStore.getState().toggleSync(session.id);
+          return;
+        }
+        if (key === 'd' && session && activePaneId) {
+          // "Add pane" — ajoute un terminal ET retile en grid 2D auto.
+          e.preventDefault();
+          void window.cmux.panes
+            .split({ sessionId: session.id, paneId: activePaneId, direction: 'horizontal' })
+            .then(() => window.cmux.panes.relayout(session.id, 'tiled'));
+          return;
+        }
+        if (key === 'e' && session && activePaneId) {
+          // Split vertical manuel (sans retile — pour layout custom).
+          e.preventDefault();
+          void window.cmux.panes.split({
             sessionId: session.id,
             paneId: activePaneId,
-            direction: 'horizontal'
-          })
-          .then(() => window.cmux.panes.relayout(session.id, 'tiled'));
-      } else if (ctrl && e.shiftKey && e.key.toLowerCase() === 'e' && session && activePaneId) {
-        // Split vertical manuel (sans retile — pour layout custom).
-        e.preventDefault();
-        void window.cmux.panes.split({
-          sessionId: session.id,
-          paneId: activePaneId,
-          direction: 'vertical'
-        });
-      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'g' && session) {
-        // Re-tile la session courante en grid auto.
-        e.preventDefault();
-        void window.cmux.panes.relayout(session.id, 'tiled');
-      } else if (ctrl && e.shiftKey && e.key.toLowerCase() === 'w' && session && activePaneId) {
-        // Ferme le pane actif.
-        e.preventDefault();
-        void window.cmux.panes.close(session.id, activePaneId);
-      } else if (ctrl && !e.shiftKey && e.key.toLowerCase() === 'w' && activeSessionId) {
-        // Ferme la session entière — avec confirmation si un agent tourne.
-        e.preventDefault();
-        const sess = sessions.find((s) => s.id === activeSessionId);
-        const hasRunning = sess
-          ? Object.values(sess.panes).some(
-              (p) => p.kind === 'terminal' && (p.status === 'running' || p.status === 'starting')
-            )
-          : false;
-        if (hasRunning && sess) {
-          actions.setCloseConfirm({ sessionId: sess.id, name: sess.name });
-        } else if (sess) {
-          void window.cmux.sessions.remove(sess.id);
-          removeSession(sess.id);
+            direction: 'vertical'
+          });
+          return;
         }
-      } else if (e.altKey && session && activePaneId) {
-        const dir =
-          e.key === 'ArrowLeft'
-            ? 'left'
-            : e.key === 'ArrowRight'
-              ? 'right'
-              : e.key === 'ArrowUp'
-                ? 'up'
-                : e.key === 'ArrowDown'
-                  ? 'down'
-                  : null;
+        if (key === 'w' && session && activePaneId) {
+          e.preventDefault();
+          void window.cmux.panes.close(session.id, activePaneId);
+          return;
+        }
+      }
+
+      // === Alt+arrow → focus pane voisin ===
+      if (e.altKey && session && activePaneId) {
+        const dir = arrowKeyToDirection(e.key);
         if (dir) {
           e.preventDefault();
           const target = neighborInDirection(session.tree, activePaneId, dir);
           if (target) void window.cmux.panes.focus(session.id, target);
+          return;
         }
-      } else if (e.key === 'Escape') {
+      }
+
+      // === '?' = overlay raccourcis (hors input/dialog) ===
+      if (
+        e.key === '?' &&
+        !ctrl &&
+        !dialogs.newSessionOpen &&
+        !dialogs.settingsOpen &&
+        !dialogs.paletteOpen &&
+        !isInputLike(document.activeElement)
+      ) {
+        e.preventDefault();
+        actions.setShortcutsOpen(true);
+        return;
+      }
+
+      // === Escape : ferme le dialog le plus haut ===
+      if (e.key === 'Escape') {
         if (dialogs.shortcutsOpen) actions.setShortcutsOpen(false);
         else if (dialogs.snippetsOpen) actions.setSnippetsOpen(false);
         else if (dialogs.notifsOpen) actions.setNotifsOpen(false);
@@ -197,9 +243,10 @@ export function useGlobalKeybindings({
         else if (dialogs.settingsOpen) actions.setSettingsOpen(false);
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // Deps minimal — sessions/activeSessionId/dialogs/actions lus via refs.
-    // toggleSync/removeSession sont des actions Zustand stables par référence.
-  }, [removeSession, toggleSync]);
+
+    window.addEventListener('keydown', onKey, { signal: ac.signal });
+    return () => ac.abort();
+    // Mount-once : tous les args dynamiques passent par refs ; actions Zustand
+    // (removeSession/toggleSync/setActiveSession) lues via getState() — stables.
+  }, []);
 }

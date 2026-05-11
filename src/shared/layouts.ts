@@ -3,9 +3,13 @@ import type { PaneId, PaneTree } from './types';
 function equalSizes(n: number): number[] {
   if (n <= 0) return [];
   const base = Math.floor(100 / n);
-  const sizes = new Array(n).fill(base) as number[];
+  const sizes = new Array<number>(n).fill(base);
   sizes[n - 1] = 100 - base * (n - 1);
   return sizes;
+}
+
+function leafChildren(paneIds: readonly PaneId[]): PaneTree[] {
+  return paneIds.map((paneId) => ({ kind: 'leaf', paneId }));
 }
 
 /**
@@ -20,7 +24,7 @@ function equalSizes(n: number): number[] {
  * - 6  → 3×2
  * - 9  → 3×3
  */
-export function tileLayout(paneIds: PaneId[]): PaneTree {
+export function tileLayout(paneIds: readonly PaneId[]): PaneTree {
   if (paneIds.length === 0) {
     throw new Error('tileLayout: empty paneIds');
   }
@@ -42,7 +46,7 @@ export function tileLayout(paneIds: PaneId[]): PaneTree {
         kind: 'split',
         direction: 'horizontal',
         sizes: equalSizes(rowIds.length),
-        children: rowIds.map((id) => ({ kind: 'leaf' as const, paneId: id }))
+        children: leafChildren(rowIds)
       });
     }
   }
@@ -57,31 +61,31 @@ export function tileLayout(paneIds: PaneId[]): PaneTree {
 }
 
 /** Layout linéaire — toutes les panes sur une ligne. */
-export function evenHorizontalLayout(paneIds: PaneId[]): PaneTree {
+export function evenHorizontalLayout(paneIds: readonly PaneId[]): PaneTree {
   if (paneIds.length === 0) throw new Error('evenHorizontalLayout: empty paneIds');
   if (paneIds.length === 1) return { kind: 'leaf', paneId: paneIds[0] };
   return {
     kind: 'split',
     direction: 'horizontal',
     sizes: equalSizes(paneIds.length),
-    children: paneIds.map((id) => ({ kind: 'leaf' as const, paneId: id }))
+    children: leafChildren(paneIds)
   };
 }
 
 /** Layout colonne — toutes les panes empilées. */
-export function evenVerticalLayout(paneIds: PaneId[]): PaneTree {
+export function evenVerticalLayout(paneIds: readonly PaneId[]): PaneTree {
   if (paneIds.length === 0) throw new Error('evenVerticalLayout: empty paneIds');
   if (paneIds.length === 1) return { kind: 'leaf', paneId: paneIds[0] };
   return {
     kind: 'split',
     direction: 'vertical',
     sizes: equalSizes(paneIds.length),
-    children: paneIds.map((id) => ({ kind: 'leaf' as const, paneId: id }))
+    children: leafChildren(paneIds)
   };
 }
 
 /** Layout main+stack — 1ère pane à gauche en grand, autres empilées à droite. */
-export function mainStackLayout(paneIds: PaneId[]): PaneTree {
+export function mainStackLayout(paneIds: readonly PaneId[]): PaneTree {
   if (paneIds.length <= 1) return tileLayout(paneIds);
   const [main, ...rest] = paneIds;
   const stack: PaneTree =
@@ -91,7 +95,7 @@ export function mainStackLayout(paneIds: PaneId[]): PaneTree {
           kind: 'split',
           direction: 'vertical',
           sizes: equalSizes(rest.length),
-          children: rest.map((id) => ({ kind: 'leaf' as const, paneId: id }))
+          children: leafChildren(rest)
         };
   return {
     kind: 'split',
@@ -101,9 +105,10 @@ export function mainStackLayout(paneIds: PaneId[]): PaneTree {
   };
 }
 
-export type LayoutPreset = 'tiled' | 'even-horizontal' | 'even-vertical' | 'main-stack';
+export const LAYOUT_PRESETS = ['tiled', 'even-horizontal', 'even-vertical', 'main-stack'] as const;
+export type LayoutPreset = (typeof LAYOUT_PRESETS)[number];
 
-export function applyLayout(preset: LayoutPreset, paneIds: PaneId[]): PaneTree {
+export function applyLayout(preset: LayoutPreset, paneIds: readonly PaneId[]): PaneTree {
   switch (preset) {
     case 'tiled':
       return tileLayout(paneIds);

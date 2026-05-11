@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type JSX } from 'react';
+import { useEffect, useId, useRef, useState, type JSX } from 'react';
 import { FolderOpen, X, GitBranch, MessageSquare, AlertCircle, ExternalLink } from 'lucide-react';
 import type { AgentPreset, GitRepoInfo } from '@shared/types';
 import { useSessionStore } from '../store/sessions';
 import { useShallow } from 'zustand/react/shallow';
 import { useT } from '../i18n';
-import { useFocusTrap } from '../hooks/useFocusTrap';
+
+ensureDialogBackdropStyle();
 
 interface Props {
   open: boolean;
@@ -37,20 +38,31 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
   // peuvent passer le check `if (submitting)` avant le re-render. Le ref est
   // checké et set synchroniquement → vraiment idempotent.
   const submittingRef = useRef(false);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(dialogRef, open);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const cwdId = useId();
+  const branchId = useId();
+  const baseId = useId();
+  const nameId = useId();
+  const initialPromptId = useId();
 
   useEffect(() => {
-    if (!open) return;
-    setAgentId('claude-code');
-    setName('');
-    setCwd(defaultCwd ?? '');
-    setRepoInfo(null);
-    setUseWorktree(true);
-    setBranch('');
-    setBase('');
-    setInitialInput('');
-    setError(null);
+    const d = dialogRef.current;
+    if (!d) return;
+    if (open && !d.open) {
+      d.showModal();
+      setAgentId('claude-code');
+      setName('');
+      setCwd(defaultCwd ?? '');
+      setRepoInfo(null);
+      setUseWorktree(true);
+      setBranch('');
+      setBase('');
+      setInitialInput('');
+      setError(null);
+    } else if (!open && d.open) {
+      d.close();
+    }
   }, [open, defaultCwd]);
 
   // Inspection git debouncée.
@@ -135,188 +147,228 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
   const selectedAvailability = agentAvailability[agentId];
   const selectedAgent = agents.find((a) => a.id === agentId);
 
+  const onBackdropClick = (e: React.MouseEvent<HTMLDialogElement>): void => {
+    if (e.target === e.currentTarget) onClose();
+  };
+
   return (
-    <div className="dialog-backdrop" onClick={onClose}>
-      <div
-        className="dialog"
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('newSessionTitle')}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="dialog-header">
-          <div className="dialog-title">{t('newSessionTitle')}</div>
-          <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
-            <X size={14} />
-          </button>
+    <dialog
+      ref={dialogRef}
+      className="dialog vmux-dialog"
+      style={dialogResetStyle}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={onBackdropClick}
+      aria-labelledby={titleId}
+    >
+      <div className="dialog-header">
+        <div className="dialog-title" id={titleId}>
+          {t('newSessionTitle')}
         </div>
+        <button className="btn-icon" onClick={onClose} aria-label={t('settingsClose')}>
+          <X size={14} />
+        </button>
+      </div>
 
-        <div className="dialog-body">
-          <div className="field">
-            <label className="field-label">{t('newSessionAgent')}</label>
-            <div className="agent-grid">
-              {agents.map((a) => {
-                const av = agentAvailability[a.id];
-                const missing = av && !av.found && a.id !== 'shell';
-                return (
-                  <button
-                    key={a.id}
-                    className={`agent-card ${agentId === a.id ? 'selected' : ''} ${
-                      missing ? 'missing' : ''
-                    }`}
-                    onClick={() => setAgentId(a.id)}
-                  >
-                    <div className="agent-card-row">
-                      <span
-                        className="agent-card-bullet"
-                        style={{ background: a.color }}
-                        aria-hidden
-                      />
-                      <span className="agent-card-name">{a.label}</span>
-                      {missing && (
-                        <span
-                          className="agent-card-badge"
-                          title={t('newSessionAgentNotDetectedTip')}
-                        >
-                          {t('agentNotInstalled')}
-                        </span>
-                      )}
-                    </div>
-                    <div className="agent-card-desc">{translateAgentDesc(t, a.id, a.description)}</div>
-                  </button>
-                );
-              })}
-            </div>
-            {selectedAvailability && !selectedAvailability.found && agentId !== 'shell' && (
-              <div className="hint warn">
-                <AlertCircle size={11} style={{ verticalAlign: '-1px' }} />{' '}
-                <code>{selectedAgent?.command}</code> {t('newSessionAgentNotInstalled')}
-                {selectedAgent?.installUrl && (
-                  <>
-                    {' '}
-                    <a
-                      onClick={() =>
-                        selectedAgent.installUrl &&
-                        window.cmux.dialog.openExternal(selectedAgent.installUrl)
-                      }
-                    >
-                      <ExternalLink size={9} style={{ verticalAlign: '-1px' }} />
-                    </a>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="field">
-            <label className="field-label">{t('newSessionCwd')}</label>
-            <div className="input-group">
-              <input
-                className="input"
-                placeholder="C:\path\to\repo"
-                value={cwd}
-                onChange={(e) => setCwd(e.target.value)}
-              />
-              <button className="btn" onClick={pickFolder}>
-                <FolderOpen size={14} />
-                {t('newSessionCwdPick')}
-              </button>
-            </div>
-            {repoInfo && (
-              <div className="hint">
-                {repoInfo.isRepo ? (
-                  <>
-                    <GitBranch size={11} style={{ verticalAlign: '-2px', marginRight: 4 }} />
-                    {t('newSessionRepoDetected')}{' '}
-                    <strong>{repoInfo.currentBranch ?? 'detached'}</strong>
-                    {repoInfo.hasUncommitted && ` · ${t('newSessionUncommitted')}`}
-                  </>
-                ) : (
-                  t('newSessionNotARepo')
-                )}
-              </div>
-            )}
-          </div>
-
-          {canWorktree && (
-            <>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={useWorktree}
-                  onChange={(e) => setUseWorktree(e.target.checked)}
-                />
-                {t('newSessionCreateWorktreeFull')}
-              </label>
-
-              {useWorktree && (
-                <>
-                  <div className="field">
-                    <label className="field-label">{t('newSessionBranch')}</label>
-                    <input
-                      className="input"
-                      placeholder="agent/claude-feature-x"
-                      value={branch}
-                      onChange={(e) => setBranch(e.target.value)}
+      <div className="dialog-body">
+        <div className="field">
+          <span className="field-label">{t('newSessionAgent')}</span>
+          <div className="agent-grid" role="radiogroup" aria-label={t('newSessionAgent')}>
+            {agents.map((a) => {
+              const av = agentAvailability[a.id];
+              const missing = av && !av.found && a.id !== 'shell';
+              const isSelected = agentId === a.id;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={isSelected}
+                  className={`agent-card ${isSelected ? 'selected' : ''} ${
+                    missing ? 'missing' : ''
+                  }`}
+                  onClick={() => setAgentId(a.id)}
+                >
+                  <div className="agent-card-row">
+                    <span
+                      className="agent-card-bullet"
+                      style={{ background: a.color }}
+                      aria-hidden
                     />
+                    <span className="agent-card-name">{a.label}</span>
+                    {missing && (
+                      <span
+                        className="agent-card-badge"
+                        title={t('newSessionAgentNotDetectedTip')}
+                      >
+                        {t('agentNotInstalled')}
+                      </span>
+                    )}
                   </div>
-                  <div className="field">
-                    <label className="field-label">{t('newSessionBaseBranch')}</label>
-                    <select
-                      className="select"
-                      value={base}
-                      onChange={(e) => setBase(e.target.value)}
-                    >
-                      {repoInfo?.branches.map((b) => (
-                        <option key={b} value={b}>
-                          {b}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="agent-card-desc">
+                    {translateAgentDesc(t, a.id, a.description)}
                   </div>
+                </button>
+              );
+            })}
+          </div>
+          {selectedAvailability && !selectedAvailability.found && agentId !== 'shell' && (
+            <div className="hint warn">
+              <AlertCircle size={11} style={{ verticalAlign: '-1px' }} />{' '}
+              <code>{selectedAgent?.command}</code> {t('newSessionAgentNotInstalled')}
+              {selectedAgent?.installUrl && (
+                <>
+                  {' '}
+                  <a
+                    onClick={() =>
+                      selectedAgent.installUrl &&
+                      window.cmux.dialog.openExternal(selectedAgent.installUrl)
+                    }
+                  >
+                    <ExternalLink size={9} style={{ verticalAlign: '-1px' }} />
+                  </a>
                 </>
               )}
-            </>
+            </div>
           )}
+        </div>
 
-          <div className="field">
-            <label className="field-label">{t('newSessionName')}</label>
+        <div className="field">
+          <label className="field-label" htmlFor={cwdId}>
+            {t('newSessionCwd')}
+          </label>
+          <div className="input-group">
             <input
+              id={cwdId}
               className="input"
-              placeholder="refactor api"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              placeholder="C:\path\to\repo"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
             />
+            <button className="btn" onClick={pickFolder}>
+              <FolderOpen size={14} />
+              {t('newSessionCwdPick')}
+            </button>
           </div>
+          {repoInfo && (
+            <div className="hint">
+              {repoInfo.isRepo ? (
+                <>
+                  <GitBranch size={11} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                  {t('newSessionRepoDetected')}{' '}
+                  <strong>{repoInfo.currentBranch ?? 'detached'}</strong>
+                  {repoInfo.hasUncommitted && ` · ${t('newSessionUncommitted')}`}
+                </>
+              ) : (
+                t('newSessionNotARepo')
+              )}
+            </div>
+          )}
+        </div>
 
-          <div className="field">
-            <label className="field-label">
-              <MessageSquare size={11} style={{ verticalAlign: '-1px' }} />{' '}
-              {t('newSessionInitialPrompt')}
+        {canWorktree && (
+          <>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={useWorktree}
+                onChange={(e) => setUseWorktree(e.target.checked)}
+              />
+              {t('newSessionCreateWorktreeFull')}
             </label>
-            <input
-              className="input"
-              placeholder={t('newSessionInitialPromptPlaceholder')}
-              value={initialInput}
-              onChange={(e) => setInitialInput(e.target.value)}
-            />
-            <div className="hint">{t('newSessionInitialPromptHint')}</div>
+
+            {useWorktree && (
+              <>
+                <div className="field">
+                  <label className="field-label" htmlFor={branchId}>
+                    {t('newSessionBranch')}
+                  </label>
+                  <input
+                    id={branchId}
+                    className="input"
+                    placeholder="agent/claude-feature-x"
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="field">
+                  <label className="field-label" htmlFor={baseId}>
+                    {t('newSessionBaseBranch')}
+                  </label>
+                  <select
+                    id={baseId}
+                    className="select"
+                    value={base}
+                    onChange={(e) => setBase(e.target.value)}
+                  >
+                    {repoInfo?.branches.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        <div className="field">
+          <label className="field-label" htmlFor={nameId}>
+            {t('newSessionName')}
+          </label>
+          <input
+            id={nameId}
+            className="input"
+            placeholder="refactor api"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
+
+        <div className="field">
+          <label className="field-label" htmlFor={initialPromptId}>
+            <MessageSquare size={11} style={{ verticalAlign: '-1px' }} />{' '}
+            {t('newSessionInitialPrompt')}
+          </label>
+          <input
+            id={initialPromptId}
+            className="input"
+            placeholder={t('newSessionInitialPromptPlaceholder')}
+            value={initialInput}
+            onChange={(e) => setInitialInput(e.target.value)}
+            autoComplete="off"
+          />
+          <div className="hint">{t('newSessionInitialPromptHint')}</div>
+        </div>
+
+        {error && (
+          <div className="error-banner" role="alert">
+            {error}
           </div>
-
-          {error && <div className="error-banner">{error}</div>}
-        </div>
-
-        <div className="dialog-footer">
-          <button className="btn ghost" onClick={onClose} disabled={submitting}>
-            {t('newSessionCancel')}
-          </button>
-          <button className="btn primary" onClick={submit} disabled={submitting || !cwd}>
-            {submitting ? t('newSessionCreating') : t('newSessionLaunch')}
-          </button>
-        </div>
+        )}
       </div>
-    </div>
+
+      <div className="dialog-footer">
+        <button className="btn ghost" onClick={onClose} disabled={submitting}>
+          {t('newSessionCancel')}
+        </button>
+        <button
+          className="btn primary"
+          onClick={() => void submit()}
+          disabled={submitting || !cwd}
+        >
+          {submitting ? t('newSessionCreating') : t('newSessionLaunch')}
+        </button>
+      </div>
+    </dialog>
   );
 }
 
@@ -331,4 +383,32 @@ function translateAgentDesc(
   const translated = t(key);
   // Si la clé n'existe pas du tout, translate() renvoie la clé brute.
   return translated && translated !== key ? translated : fallback;
+}
+
+const dialogResetStyle: React.CSSProperties = {
+  padding: 0,
+  border: 0,
+  background: 'transparent',
+  maxWidth: 'unset',
+  maxHeight: 'unset',
+  overflow: 'visible',
+  color: 'inherit'
+};
+
+function ensureDialogBackdropStyle(): void {
+  if (typeof document === 'undefined') return;
+  const id = 'vmux-dialog-backdrop-style';
+  if (document.getElementById(id)) return;
+  const el = document.createElement('style');
+  el.id = id;
+  el.textContent = `
+dialog.vmux-dialog { margin: auto; inset: 0; }
+dialog.vmux-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  animation: vmuxDialogBackdropFadeIn 120ms ease-out;
+}
+@keyframes vmuxDialogBackdropFadeIn { from { opacity: 0; } }
+`;
+  document.head.appendChild(el);
 }

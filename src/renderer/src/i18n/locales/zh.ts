@@ -1,5 +1,6 @@
 // Lazy-loaded locale chunk. See i18n/index.ts.
-const ZH: Record<string, string> = {
+import type { LocaleCatalog } from '..';
+const ZH = {
   appTagline: 'AI 多智能体编排器',
   heroTitleA: '多个 AI 智能体,',
   heroTitleB: '同一个窗口。',
@@ -252,7 +253,7 @@ const ZH: Record<string, string> = {
   'agentDesc.aider': 'CLI 中的 AI 结对编程助手',
   'agentDesc.gemini': 'Google Gemini CLI',
   'agentDesc.shell': '纯 PowerShell,无智能体'
-};
+} satisfies LocaleCatalog;
 
 
 export default ZH;

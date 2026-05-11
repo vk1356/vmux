@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { Bell, BellRing, X, Trash2, CheckCircle2, XCircle, Rocket, FlaskConical, Sparkles } from 'lucide-react';
 import { useSessionStore } from '../store/sessions';
 import type { DetectedEventKind } from '@shared/types';
@@ -33,10 +33,26 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
   // Mark all as read when drawer opens.
   useEffect(() => {
     if (open) {
-      const t = setTimeout(() => markEventsRead(), 600);
-      return () => clearTimeout(t);
+      const t = window.setTimeout(() => markEventsRead(), 600);
+      return () => window.clearTimeout(t);
     }
   }, [open, markEventsRead]);
+
+  // Esc → close. Attaché au document tant que le drawer est ouvert ;
+  // marche même si le focus n'est pas dans le dialog (focus trap not yet attached).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  const handleBackdropClick = useCallback(() => onClose(), [onClose]);
 
   const filtered = useMemo(() => {
     if (filter === 'all') return eventHistory;
@@ -46,7 +62,7 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
   if (!open) return null;
 
   return (
-    <div className="notif-backdrop" onClick={onClose}>
+    <div className="notif-backdrop" onClick={handleBackdropClick}>
       <div
         className="notif-drawer"
         ref={dialogRef}
@@ -101,10 +117,10 @@ export function NotificationCenter({ open, onClose }: Props): JSX.Element | null
           </button>
         </div>
 
-        <div className="notif-list">
+        <div className="notif-list" role="region" aria-live="polite" aria-atomic="false">
           {filtered.length === 0 ? (
-            <div className="notif-empty">
-              <Sparkles size={20} style={{ opacity: 0.4 }} />
+            <div className="notif-empty" role="status">
+              <Sparkles size={20} style={{ opacity: 0.4 }} aria-hidden />
               <div>{t('notificationsEmpty')}</div>
               <div style={{ fontSize: 11, opacity: 0.6 }}>{t('notifEmptyHint')}</div>
             </div>

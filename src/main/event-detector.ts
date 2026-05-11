@@ -15,6 +15,12 @@ const STOP = `[^\\n\\r│┃┄┈─┌┐└┘├┤┬┴┼·•⠀-⣿]`;
 // Tous les matchers ont le flag `g` : un même chunk peut contenir plusieurs
 // événements de natures différentes (server-ready + build-success arrivent
 // souvent dans la même rafale de logs). Sans `g`, seul le premier serait détecté.
+//
+// Les quantifieurs `{0,70}` / `{0,50}` sont GREEDY mais bornés explicitement
+// → pas de backtracking pathologique (l'engine ne dépasse jamais la borne).
+// On a besoin du greedy pour capturer l'URL complète dans le tail d'un match
+// server-ready ("Local: http://localhost:5173/ ready in 320ms") : un lazy
+// s'arrêterait à 0 char et l'extraction d'URL en aval échouerait.
 const MATCHERS: MatcherDef[] = [
   {
     kind: 'server-ready',
@@ -50,6 +56,35 @@ const MATCHERS: MatcherDef[] = [
   }
 ];
 
+// Pré-compilation (anti-allocation par chunk) : utilisée pour extraire l'URL
+// d'un match server-ready. Non-global → `.exec()` sur un message court.
+const URL_IN_MESSAGE_RE = /https?:\/\/[^\s'"<>]+/;
+
+// Bail-out fast-path : si AUCUN des mots-clés racine n'apparaît dans le chunk,
+// on saute les 5 .matchAll() qui ré-itèrent tous le buffer. La majorité écrasante
+// des chunks PTY d'un agent IA n'a aucun de ces tokens. indexOf est ~10x plus
+// rapide que .test() sur un buffer de 100KB.
+function hasAnyHint(text: string): boolean {
+  // Test les marqueurs les plus discriminants en premier.
+  return (
+    text.indexOf('http') !== -1 ||
+    text.indexOf('compiled') !== -1 ||
+    text.indexOf('listening') !== -1 ||
+    text.indexOf('ready') !== -1 ||
+    text.indexOf('uild') !== -1 || // "build" / "Build" / "Building" (sans la majuscule)
+    text.indexOf('ailed') !== -1 || // "failed" / "Failed"
+    text.indexOf('error') !== -1 ||
+    text.indexOf('Error') !== -1 ||
+    text.indexOf('pass') !== -1 ||
+    text.indexOf('ompleted') !== -1 || // "completed" / "Completed"
+    text.indexOf('inished') !== -1 || // "finished" / "Finished"
+    text.indexOf('done') !== -1 ||
+    text.indexOf('Done') !== -1 ||
+    text.indexOf('running on') !== -1 ||
+    text.indexOf('ailing') !== -1 // "failing"
+  );
+}
+
 interface DetectorState {
   /** Dernier message émis par kind. Anti-doublon. */
   last: Map<DetectedEventKind, { message: string; ts: number }>;
@@ -67,6 +102,8 @@ export function detectEvents(paneId: PaneId, chunk: string): DetectedEvent[] {
  *  dans le hot path PTY (cf. pty-manager.ts onData). */
 export function detectEventsFromStripped(paneId: PaneId, text: string): DetectedEvent[] {
   if (!text) return [];
+  // Fast path : aucun token discriminant → skip les 5 regex.
+  if (!hasAnyHint(text)) return [];
 
   let state = states.get(paneId);
   if (!state) {
@@ -76,22 +113,30 @@ export function detectEventsFromStripped(paneId: PaneId, text: string): Detected
 
   const now = Date.now();
   const out: DetectedEvent[] = [];
-  for (const { kind, re } of MATCHERS) {
-    // matchAll consomme le flag `g` ; chaque match est isolé. On déduplique
-    // ensuite par message (pas par kind) pour qu'un même chunk puisse remonter
-    // 2 builds successifs ou 2 servers démarrés sur des ports différents.
-    for (const m of text.matchAll(re)) {
-      const message = m[0].trim().slice(0, 160);
+  for (let i = 0; i < MATCHERS.length; i++) {
+    const { kind, re } = MATCHERS[i];
+    // exec-loop avec lastIndex : équivalent à matchAll mais sans wrapper
+    // iterator (moins d'allocation par chunk vide).
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      const raw = m[0];
+      const trimmed = raw.trim();
+      const message = trimmed.length > 160 ? trimmed.slice(0, 160) : trimmed;
       const prev = state.last.get(kind);
       if (prev && prev.message === message && now - prev.ts < DEDUP_WINDOW) continue;
       state.last.set(kind, { message, ts: now });
 
       let url: string | undefined;
       if (kind === 'server-ready') {
-        const um = message.match(/https?:\/\/[^\s'"<>]+/);
+        const um = URL_IN_MESSAGE_RE.exec(message);
         if (um) url = um[0];
       }
       out.push({ paneId, kind, message, url, timestamp: now });
+
+      // Garde-fou anti-zero-width match (lookahead-only) : avance lastIndex
+      // d'au moins 1 pour éviter une boucle infinie.
+      if (m.index === re.lastIndex) re.lastIndex++;
     }
   }
   return out;

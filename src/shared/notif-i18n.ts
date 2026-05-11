@@ -4,9 +4,9 @@
 
 import type { DetectedEventKind, Lang } from './types';
 
-interface NotifBundle {
+export interface NotifBundle {
   /** Titre de la notif système pour chaque type d'event détecté. */
-  eventTitle: Record<DetectedEventKind, string>;
+  eventTitle: Readonly<Record<DetectedEventKind, string>>;
   /** Corps de la notif quand l'agent demande une action. `{agent}` est remplacé. */
   attentionWithAgent: string;
   /** Corps fallback quand on ne connaît pas l'agent. */
