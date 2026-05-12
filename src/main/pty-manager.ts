@@ -64,6 +64,9 @@ interface ManagedPane {
   lastAgentState?: AgentRunState;
   /** Timer qui flippe en `idle` après IDLE_AFTER_MS de silence. */
   idleTimer?: NodeJS.Timeout;
+  /** Timer de debounce pour proc.resize() — évite les storms 60Hz pendant
+   *  les drags de window resize (ConPTY n'aime pas être hammered). */
+  resizeTimer?: NodeJS.Timeout;
 }
 
 interface ManagedSession {
@@ -111,6 +114,10 @@ class PtyManager extends EventEmitter {
     if (mp.idleTimer) {
       clearTimeout(mp.idleTimer);
       mp.idleTimer = undefined;
+    }
+    if (mp.resizeTimer) {
+      clearTimeout(mp.resizeTimer);
+      mp.resizeTimer = undefined;
     }
   }
 
@@ -274,6 +281,10 @@ class PtyManager extends EventEmitter {
     if (!m) return;
     for (const [paneId, mp] of m.panes) {
       this.clearPaneTimers(mp);
+      // disposeChildSubs avant kill() : sinon le onExit handler s'exécute après
+      // que removeSession ait déjà delete la session, fait fuir des events vers
+      // l'IPC pour une session morte.
+      this.disposeChildSubs(mp);
       try {
         mp.process?.kill();
       } catch {
@@ -569,11 +580,21 @@ class PtyManager extends EventEmitter {
     const isFirstResize = !mp.lastSize;
     mp.lastSize = { cols, rows };
     if (!mp.process) return;
-    try {
-      mp.process.resize(cols, rows);
-    } catch (err) {
-      log.debug('[pty] resize failed', err);
-    }
+    // Debounce ~16ms : pendant un drag de window resize, le renderer envoie
+    // resize à 60Hz. ConPTY ne supporte pas les resize back-to-back (flickering,
+    // crashes occasionnels). On garde toujours le dernier size dans lastSize,
+    // donc le pane affichera la bonne géométrie même si plusieurs resize sont
+    // coalescés.
+    const proc = mp.process;
+    if (mp.resizeTimer) clearTimeout(mp.resizeTimer);
+    mp.resizeTimer = setTimeout(() => {
+      mp.resizeTimer = undefined;
+      try {
+        proc.resize(cols, rows);
+      } catch (err) {
+        log.debug('[pty] resize failed', err);
+      }
+    }, 16);
 
     // Premier resize après spawn : c'est le moment idéal pour écrire la
     // commande de boot de l'agent — on connaît enfin la vraie taille de

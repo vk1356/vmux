@@ -7,6 +7,38 @@ type Events = {
 };
 
 /**
+ * Strip un tail d'échappement ANSI/VT orphelin qui peut apparaître en tête
+ * d'un buffer après qu'un drop de chunks ait coupé une séquence CSI au milieu.
+ *
+ * Quand une frontière de chunk tombe à l'intérieur d'une séquence CSI
+ * (ESC [ params final), le chunk droppé peut contenir "ESC [" et le tail
+ * survivant commence par les param bytes ("0;32") + final byte ("m") — donnant
+ * à xterm.js du garbage à rendre.
+ *
+ * Heuristique : si la string commence par des param/intermediate bytes
+ * (0x20–0x3f : chiffres, points-virgules, deux-points, espaces…) suivis d'un
+ * final byte (0x40–0x7e) sans ESC préalable, c'est un tail CSI orphelin.
+ */
+function stripLeadingAnsiOrphan(s: string): string {
+  if (s.length === 0) return s;
+  const first = s.charCodeAt(0);
+  if (first < 0x20 || first > 0x3f) return s;
+  const match = /^[\x20-\x3f]+([\x40-\x7e])/.exec(s);
+  if (!match) return s;
+  return s.slice(match[0].length);
+}
+
+/**
+ * Retourne un offset de slice qui ne coupe jamais une surrogate pair UTF-16.
+ * Si offset pointe sur un low surrogate (0xDC00–0xDFFF), avance d'une unité.
+ */
+function safeSurrogateOffset(s: string, offset: number): number {
+  if (offset <= 0 || offset >= s.length) return Math.max(0, offset);
+  const code = s.charCodeAt(offset);
+  return code >= 0xdc00 && code <= 0xdfff ? offset + 1 : offset;
+}
+
+/**
  * Buffer agrégateur des chunks PTY par pane. Réduit le coût IPC quand un agent
  * streame (un seul `webContents.send` toutes les ~16ms au lieu d'un par chunk).
  *
@@ -56,15 +88,34 @@ export class PaneDataBuffer extends EventEmitter {
     // déjà en train d'overflow.
     if (size > PaneDataBuffer.MAX_PANE_BYTES) {
       let total = size;
+      let droppedAny = false;
       while (total > PaneDataBuffer.MAX_PANE_BYTES && buf.length > 1) {
         const dropped = buf.shift();
-        if (dropped !== undefined) total -= dropped.length;
+        if (dropped !== undefined) {
+          total -= dropped.length;
+          droppedAny = true;
+        }
       }
       // Si même le dernier chunk dépasse le cap, on le tronque côté tail.
       if (total > PaneDataBuffer.MAX_PANE_BYTES && buf.length === 1) {
         const last = buf[0];
-        buf[0] = last.slice(last.length - PaneDataBuffer.MAX_PANE_BYTES);
+        // safeSurrogateOffset évite de couper une surrogate pair UTF-16 (ce qui
+        // produirait un low surrogate orphelin et corromprait la sérialisation IPC).
+        const rawOffset = last.length - PaneDataBuffer.MAX_PANE_BYTES;
+        const offset = safeSurrogateOffset(last, rawOffset);
+        buf[0] = last.slice(offset);
         total = buf[0].length;
+        droppedAny = true;
+      }
+      // Après drop : buf[0] peut commencer par le tail d'une séquence ANSI dont
+      // l'ESC+bracket était dans le chunk droppé. Strip cet orphelin pour éviter
+      // que xterm.js ne rende le garbage en littéral.
+      if (droppedAny && buf.length > 0) {
+        const cleaned = stripLeadingAnsiOrphan(buf[0]);
+        if (cleaned !== buf[0]) {
+          total -= buf[0].length - cleaned.length;
+          buf[0] = cleaned;
+        }
       }
       this.sizes.set(paneId, total);
     }
@@ -76,7 +127,12 @@ export class PaneDataBuffer extends EventEmitter {
 
   private flushAll(): void {
     this.timer = null;
-    for (const [paneId, chunks] of this.buffers) {
+    // Snapshot de la Map avant itération. emit() est synchrone — un listener
+    // flush peut appeler push(), ajoutant de nouvelles entrées pour des panes
+    // non encore visités. Sans snapshot, le for-of visiterait ces nouvelles
+    // entrées dans la même tick, fusionnant pre-flush + post-flush dans un
+    // unique message IPC envoyé out-of-order.
+    for (const [paneId, chunks] of Array.from(this.buffers)) {
       if (chunks.length === 0) continue;
       const combined = chunks.length === 1 ? chunks[0] : chunks.join('');
       // Delete plutôt que set([], ...) : un pane churn rapide (ouverture/

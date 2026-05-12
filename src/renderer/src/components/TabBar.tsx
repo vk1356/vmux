@@ -353,16 +353,28 @@ const Tab = memo(function Tab({
     <div
       className={`tab ${isActive ? 'active' : ''} attention-${attention}`}
       onClick={() => onClickTab(paneId)}
+      // Middle-click = close tab (convention universelle des onglets de browser).
+      onAuxClick={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          void onClosePane(paneId);
+        }
+      }}
       onContextMenu={(e) => onRightClick(e, paneId)}
       onDoubleClick={() => onStartRename(paneId, label)}
-      title="Click = focus · Double-click = renommer · Clic-droit = menu"
+      title="Click = focus · Middle-click = close · Double-click = renommer · Clic-droit = menu"
       role="tab"
       id={`tab-${paneId}`}
       aria-selected={isActive}
       aria-controls={`panel-${paneId}`}
       tabIndex={isActive ? 0 : -1}
     >
-      <span className={`session-dot ${dotClass}`} style={DOT_STYLE} />
+      <span
+        className={`session-dot ${dotClass}`}
+        style={DOT_STYLE}
+        title={dotClass}
+        aria-label={dotClass}
+      />
       {icon}
       {isRenaming ? (
         <input
@@ -399,7 +411,9 @@ const Tab = memo(function Tab({
         title={t('paneCloseTitle')}
         aria-label={t('paneCloseAria')}
         type="button"
-        tabIndex={-1}
+        // Quand le tab est actif, le close devient atteignable au clavier
+        // (un Tab supplémentaire entre dedans). Sinon il reste hors séquence.
+        tabIndex={isActive ? 0 : -1}
       >
         <X size={11} />
       </button>

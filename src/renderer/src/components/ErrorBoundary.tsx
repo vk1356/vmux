@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle, RotateCw } from 'lucide-react';
 import { translate } from '../i18n';
 import { useSessionStore } from '../store/sessions';
@@ -19,6 +19,10 @@ interface Props {
 interface State {
   error: Error | null;
   componentStack: string | null;
+  /** Incrémenté par reset() — sert de key React pour forcer un remount du
+   *  sous-arbre. Sans ça, "Retry" clear l'état mais réinstancie les mêmes
+   *  composants qui re-crashent immédiatement si la cause persiste. */
+  retryKey: number;
 }
 
 /**
@@ -29,7 +33,7 @@ interface State {
  * que le main ne consomme pas).
  */
 export class ErrorBoundary extends Component<Props, State> {
-  override state: State = { error: null, componentStack: null };
+  override state: State = { error: null, componentStack: null, retryKey: 0 };
 
   static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
@@ -51,7 +55,11 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   reset = (): void => {
-    this.setState({ error: null, componentStack: null });
+    this.setState((s) => ({
+      error: null,
+      componentStack: null,
+      retryKey: s.retryKey + 1
+    }));
   };
 
   reload = (): void => {
@@ -66,7 +74,11 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   override render(): ReactNode {
-    if (!this.state.error) return this.props.children;
+    if (!this.state.error) {
+      // Fragment keyed sur retryKey : un retry incrémente la clé → React
+      // unmount le sous-arbre puis le remonte frais (state/refs/effects neufs).
+      return <Fragment key={this.state.retryKey}>{this.props.children}</Fragment>;
+    }
 
     const { scope = 'app', label } = this.props;
     const lang = this.getLang();

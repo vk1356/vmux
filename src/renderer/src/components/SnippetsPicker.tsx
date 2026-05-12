@@ -116,6 +116,8 @@ export function SnippetsPicker({ open, session, onClose }: Props): JSX.Element |
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (editing) return;
+    // Skip si IME en cours (CJK candidate selection).
+    if (e.nativeEvent.isComposing) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelected((i) => Math.min(filtered.length - 1, i + 1));

@@ -63,7 +63,9 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, open: boolean):
           e.preventDefault();
           last.focus();
         }
-      } else if (ae === last) {
+      } else if (ae === last || !container.contains(ae)) {
+        // Symétrique au shift-tab : si le focus a échappé hors du container
+        // (window blur ou autre script), on le rapatrie sur le premier élément.
         e.preventDefault();
         first.focus();
       }

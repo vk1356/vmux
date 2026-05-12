@@ -128,6 +128,12 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   }, [pane.id]);
 
   const [searchOpen, setSearchOpen] = useState(false);
+  // Ref miroir : permet au handler keydown de lire la valeur courante sans
+  // réinstaller le listener à chaque toggle (anti-thrash de window listeners).
+  const searchOpenRef = useRef(false);
+  useEffect(() => {
+    searchOpenRef.current = searchOpen;
+  }, [searchOpen]);
   const [restarting, setRestarting] = useState(false);
 
   const isInactive = pane.status === 'idle' || pane.status === 'exited' || pane.status === 'error';
@@ -174,7 +180,9 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     if (pending.length === 0) return;
     pendingRef.current = [];
     pendingBytesRef.current = 0;
-    for (const chunk of pending) term.write(chunk);
+    // Concat unique → 1 enqueue dans le WriteBuffer xterm au lieu de N.
+    // Le parser ANSI maintient son état à travers les write() — équivalent fonctionnel.
+    term.write(pending.join(''));
   }, [visible]);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -281,7 +289,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       const pending = pendingRef.current;
       pendingRef.current = [];
       pendingBytesRef.current = 0;
-      for (const chunk of pending) term.write(chunk);
+      term.write(pending.join(''));
     }
 
     // onData → garder le IDisposable pour dispose au unmount.
@@ -334,12 +342,30 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     });
 
     if (s.copyOnSelection) {
+      // RAF debounce — xterm émet onSelectionChange à chaque render frame
+      // quand des données arrivent avec une sélection active. Sans debounce,
+      // clipboard.write() (IPC) serait hammered à 60+ Hz pendant un streaming
+      // agent → lag visuel sévère sous forte charge.
+      let selRaf = 0;
       collected.push(
         term.onSelectionChange(() => {
-          const sel = term.getSelection();
-          if (sel) void window.cmux.clipboard.write(sel);
+          if (selRaf) cancelAnimationFrame(selRaf);
+          selRaf = requestAnimationFrame(() => {
+            selRaf = 0;
+            if (termRef.current !== term) return;
+            const sel = term.getSelection();
+            if (sel) void window.cmux.clipboard.write(sel);
+          });
         })
       );
+      collected.push({
+        dispose(): void {
+          if (selRaf) {
+            cancelAnimationFrame(selRaf);
+            selRaf = 0;
+          }
+        }
+      });
     }
 
     termRef.current = term;
@@ -595,7 +621,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
         e.preventDefault();
         termRef.current?.clear();
-      } else if (e.key === 'Escape' && searchOpen) {
+      } else if (e.key === 'Escape' && searchOpenRef.current) {
         e.preventDefault();
         setSearchOpen(false);
         termRef.current?.focus();
@@ -603,7 +629,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, searchOpen]);
+  }, [active]);
 
   const onPaneClick = useCallback(() => {
     window.cmux.panes.focus(sessionId, pane.id);

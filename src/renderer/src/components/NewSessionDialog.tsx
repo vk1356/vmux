@@ -65,6 +65,28 @@ export function NewSessionDialog({ open, onClose, defaultCwd }: Props): JSX.Elem
     }
   }, [open, defaultCwd]);
 
+  // Enter to submit — skip si focus sur button/textarea/select (l'Enter natif
+  // a déjà sa sémantique : activate button, newline dans textarea, open dropdown
+  // dans select). Skip aussi en cours de composition IME (CJK).
+  useEffect(() => {
+    if (!open) return;
+    const d = dialogRef.current;
+    if (!d) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.isComposing) return;
+      if (e.key !== 'Enter') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'BUTTON' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      e.preventDefault();
+      void submit();
+    };
+    d.addEventListener('keydown', onKey);
+    return () => d.removeEventListener('keydown', onKey);
+    // submit est stable via submittingRef ; on évite de le mettre en dep pour
+    // ne pas réinstaller le listener à chaque keystroke (form fields = setState).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   // Inspection git debouncée.
   useEffect(() => {
     if (!cwd || !open) {

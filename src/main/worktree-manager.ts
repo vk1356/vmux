@@ -262,7 +262,12 @@ export async function createWorktree(opts: CreateWorktreeOptions): Promise<Workt
       // failed (hook reject, disk full au milieu, etc.). Sans ça le prochain
       // createWorktree verra pathExists=true et retournera created:false sur
       // une ref fantôme.
-      await fsp.rm(wtPath, { recursive: true, force: true }).catch(() => undefined);
+      // maxRetries/retryDelay : sous Windows, l'antivirus + les handles
+      // résiduels de git.exe maintiennent souvent un EBUSY/EPERM 50–300ms.
+      // Sans retry, ce rm fail silencieusement et le dossier reste sur disque.
+      await fsp
+        .rm(wtPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 })
+        .catch(() => undefined);
       // Prune les fichiers admin orphelins côté .git/worktrees/.
       await git(repo, ['worktree', 'prune']).catch(() => undefined);
       throw err;
@@ -293,7 +298,10 @@ export async function removeWorktree(repo: string, wtPath: string): Promise<void
     }
     // Cleanup physique du dossier (au cas où git remove l'aurait laissé) +
     // prune des refs `.git/worktrees/<name>` orphelines. Toujours best-effort.
-    await fsp.rm(wtPath, { recursive: true, force: true }).catch(() => undefined);
+    // Retry sur Windows pour absorber l'antivirus + handles résiduels.
+    await fsp
+      .rm(wtPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 150 })
+      .catch(() => undefined);
     await git(top, ['worktree', 'prune']).catch(() => undefined);
   });
 }

@@ -98,6 +98,16 @@ export function* parseOsc(chunk: string): Generator<RawOsc> {
       endLen = 1;
     }
     if (endIdx === -1) return; // OSC non terminé — abandon
+    // Si un nouvel introducer OSC apparaît avant le terminateur trouvé, le
+    // courant est unterminated (son terminateur a été "volé" par un OSC plus
+    // tardif dans le chunk). On avance après l'introducer courant pour ressayer
+    // sur l'OSC suivant — sinon on extrairait un payload corrompu spanning
+    // deux OSC, perdant la notification réelle.
+    const nextIntroIn = nextOscIntroducer(chunk, dataStart);
+    if (nextIntroIn !== null && nextIntroIn.idx < endIdx) {
+      i = dataStart;
+      continue;
+    }
     const rawLen = endIdx - dataStart;
     if (rawLen > MAX_OSC_PAYLOAD) {
       // Skip suspiciously large payload (probable binaire/leak), avance après terminateur.

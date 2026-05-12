@@ -421,19 +421,30 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   type InvokeHandler<T> = (e: Electron.IpcMainInvokeEvent, ...args: unknown[]) => Promise<T> | T;
 
   /** handle() simple — checks sender, ne wrap pas dans IpcResult.
-   *  Pour les channels qui retournent une valeur brute (ex. `app:version`). */
+   *  Pour les channels qui retournent une valeur brute (ex. `app:version`).
+   *  Idempotent : removeHandler() avant register évite le throw "second handler"
+   *  sur hot-reload Vite HMR. Le try/catch garantit qu'aucun handler ne peut
+   *  propager une rejection vers le main process — erreur loguée, null retourné. */
   function handle<T>(channel: string, fn: InvokeHandler<T>): void {
+    ipcMain.removeHandler(channel);
     ipcMain.handle(channel, async (e, ...args: unknown[]) => {
       if (!isTrustedSender(e)) {
         log.warn(`[ipc:${channel}] rejected untrusted sender:`, e.senderFrame?.url ?? '<none>');
         return null as unknown as T;
       }
-      return fn(e, ...args);
+      try {
+        return await fn(e, ...args);
+      } catch (err) {
+        log.error(`[ipc:${channel}]`, err);
+        return null as unknown as T;
+      }
     });
   }
 
-  /** handle() wrappé dans `safe` : retourne `IpcResult<T>`. */
+  /** handle() wrappé dans `safe` : retourne `IpcResult<T>`.
+   *  Idempotent : removeHandler() avant register (même raison que handle()). */
   function handleResult<T>(channel: string, fn: InvokeHandler<T>): void {
+    ipcMain.removeHandler(channel);
     ipcMain.handle(channel, async (e, ...args: unknown[]): Promise<IpcResult<T> | null> => {
       if (!isTrustedSender(e)) {
         log.warn(`[ipc:${channel}] rejected untrusted sender:`, e.senderFrame?.url ?? '<none>');

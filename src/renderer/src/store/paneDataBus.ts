@@ -124,3 +124,11 @@ export function teardownPaneDataBus(): void {
   subscriptions.clear();
   pending.clear();
 }
+
+// HMR : sans dispose hook, le module re-évalué laisserait l'ancien listener IPC
+// installé pointant sur l'ancienne Map subscriptions (fermeture morte) — fuite
+// dev-only mais bruyante (warnings React + chunks perdus). En prod ce bloc est
+// tree-shaké car `import.meta.hot` est undefined.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => teardownPaneDataBus());
+}

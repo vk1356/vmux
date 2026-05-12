@@ -66,7 +66,10 @@ const THINKING_CS_RE = new RegExp(
     '(?:^|\\n)\\s*Thinking[….]{1,3}',
     // Codex CLI : "Reasoning…" / "Reasoning"
     '(?:^|\\n)\\s*Reasoning[….]{0,3}'
-  ].join('|')
+  ].join('|'),
+  // Flag /m : ^ matche aussi le début du tail slice (sans \n préalable) —
+  // évite de manquer un spinner qui démarre à la frontière de SCAN_WINDOW.
+  'm'
 );
 
 /** Détecte si le tail montre un spinner "thinking" actif. */

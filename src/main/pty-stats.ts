@@ -212,14 +212,22 @@ class PtyStatsCollector extends EventEmitter {
         // pas perdre les autres. Limite la concurrence implicite — Promise.all
         // sur 50+ pidusage calls peut générer 50+ syscalls simultanés sur
         // Windows (chacun fait des appels GetProcessTimes/PSAPI).
+        // Build childToRoot reverse map : treeCache est keyé par rootPid,
+        // mais pidusage opère sur les child pids. Pour invalider correctement
+        // le cache quand un child meurt, il faut connaître son root.
+        const childToRoot = new Map<number, number>();
+        for (const tree of trees) {
+          for (const p of tree.pids) childToRoot.set(p, tree.rootPid);
+        }
         await Promise.all(
           allPids.map(async (pid) => {
             try {
               const s = await pidusage(pid);
               stats[pid] = { cpu: s.cpu, memory: s.memory };
             } catch {
-              /* pid mort — on saute, invalide le cache si présent */
-              this.treeCache.delete(pid);
+              /* pid mort — invalide le cache de l'arbre racine correspondant */
+              const rootPid = childToRoot.get(pid);
+              if (rootPid !== undefined) this.treeCache.delete(rootPid);
             }
           })
         );
@@ -265,6 +273,9 @@ class PtyStatsCollector extends EventEmitter {
         log.debug(`[stats] pane ${tree.paneId} (root pid=${tree.rootPid}) has no live process`);
       }
     }
+    // Si la self-removal a vidé la map des panes, stoppe l'interval — sinon
+    // collect() continuerait de tourner à 2Hz dans le vide indéfiniment.
+    if (this.pids.size === 0) this.stop();
     if (this.aborted) return;
     if (samples.length > 0) this.emit('stats', samples);
 

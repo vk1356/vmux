@@ -433,6 +433,9 @@ export function CommandPalette({
   }
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
+    // Skip si IME en cours (CJK candidate selection) — sinon les arrows /
+    // Enter navigueraient dans la palette pendant la composition.
+    if (e.nativeEvent.isComposing) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelected((i) => Math.min(filtered.length - 1, i + 1));

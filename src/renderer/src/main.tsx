@@ -32,6 +32,20 @@ function getDetachedSessionId(): string | null {
 
 const detachedSessionId = getDetachedSessionId();
 
+// Filets de sécurité globaux : ErrorBoundary ne capture QUE les erreurs de
+// render. Les rejections de Promises fire-and-forget (`void window.cmux.*`)
+// et les exceptions dans des event handlers async passent à côté. Sans ces
+// listeners, ces erreurs sont silencieuses en prod — on les loggue au moins
+// dans la console pour qu'elles apparaissent dans la diagnostic export.
+window.addEventListener('error', (e) => {
+  // eslint-disable-next-line no-console
+  console.error('[vmux] uncaught error', e.error ?? e.message);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  // eslint-disable-next-line no-console
+  console.error('[vmux] unhandled rejection', e.reason);
+});
+
 // StrictMode reste actif en dev — double-invoque les effets pour révéler les
 // fuites de cleanup ; aucun bug actuel n'en dépend. Pas de polyfills : tous
 // les browsers Electron-supported couvrent ES2023.

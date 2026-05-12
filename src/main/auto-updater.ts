@@ -309,7 +309,9 @@ function runInstallerAndQuit(installerPath: string, sendStatus: SendStatus): voi
     });
     return;
   }
-  trackTimer(setTimeout(() => app.exit(0), 800));
+  // app.quit() (et non app.exit) pour déclencher `before-quit` →
+  // stopAutoUpdater() abort les fetch en vol et clear les timers proprement.
+  trackTimer(setTimeout(() => app.quit(), 800));
 }
 
 /**
@@ -608,5 +610,9 @@ export async function setupAutoUpdater(
       });
     });
     trackTimer(setTimeout(() => void checkUpdates(), BOOT_CHECK_DELAY_MS));
+    // Mirror du happy-path : poll toutes les 4h même si electron-updater
+    // est indisponible — sinon l'utilisateur en mode fallback ne recevrait
+    // qu'un seul check au boot et ne saurait jamais qu'une update est sortie.
+    recheckInterval = setInterval(() => void checkUpdates(), RECHECK_INTERVAL_MS);
   }
 }

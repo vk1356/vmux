@@ -68,6 +68,52 @@ function openSafeExternal(url: string): void {
   }
 }
 
+/**
+ * Charge le contenu du renderer dans `win` avec deux filets de sécurité :
+ *   1. `did-fail-load` : sans ça, un échec de load (Vite dev pas prêt, ASAR
+ *      corrompu) laisse une fenêtre invisible/figée. ERR_ABORTED (-3) est
+ *      filtré (annulation de navigation programmatique, pas une vraie erreur).
+ *      - dev : retry unique après 1.5s (Vite peut être encore en boot).
+ *      - prod : on `show()` la fenêtre pour que l'utilisateur voie la page
+ *        d'erreur d'Electron plutôt qu'un splash invisible figé.
+ *   2. `.catch()` sur la promise de load — sinon une rejection devient un
+ *      unhandledRejection sans contexte par-fenêtre.
+ */
+function loadRendererContent(win: BrowserWindow, hash?: string): void {
+  const doLoad = (): Promise<void> => {
+    if (is.dev && process.env.ELECTRON_RENDERER_URL) {
+      const url = hash
+        ? `${process.env.ELECTRON_RENDERER_URL}#${hash}`
+        : process.env.ELECTRON_RENDERER_URL;
+      return win.loadURL(url);
+    }
+    const file = path.join(__dirname, '../renderer/index.html');
+    return hash ? win.loadFile(file, { hash }) : win.loadFile(file);
+  };
+
+  let retried = false;
+  win.webContents.on(
+    'did-fail-load',
+    (_e, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) return;
+      log.error(`[window] did-fail-load code=${errorCode} desc="${errorDescription}"`);
+      if (is.dev && !retried) {
+        retried = true;
+        log.info('[window] retrying renderer load in 1.5s (Vite may not be ready)');
+        setTimeout(() => {
+          if (!win.isDestroyed()) {
+            doLoad().catch((err) => log.error('[window] renderer load retry failed', err));
+          }
+        }, 1500);
+      } else if (!is.dev && !win.isDestroyed() && !win.isVisible()) {
+        win.show();
+      }
+    }
+  );
+
+  doLoad().catch((err) => log.error('[window] renderer load failed', err));
+}
+
 /** Wire up the debounced window-state persistence and return a `dispose` that
  *  cancels the trailing timer when the window is closed mid-debounce. */
 function attachWindowStatePersistence(win: BrowserWindow): () => void {
@@ -146,11 +192,7 @@ export function createWindow(opts: CreateWindowOptions = {}): BrowserWindow {
     return { action: 'deny' };
   });
 
-  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'));
-  }
+  loadRendererContent(win);
 
   return win;
 }
@@ -199,11 +241,7 @@ export function createDetachedWindow(sessionId: string): BrowserWindow {
 
   // Hash-route the renderer to single-session mode.
   const hash = `detached=${encodeURIComponent(sessionId)}`;
-  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-    void win.loadURL(`${process.env.ELECTRON_RENDERER_URL}#${hash}`);
-  } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'), { hash });
-  }
+  loadRendererContent(win, hash);
 
   return win;
 }

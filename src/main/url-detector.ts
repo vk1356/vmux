@@ -29,7 +29,10 @@ const ANSI_RE = new RegExp(
     // CSI 7-bit + 8-bit
     '(?:\\x1b\\[|\\x9b)[\\x30-\\x3f]*[\\x20-\\x2f]*[\\x40-\\x7e]',
     // OSC 7-bit + 8-bit + tous les terminateurs (BEL, ST 7-bit, ST 8-bit)
-    '(?:\\x1b\\]|\\x9d)[\\x20-\\x7e]{0,4096}?(?:\\x07|\\x1b\\\\|\\x9c)',
+    // Note : on accepte [\s\S] dans le payload pour absorber les OSC 8
+    // hyperlinks contenant de l'UTF-8 multi-byte (paths non-ASCII), sinon le
+    // payload "fuit" hors de la regex et stripAnsi laisse l'escape brut.
+    '(?:\\x1b\\]|\\x9d)[\\s\\S]{0,4096}?(?:\\x07|\\x1b\\\\|\\x9c)',
     // DCS / SOS / PM / APC (string sequences)
     '(?:\\x1b[PX^_]|[\\x90\\x98\\x9e\\x9f])[\\s\\S]{0,4096}?(?:\\x1b\\\\|\\x9c|\\x07)',
     // Charset designators : ESC <intermediate> <final>
@@ -71,7 +74,21 @@ export function stripAnsi(text: string): string {
   // replace() alloue toujours une string même sans match, donc on peut
   // appeler directement — V8 short-circuit quand 0 match avec une regex `g`
   // simple class-based, c'est ~free.
-  if (text.indexOf('\x1b') < 0 && text.indexOf('\x9b') < 0 && text.indexOf('\x9d') < 0) {
+  // Fast path élargi à tous les introducers C1 8-bit gérés par ANSI_RE :
+  // ESC (0x1b), CSI (0x9b), OSC (0x9d), ST (0x9c), DCS (0x90), SOS (0x98),
+  // PM (0x9e), APC (0x9f). Sans ces vérifs, ConPTY peut émettre des bytes
+  // C1 isolés (résidus de scrollback) qui contourneraient ANSI_RE et
+  // pollueraient la sortie.
+  if (
+    text.indexOf('\x1b') < 0 &&
+    text.indexOf('\x9b') < 0 &&
+    text.indexOf('\x9c') < 0 &&
+    text.indexOf('\x9d') < 0 &&
+    text.indexOf('\x90') < 0 &&
+    text.indexOf('\x98') < 0 &&
+    text.indexOf('\x9e') < 0 &&
+    text.indexOf('\x9f') < 0
+  ) {
     return text.replace(BOX_DRAWING_RE, ' ');
   }
   return text.replace(ANSI_RE, '').replace(BOX_DRAWING_RE, ' ');

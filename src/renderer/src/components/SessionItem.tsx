@@ -187,6 +187,9 @@ function SessionItemImpl(props: Props): JSX.Element {
 
   return (
     <div
+      id={s.id}
+      role="option"
+      aria-selected={isActive}
       className={[
         'session-item',
         isActive ? 'active' : '',
@@ -210,7 +213,13 @@ function SessionItemImpl(props: Props): JSX.Element {
           onDragOver(s);
         }
       }}
-      onDragLeave={() => onDragLeave(s)}
+      onDragLeave={(e) => {
+        // Skip si la sortie est vers un enfant — sinon le surlignage flicke
+        // dès que le curseur passe sur l'avatar/le nom/les boutons internes.
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        onDragLeave(s);
+      }}
+      onDragEnd={() => onDragLeave(s)}
       onDrop={(e) => {
         const sourceId = e.dataTransfer.getData('text/x-vmux-session');
         if (sourceId && sourceId !== s.id) onDrop(sourceId, s.id);
@@ -289,7 +298,10 @@ function SessionItemImpl(props: Props): JSX.Element {
         ) : (
           <div
             className="session-name"
-            title={t('actionRenameHint')}
+            // title = nom complet : permet de lire un nom tronqué par
+            // text-overflow:ellipsis. Hint de rename communiqué via aria-label.
+            title={s.name}
+            aria-label={`${s.name} — ${t('actionRenameHint')}`}
             onDoubleClick={(e) => onStartRename(e, s)}
           >
             {s.name}
@@ -333,25 +345,31 @@ function SessionItemImpl(props: Props): JSX.Element {
       </div>
       <div className="session-actions">
         <button
+          type="button"
           className={`btn-icon session-action ${s.pinned ? 'pinned' : ''}`}
           onClick={(e) => onTogglePin(e, s)}
           title={s.pinned ? t('actionUnpin') : t('actionPin')}
+          aria-label={s.pinned ? t('actionUnpin') : t('actionPin')}
         >
           {s.pinned ? <PinOff size={12} /> : <Pin size={12} />}
         </button>
         {hasIdleTerm && (
           <button
+            type="button"
             className="btn-icon session-action"
             onClick={(e) => onRestartAll(e, s)}
             title={t('actionRestartIdle')}
+            aria-label={t('actionRestartIdle')}
           >
             <RotateCw size={12} />
           </button>
         )}
         <button
+          type="button"
           className="btn-icon session-action danger"
           onClick={(e) => onRemove(e, s)}
           title={t('actionCloseSession')}
+          aria-label={t('actionCloseSession')}
         >
           <X size={12} />
         </button>

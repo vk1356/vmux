@@ -56,6 +56,12 @@ export function ConfirmDialog({
     const d = ref.current;
     if (!d) return;
     const onKey = (e: KeyboardEvent): void => {
+      // Skip si IME en cours (CJK candidate selection).
+      if (e.isComposing) return;
+      // Skip si focus sur un bouton — l'Enter natif active déjà ce bouton ;
+      // sans cette garde, Enter sur "Annuler" déclencherait `onConfirm` (le
+      // contraire de l'intention) et Enter sur "Confirmer" double-fire.
+      if ((e.target as HTMLElement | null)?.tagName === 'BUTTON') return;
       if (e.key === 'Enter') {
         e.preventDefault();
         onConfirm();

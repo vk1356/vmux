@@ -3,22 +3,48 @@ import { Download, RefreshCw, X, CheckCircle2, AlertTriangle } from 'lucide-reac
 import type { UpdateStatus } from '@shared/types';
 import { useT } from '../i18n';
 
+const DISMISSED_KEY = 'vmux-update-dismissed-version';
+
 /** Bannière de mise à jour. Affichée dès qu'electron-updater détecte une nouvelle
- *  release GitHub. L'user peut télécharger puis installer (redémarrage auto). */
+ *  release GitHub. L'user peut télécharger puis installer (redémarrage auto).
+ *
+ *  Persistance du dismiss : on stocke la version dismissée en localStorage,
+ *  pas un booléen. Sans ça, fermer la bannière puis recharger réaffiche la
+ *  même version (et même au sein d'une session, electron-updater peut ré-émettre
+ *  le status à chaque recheck). Quand une *nouvelle* version sort, on re-affiche. */
 export function UpdateBanner(): JSX.Element | null {
   const t = useT();
   const [status, setStatus] = useState<UpdateStatus>({ kind: 'idle' });
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissedVersion, setDismissedVersion] = useState<string>(() => {
+    try {
+      return localStorage.getItem(DISMISSED_KEY) ?? '';
+    } catch {
+      return '';
+    }
+  });
 
   useEffect(() => {
     return window.cmux.updater.onStatus((s) => {
       setStatus(s);
-      // Re-affiche si nouvelle update détectée après dismiss.
-      if (s.kind === 'available' || s.kind === 'downloaded') setDismissed(false);
     });
   }, []);
 
-  if (dismissed) return null;
+  const dismiss = (version: string | undefined): void => {
+    const v = version ?? '';
+    try {
+      localStorage.setItem(DISMISSED_KEY, v);
+    } catch {
+      /* quota / disabled — best-effort */
+    }
+    setDismissedVersion(v);
+  };
+
+  // Hide la bannière si la version courante a déjà été dismissée.
+  // Pour les statuts sans version (error sans version, downloading sans version),
+  // on permet le dismiss via la valeur sentinelle vide.
+  const versionForStatus =
+    'version' in status && typeof status.version === 'string' ? status.version : '';
+  if (dismissedVersion && dismissedVersion === versionForStatus) return null;
   if (status.kind === 'idle' || status.kind === 'checking' || status.kind === 'not-available') {
     return null;
   }
@@ -43,7 +69,7 @@ export function UpdateBanner(): JSX.Element | null {
         </button>
         <button
           className="btn-icon update-banner-close"
-          onClick={() => setDismissed(true)}
+          onClick={() => dismiss(versionForStatus)}
           title={t('bannerLater')}
           aria-label={t('bannerLater')}
         >
@@ -88,7 +114,7 @@ export function UpdateBanner(): JSX.Element | null {
         </button>
         <button
           className="btn-icon update-banner-close"
-          onClick={() => setDismissed(true)}
+          onClick={() => dismiss(versionForStatus)}
           title={t('bannerLater')}
           aria-label={t('bannerLater')}
         >
@@ -108,7 +134,7 @@ export function UpdateBanner(): JSX.Element | null {
         </div>
         <button
           className="btn-icon update-banner-close"
-          onClick={() => setDismissed(true)}
+          onClick={() => dismiss(versionForStatus)}
           title={t('bannerLater')}
           aria-label={t('bannerLater')}
         >

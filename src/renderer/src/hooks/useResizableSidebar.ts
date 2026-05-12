@@ -138,5 +138,18 @@ export function useResizableSidebar(opts: Options): ResizableSidebar {
     setCollapsed((c) => !c);
   }, []);
 
-  return { widthPx, setWidthPx, startDrag, collapsed, toggleCollapsed };
+  // setWidthPxClamped : wrap autour de setWidthPx pour garantir que toute
+  // valeur fournie par le code appelant (ex. restauration depuis settings
+  // persisté avec une largeur de fenêtre différente, valeur corrompue) reste
+  // dans [min, max]. Sans clamp, une valeur out-of-range écrasait state +
+  // ref et faisait apparaître la sidebar à une taille invalide jusqu'au
+  // prochain drag manuel.
+  const setWidthPxClamped = useCallback((px: number): void => {
+    const o = optsRef.current;
+    const clamped = Math.min(o.max, Math.max(o.min, Number.isFinite(px) ? px : o.initial));
+    widthRef.current = clamped;
+    setWidthPx(clamped);
+  }, []);
+
+  return { widthPx, setWidthPx: setWidthPxClamped, startDrag, collapsed, toggleCollapsed };
 }
