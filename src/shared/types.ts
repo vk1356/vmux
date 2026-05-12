@@ -205,6 +205,11 @@ export interface AppSettings {
    *  une tâche et spawn N panes Claude Code en parallèle via le CLI vmux.
    *  Default: true. L'install est idempotente (overwrite si version vMux plus récente). */
   claudeCommandsEnabled: boolean;
+  /** Mode "performance" : désactive le recalcul de contraste WCAG par glyphe
+   *  et le rescale des glyphes débordants (Nerd Fonts). Gain CPU ~10-20%
+   *  sous spew d'agent au prix d'un rendu légèrement moins fidèle.
+   *  Default: false (qualité visuelle privilégiée). */
+  performanceMode?: boolean;
 }
 
 // ============================================================

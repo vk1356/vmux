@@ -67,6 +67,13 @@ interface ManagedPane {
   /** Timer de debounce pour proc.resize() — évite les storms 60Hz pendant
    *  les drags de window resize (ConPTY n'aime pas être hammered). */
   resizeTimer?: NodeJS.Timeout;
+  /** Accumulateur des bytes stripped depuis le dernier flush des détecteurs
+   *  non-critiques (URL detection, build/test/server-ready events). On les
+   *  trigger à 4Hz max au lieu d'à chaque chunk : pour de l'agent spew
+   *  intense (100+ chunks/s), réduit le coût des regex de ~95% sans coût UX. */
+  detectorBuf?: string;
+  detectorRawBuf?: string;
+  detectorTimer?: NodeJS.Timeout;
 }
 
 interface ManagedSession {
@@ -77,7 +84,10 @@ interface ManagedSession {
 }
 
 type Events = {
-  paneData: [paneId: PaneId, data: string];
+  // Binaire (Uint8Array) plutôt que string : xterm.write(Uint8Array) skip la
+  // conversion UTF-16 interne, et l'IPC Electron sérialise plus vite un
+  // ArrayBuffer (UTF-8 en transit) qu'une string V8 (UTF-16 → utf8 → utf16).
+  paneData: [paneId: PaneId, data: Uint8Array];
   paneStatus: [sessionId: string, paneId: PaneId, pane: TerminalPane];
   sessionUpdate: [session: Session];
   urlsDetected: [paneId: PaneId, urls: string[]];
@@ -119,6 +129,12 @@ class PtyManager extends EventEmitter {
       clearTimeout(mp.resizeTimer);
       mp.resizeTimer = undefined;
     }
+    if (mp.detectorTimer) {
+      clearTimeout(mp.detectorTimer);
+      mp.detectorTimer = undefined;
+    }
+    mp.detectorBuf = undefined;
+    mp.detectorRawBuf = undefined;
   }
 
   /** AbortController : annulé au shutdown pour que tout async en vol
@@ -127,12 +143,19 @@ class PtyManager extends EventEmitter {
   /** True une fois shutdown() entré — on n'émet plus rien après. */
   private isShuttingDown = false;
 
+  /** Encoder réutilisé pour la conversion string→UTF-8 sur le hot path flush.
+   *  Allocation unique, méthode `encode()` thread-safe et zero-cost. */
+  private encoder = new TextEncoder();
+
   constructor() {
     super();
-    // Forward des chunks agrégés du buffer vers les listeners IPC.
+    // Forward des chunks agrégés du buffer vers les listeners IPC, en UTF-8
+    // binaire. Conversion unique par flush (60 Hz max) — l'IPC Electron passe
+    // alors un ArrayBuffer plus rapide qu'une string V8, et xterm.js parse
+    // un Uint8Array sans avoir à re-décoder l'UTF-16.
     this.dataBuffer.on('flush', (paneId, combined) => {
       if (this.isShuttingDown) return;
-      this.emit('paneData', paneId, combined);
+      this.emit('paneData', paneId, this.encoder.encode(combined));
     });
     // Filet de sécurité : sans ça, une exception dans un listener (renderer
     // crashé, etc.) cracherait le main process et tuerait *tous* les PTY.
@@ -644,7 +667,7 @@ class PtyManager extends EventEmitter {
       this.emit(
         'paneData',
         paneId,
-        `\r\n\x1b[31m[cmux] Dossier introuvable: ${pane.cwd}\x1b[0m\r\n`
+        this.encoder.encode(`\r\n\x1b[31m[cmux] Dossier introuvable: ${pane.cwd}\x1b[0m\r\n`)
       );
       return;
     }
@@ -723,7 +746,9 @@ class PtyManager extends EventEmitter {
       this.emit(
         'paneData',
         paneId,
-        `\r\n\x1b[31m[cmux] Échec du lancement du shell: ${(err as Error).message}\x1b[0m\r\n`
+        this.encoder.encode(
+          `\r\n\x1b[31m[cmux] Échec du lancement du shell: ${(err as Error).message}\x1b[0m\r\n`
+        )
       );
       return;
     }
@@ -782,15 +807,18 @@ class PtyManager extends EventEmitter {
       const stripped = stripAnsi(data);
 
       try {
+        // Real-time : heartbeat, attention (badge), agent state (spinner UI),
+        // OSC notifications (action utilisateur explicite). Ne peuvent pas
+        // être throttlés sans dégrader la UX.
         this.updateHeartbeat(curMp, paneId);
         this.emitAttention(paneId, data, stripped);
         this.updateAgentState(paneId, curMp, stripped);
-        this.processNewUrls(cur, paneId, stripped);
-        for (const ev of detectEventsFromStripped(paneId, stripped)) this.emit('eventDetected', ev);
-        // OSC notifications (\x1b]9;... / \x1b]777;...) — émises explicitement par
-        // l'agent, donc indépendantes des heuristiques de detectEvents.
         for (const ev of detectOscEvents(paneId, data)) this.emit('eventDetected', ev);
         this.maybeWriteInitialInput(curMp);
+        // Throttled (4Hz max) : URL detection + event detection (build/test).
+        // Ces deux ne sont pas latence-sensibles (< 250ms imperceptible) et
+        // dominent le coût regex sur un spew agent intense.
+        this.scheduleThrottledDetectors(cur, curMp, paneId, data, stripped);
       } catch (err) {
         // Une exception dans un helper ne doit jamais tuer le main process —
         // on log et on continue pour ne pas perdre le PTY.
@@ -932,6 +960,45 @@ class PtyManager extends EventEmitter {
 
   /** Détection d'URLs — merge dans recentUrls du pane et émet urlsDetected.
    *  L'appelant fournit déjà `stripped` (cf. onData). */
+  /** Accumule les chunks et trigger les détecteurs URL/event à 4Hz max.
+   *  Throttle car ces détecteurs (regex URL_RE, event regex patterns) sont
+   *  les plus coûteux mais aucun n'est latence-critique : 250ms d'attente
+   *  sur une URL détectée ou un "build success" est imperceptible pour l'UX. */
+  private scheduleThrottledDetectors(
+    cur: ManagedSession,
+    mp: ManagedPane,
+    paneId: PaneId,
+    raw: string,
+    stripped: string
+  ): void {
+    // Accumule. Cap à 16KB pour éviter qu'un flush retardé concatène un buffer
+    // énorme (l'agent peut spew des MB par seconde) — on garde la tail.
+    const MAX = 16_384;
+    mp.detectorBuf = (mp.detectorBuf ?? '') + stripped;
+    mp.detectorRawBuf = (mp.detectorRawBuf ?? '') + raw;
+    if (mp.detectorBuf.length > MAX) mp.detectorBuf = mp.detectorBuf.slice(-MAX);
+    if (mp.detectorRawBuf.length > MAX) mp.detectorRawBuf = mp.detectorRawBuf.slice(-MAX);
+    if (mp.detectorTimer) return;
+    mp.detectorTimer = setTimeout(() => {
+      mp.detectorTimer = undefined;
+      const stripBatch = mp.detectorBuf;
+      const rawBatch = mp.detectorRawBuf;
+      mp.detectorBuf = undefined;
+      mp.detectorRawBuf = undefined;
+      if (!stripBatch) return;
+      try {
+        this.processNewUrls(cur, paneId, stripBatch);
+        for (const ev of detectEventsFromStripped(paneId, stripBatch))
+          this.emit('eventDetected', ev);
+        // detectOscEvents reste sur le raw — déjà fait inline (real-time) sur
+        // chaque chunk. Pas besoin de le rejouer ici.
+        void rawBatch;
+      } catch (err) {
+        log.error('[pty] throttled detectors threw', err);
+      }
+    }, 250);
+  }
+
   private processNewUrls(cur: ManagedSession, paneId: PaneId, stripped: string): void {
     const fresh = extractUrlsFromStripped(stripped);
     if (fresh.length === 0) return;

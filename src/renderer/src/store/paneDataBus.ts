@@ -15,7 +15,7 @@
 
 import type { PaneId } from '@shared/types';
 
-type Handler = (data: string) => void;
+type Handler = (data: Uint8Array) => void;
 
 /** Token interne pour identifier un subscribe spécifique. Évite qu'un unsub
  *  tardif (après remount rapide) ne supprime le handler de la *nouvelle*
@@ -30,7 +30,22 @@ const subscriptions = new Map<PaneId, Subscription>();
 /** Buffer pour les chunks reçus avant qu'un handler ne soit subscribed
  *  (cas du restart : le PTY peut écrire avant que <TerminalPane> ne s'init).
  *  Cap par BYTES (pas par chunks) — un seul gros chunk peut faire MB. */
-const pending = new Map<PaneId, { chunks: string[]; bytes: number }>();
+const pending = new Map<PaneId, { chunks: Uint8Array[]; bytes: number }>();
+
+/** Concat in-place d'un array de Uint8Array en une seule Uint8Array. Évite
+ *  le coût d'un .join('') string-based qui passerait par UTF-16. */
+function concatChunks(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0];
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
+}
 
 /** Cap mémoire global du pending par pane. 256 KB est généreux : le pending
  *  ne sert qu'à couvrir la fenêtre entre un restart PTY (côté main) et le
@@ -39,13 +54,37 @@ const PENDING_MAX_BYTES = 256 * 1024;
 
 let installed = false;
 let unsubIpc: (() => void) | null = null;
+/** Quand la fenêtre est masquée (Win+D, autre desktop, etc.), inutile de payer
+ *  le coût xterm parser sur chaque chunk — le rendu est invisible. On bascule
+ *  alors tous les chunks dans `pending`, qui sera flushé au prochain repaint.
+ *  Évite un freeze CPU lourd quand un agent spew en arrière-plan. */
+let windowHidden = typeof document !== 'undefined' ? document.hidden : false;
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    const wasHidden = windowHidden;
+    windowHidden = document.hidden;
+    // Au retour de visible : flush les pending vers leur handler abonné.
+    if (wasHidden && !windowHidden) {
+      for (const [paneId, buf] of Array.from(pending)) {
+        const sub = subscriptions.get(paneId);
+        if (!sub || buf.chunks.length === 0) continue;
+        pending.delete(paneId);
+        // Concat unique : un seul write xterm — moins de WriteBuffer enqueue.
+        sub.handler(concatChunks(buf.chunks));
+      }
+    }
+  });
+}
 
 function ensureInstalled(): void {
   if (installed) return;
   installed = true;
   unsubIpc = window.cmux.panes.onData((paneId, data) => {
     const sub = subscriptions.get(paneId);
-    if (sub) {
+    // Si fenêtre masquée, on bypass le handler et accumule. xterm.write() coûte
+    // ~5-50µs/chunk même invisible (parser ANSI, WriteBuffer). Sur 100 panes
+    // qui spew, c'est 5-50ms par flush — détectable en jank.
+    if (sub && !windowHidden) {
       sub.handler(data);
       return;
     }
@@ -55,13 +94,13 @@ function ensureInstalled(): void {
       pending.set(paneId, buf);
     }
     buf.chunks.push(data);
-    buf.bytes += data.length;
+    buf.bytes += data.byteLength;
     // Cap par octets : on droppe la tête (un terminal qui n'est pas encore
     // monté n'a aucune utilité à voir des octets vieux d'1 seconde si on est
     // déjà en train d'overflow).
     while (buf.bytes > PENDING_MAX_BYTES && buf.chunks.length > 1) {
       const dropped = buf.chunks.shift();
-      if (dropped !== undefined) buf.bytes -= dropped.length;
+      if (dropped !== undefined) buf.bytes -= dropped.byteLength;
     }
   });
 }

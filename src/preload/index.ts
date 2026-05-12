@@ -142,8 +142,8 @@ const api = {
       ipcRenderer.send(IPC.paneResize, paneId, size);
     },
 
-    onData: (cb: (paneId: PaneId, data: string) => void): Unsubscribe =>
-      subscribe<[PaneId, string]>(IPC.paneData, cb),
+    onData: (cb: (paneId: PaneId, data: Uint8Array) => void): Unsubscribe =>
+      subscribe<[PaneId, Uint8Array]>(IPC.paneData, cb),
     onStatus: (
       cb: (sessionId: string, paneId: PaneId, pane: TerminalPane) => void
     ): Unsubscribe => subscribe<[string, PaneId, TerminalPane]>(IPC.paneStatus, cb),

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { DetachedApp } from './DetachedApp';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { schedulePrewarm } from './store/xtermPrewarm';
 import './styles/global.css';
 import '@xterm/xterm/css/xterm.css';
 
@@ -60,3 +61,8 @@ createRoot(container).render(
     </ErrorBoundary>
   </StrictMode>
 );
+
+// Pré-warm xterm.js en idle time après le first paint. Réduit le temps de
+// mount du premier TerminalPane (charge Unicode11 widths, JIT-warmup xterm,
+// alloue les caches V8 internes).
+schedulePrewarm();

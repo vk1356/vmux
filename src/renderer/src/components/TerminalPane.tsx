@@ -80,11 +80,40 @@ const IS_WINDOWS = /win/i.test(
   (typeof navigator !== 'undefined' && navigator.platform) || ''
 );
 
+/** Fontes connues pour supporter des ligatures programming. On évite d'attacher
+ *  `LigaturesAddon` (qui parse harfbuzz à chaque draw) si la fonte n'en a pas —
+ *  économie ~3-5% CPU sous spew, et coût d'init de ~5ms à chaque mount. */
+const LIGATURE_FONT_RE =
+  /fira\s*code|cascadia|jetbrains\s*mono|mono\s*lisa|iosevka|hasklig|victor\s*mono|operator\s*mono|monoid|dank\s*mono/i;
+function fontSupportsLigatures(fontFamily: string): boolean {
+  return LIGATURE_FONT_RE.test(fontFamily);
+}
+
 /** Cap des bytes pendants quand le pane est invisible. Au-delà on droppe la
  *  moitié la plus ancienne — sinon un agent verbeux off-screen peut leak ~GB. */
 const PENDING_CAP_BYTES = 4_000_000;
+/** Cap réduit appliqué quand le pane est resté invisible > HIDDEN_TRIM_AFTER_MS.
+ *  Un terminal qui sera revisité dans 1+ min n'a besoin que de la dernière
+ *  page pour rester utile — pas de 4MB de scrollback historique en RAM. */
+const HIDDEN_PENDING_CAP_BYTES = 256_000;
+const HIDDEN_TRIM_AFTER_MS = 5_000;
 /** Limite des highlights search — décorateurs au-delà ferait stutter sur de gros buffers. */
 const SEARCH_HIGHLIGHT_LIMIT = 1000;
+
+/** Concatène N Uint8Array en une seule allocation. Plus rapide qu'un decode →
+ *  string.join('') → encode car évite le round-trip UTF-16. */
+function concatU8(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0];
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
+}
 
 function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Element {
   const t = useT();
@@ -97,7 +126,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   /** Tous les IDisposable owned par ce pane (event handlers xterm). Disposed
    *  dans l'ordre inverse au unmount, AVANT `term.dispose()`. */
   const disposablesRef = useRef<IDisposable[]>([]);
-  const pendingRef = useRef<string[]>([]);
+  const pendingRef = useRef<Uint8Array[]>([]);
   /** Compteur de bytes pending O(1) — évite un scan du tableau à chaque chunk. */
   const pendingBytesRef = useRef(0);
 
@@ -149,7 +178,11 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
 
   // Souscription via le bus IPC unique. 1 seul listener IPC global pour tous
   // les panes (cf. store/paneDataBus.ts). Tant que le pane est invisible on
-  // queue (xterm parser ANSI = coûteux même offscreen) ; cap à 4MB.
+  // queue (xterm parser ANSI = coûteux même offscreen) ; cap dynamique.
+  const hiddenSinceRef = useRef<number>(visible ? 0 : Date.now());
+  useEffect(() => {
+    hiddenSinceRef.current = visible ? 0 : Date.now();
+  }, [visible]);
   useEffect(() => {
     const id = pane.id;
     return subscribePaneData(id, (data) => {
@@ -159,12 +192,18 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         return;
       }
       pendingRef.current.push(data);
-      pendingBytesRef.current += data.length;
-      if (pendingBytesRef.current > PENDING_CAP_BYTES) {
+      pendingBytesRef.current += data.byteLength;
+      // Cap dynamique : 4MB tant que le pane vient d'être caché, 256KB après
+      // 5s d'invisibilité prolongée. Le terminal n'a besoin que des derniers
+      // bytes pour être "à jour" au prochain show — le reste est gaspillé.
+      const since = hiddenSinceRef.current;
+      const elapsed = since === 0 ? 0 : Date.now() - since;
+      const cap = elapsed > HIDDEN_TRIM_AFTER_MS ? HIDDEN_PENDING_CAP_BYTES : PENDING_CAP_BYTES;
+      if (pendingBytesRef.current > cap) {
         const arr = pendingRef.current;
         const drop = arr.length >>> 1;
         let dropped = 0;
-        for (let i = 0; i < drop; i++) dropped += arr[i].length;
+        for (let i = 0; i < drop; i++) dropped += arr[i].byteLength;
         arr.splice(0, drop);
         pendingBytesRef.current -= dropped;
       }
@@ -180,9 +219,9 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     if (pending.length === 0) return;
     pendingRef.current = [];
     pendingBytesRef.current = 0;
-    // Concat unique → 1 enqueue dans le WriteBuffer xterm au lieu de N.
-    // Le parser ANSI maintient son état à travers les write() — équivalent fonctionnel.
-    term.write(pending.join(''));
+    // Concat unique en Uint8Array → 1 enqueue dans le WriteBuffer xterm au
+    // lieu de N. Le parser ANSI maintient son état à travers les write().
+    term.write(concatU8(pending));
   }, [visible]);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -199,6 +238,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     const s = settingsRef.current;
     if (!s) return;
 
+    const perfMode = s.performanceMode === true;
     const opts: ITerminalOptions = {
       fontFamily: s.fontFamily,
       fontSize: s.fontSize,
@@ -215,9 +255,13 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       smoothScrollDuration: 0,
       scrollOnUserInput: false,
       // Nerd Fonts + glyphes larges peuvent déborder leur cell — rescale via WebGL.
-      rescaleOverlappingGlyphs: true,
+      // En perfMode, désactivé : économie ~5-10% CPU sous spew (le rescale tourne
+      // dans une boucle par-glyph WebGL).
+      rescaleOverlappingGlyphs: !perfMode,
       // WCAG AA — relève les couleurs dim ANSI si trop proches du background.
-      minimumContrastRatio: 4.5,
+      // En perfMode, 1 (no-op) : économie ~10% CPU par draw (la comparaison
+      // de luminance se fait par glyphe à chaque repaint).
+      minimumContrastRatio: perfMode ? 1 : 4.5,
       theme: THEME,
       ...(IS_WINDOWS ? { windowsPty: { backend: 'conpty' as const } } : {})
     };
@@ -265,12 +309,16 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         collected.push(ctxLost);
         term.loadAddon(webgl);
         webglRef.current = webgl;
-        try {
-          const lig = new LigaturesAddon();
-          term.loadAddon(lig);
-          ligaturesRef.current = lig;
-        } catch (err) {
-          console.warn('[term] LigaturesAddon load failed', err);
+        // Lazy ligatures : seulement si la fonte choisie en supporte. Le perfMode
+        // les désactive aussi quoi qu'il arrive (harfbuzz parse + shape par draw).
+        if (!perfMode && fontSupportsLigatures(s.fontFamily)) {
+          try {
+            const lig = new LigaturesAddon();
+            term.loadAddon(lig);
+            ligaturesRef.current = lig;
+          } catch (err) {
+            console.warn('[term] LigaturesAddon load failed', err);
+          }
         }
       } catch (err) {
         console.warn('[term] WebGL indisponible, fallback DOM', err);
@@ -289,7 +337,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       const pending = pendingRef.current;
       pendingRef.current = [];
       pendingBytesRef.current = 0;
-      term.write(pending.join(''));
+      term.write(concatU8(pending));
     }
 
     // onData → garder le IDisposable pour dispose au unmount.
@@ -374,36 +422,53 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     disposablesRef.current = collected;
   }, [visible, pane.id]);
 
-  // ResizeObserver debounced via RAF. Single RAF par cycle, gardé en ref pour
-  // pouvoir l'annuler au unmount (anti-stale callback sur term disposé).
+  // ResizeObserver debounced via RAF pour pane actif, idleCallback pour les
+  // inactifs (un resize de pane offscreen ne doit pas voler de frames au
+  // pane visible). RAF/idle annulables au unmount (anti-stale callback).
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     let raf = 0;
+    let idle = 0;
     let lastCols = -1;
     let lastRows = -1;
-    const ro = new ResizeObserver(() => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        const term = termRef.current;
-        const fit = fitRef.current;
-        if (!term || !fit) return;
-        try {
-          withPreservedScroll(term, () => fit.fit());
-          if (term.cols !== lastCols || term.rows !== lastRows) {
-            lastCols = term.cols;
-            lastRows = term.rows;
-            window.cmux.panes.resize(pane.id, { cols: term.cols, rows: term.rows });
-          }
-        } catch {
-          /* ignore */
+    const doFit = (): void => {
+      raf = 0;
+      idle = 0;
+      const term = termRef.current;
+      const fit = fitRef.current;
+      if (!term || !fit) return;
+      try {
+        withPreservedScroll(term, () => fit.fit());
+        if (term.cols !== lastCols || term.rows !== lastRows) {
+          lastCols = term.cols;
+          lastRows = term.rows;
+          window.cmux.panes.resize(pane.id, { cols: term.cols, rows: term.rows });
         }
-      });
-    });
+      } catch {
+        /* ignore */
+      }
+    };
+    const cancelPending = (): void => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+      if (idle && typeof cancelIdleCallback !== 'undefined') cancelIdleCallback(idle);
+      idle = 0;
+    };
+    const schedule = (): void => {
+      cancelPending();
+      if (activeRef.current) {
+        raf = requestAnimationFrame(doFit);
+      } else if (typeof requestIdleCallback !== 'undefined') {
+        idle = requestIdleCallback(doFit, { timeout: 200 });
+      } else {
+        raf = requestAnimationFrame(doFit);
+      }
+    };
+    const ro = new ResizeObserver(schedule);
     ro.observe(host);
     return () => {
-      if (raf) cancelAnimationFrame(raf);
+      cancelPending();
       ro.disconnect();
     };
   }, [pane.id]);
@@ -463,10 +528,29 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   useEffect(() => {
     const term = termRef.current;
     if (!term || !settings) return;
-    if (term.options.scrollback !== settings.scrollback) {
-      term.options.scrollback = settings.scrollback;
+    // Scrollback dynamique : pleine valeur quand visible, 500 quand caché.
+    // Réduit la RAM consommée par les buffers xterm de panes long-hidden
+    // (chaque ligne ≈ 100 bytes × cols ; 5000 lignes × 200 cols ≈ 1 MB par pane).
+    const desired = visible ? settings.scrollback : Math.min(500, settings.scrollback);
+    if (term.options.scrollback !== desired) {
+      term.options.scrollback = desired;
     }
-  }, [settings?.scrollback, settings]);
+  }, [settings?.scrollback, settings, visible]);
+
+  // Live toggle perfMode — applique contrast/rescale à chaud sans remount.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !settings) return;
+    const perf = settings.performanceMode === true;
+    const desiredContrast = perf ? 1 : 4.5;
+    const desiredRescale = !perf;
+    if (term.options.minimumContrastRatio !== desiredContrast) {
+      term.options.minimumContrastRatio = desiredContrast;
+    }
+    if (term.options.rescaleOverlappingGlyphs !== desiredRescale) {
+      term.options.rescaleOverlappingGlyphs = desiredRescale;
+    }
+  }, [settings?.performanceMode, settings]);
 
   // Live toggle WebGL — mount/unmount à chaud, fallback DOM si échec.
   useEffect(() => {
