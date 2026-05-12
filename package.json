@@ -1,7 +1,7 @@
 {
   "name": "vmux-windows",
   "private": true,
-  "version": "0.7.7",
+  "version": "0.7.8",
   "description": "vMux — multi-agent AI orchestrator for Windows. Splits, localhost preview, event detection.",
   "main": "./out/main/index.js",
   "author": {
@@ -108,7 +108,9 @@
       {
         "from": "build/bin-win",
         "to": "bin",
-        "filter": ["**/*.exe"]
+        "filter": [
+          "**/*.exe"
+        ]
       }
     ],
     "win": {
@@ -140,11 +142,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "icon": "build/icon.png",
@@ -165,11 +173,15 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.png",
