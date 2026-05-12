@@ -78,24 +78,32 @@ export function* parseOsc(chunk: string): Generator<RawOsc> {
     const intro = nextOscIntroducer(chunk, i);
     if (intro === null) return;
     const dataStart = intro.idx + intro.len;
-    // Cherche le terminateur le plus proche parmi BEL / ESC \ / 0x9c.
-    const belIdx = chunk.indexOf('\x07', dataStart);
-    const st7Idx = chunk.indexOf('\x1b\\', dataStart);
-    const st8Idx = chunk.indexOf('\x9c', dataStart);
-    // Sélectionne le plus petit index valide.
+    // Single-pass terminator search. Avant : 3 indexOf séquentiels (BEL, ST 7-bit,
+    // ST 8-bit) — chaque indexOf scanne le buffer entier jusqu'à un hit. Ici on
+    // scanne UNE seule fois et on s'arrête au premier terminateur rencontré.
+    // Pour un chunk de 100KB sans terminateur, ça remplace 300KB scannés par 100KB.
     let endIdx = -1;
     let endLen = 0;
-    if (belIdx !== -1) {
-      endIdx = belIdx;
-      endLen = 1;
-    }
-    if (st7Idx !== -1 && (endIdx === -1 || st7Idx < endIdx)) {
-      endIdx = st7Idx;
-      endLen = 2;
-    }
-    if (st8Idx !== -1 && (endIdx === -1 || st8Idx < endIdx)) {
-      endIdx = st8Idx;
-      endLen = 1;
+    for (let j = dataStart; j < n; j++) {
+      const c = chunk.charCodeAt(j);
+      if (c === 0x07) {
+        // BEL
+        endIdx = j;
+        endLen = 1;
+        break;
+      }
+      if (c === 0x9c) {
+        // ST 8-bit
+        endIdx = j;
+        endLen = 1;
+        break;
+      }
+      if (c === 0x1b && j + 1 < n && chunk.charCodeAt(j + 1) === 0x5c) {
+        // ESC \ (ST 7-bit)
+        endIdx = j;
+        endLen = 2;
+        break;
+      }
     }
     if (endIdx === -1) return; // OSC non terminé — abandon
     // Si un nouvel introducer OSC apparaît avant le terminateur trouvé, le

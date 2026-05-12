@@ -54,21 +54,21 @@ export function useGlobalIpcSubscriptions(): void {
         });
       });
     });
-    // Boot order : on charge settings AVANT sessions et on seed activeSessionId
-    // depuis lastActiveSessionId. Comme ça, quand setSessions fire, sa logique
-    // de fallback ("garde l'active si valide, sinon sessions[0]") va préserver
-    // la dernière session ouverte si elle existe encore. Sans ce seed, on
-    // retombait toujours sur sessions[0] au boot.
-    void window.cmux.settings.get().then(async (s) => {
-      if (signal.aborted) return;
-      setSettings(s);
-      if (s.lastActiveSessionId) {
-        setActiveSession(s.lastActiveSessionId);
+    // Boot : settings et sessions sont indépendants côté main — on les fetch
+    // en parallèle pour économiser un round-trip IPC. L'ordre d'application
+    // côté store reste settings → activeSession seed → sessions, car
+    // setSessions a une logique de fallback ("garde l'active si valide, sinon
+    // sessions[0]") qui doit voir un activeSessionId déjà seedé.
+    void Promise.all([window.cmux.settings.get(), window.cmux.sessions.list()]).then(
+      ([s, sessions]) => {
+        if (signal.aborted) return;
+        setSettings(s);
+        if (s.lastActiveSessionId) {
+          setActiveSession(s.lastActiveSessionId);
+        }
+        setSessions(sessions);
       }
-      const sessions = await window.cmux.sessions.list();
-      if (signal.aborted) return;
-      setSessions(sessions);
-    });
+    );
 
     const offSession = window.cmux.sessions.onUpdate(upsertSession);
     const offStatus = window.cmux.panes.onStatus((sessionId, paneId, pane) => {

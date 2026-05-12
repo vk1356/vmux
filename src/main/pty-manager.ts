@@ -881,9 +881,12 @@ class PtyManager extends EventEmitter {
     if (!cur) return;
     const cp0 = cur.session.panes[paneId];
     if (!cp0 || cp0.kind !== 'terminal') return;
-    // Mutate in-place : pas de clone du Record entier. Le renderer voit la
-    // nouvelle valeur quand sessionUpdate fire (structured clone côté IPC).
-    cur.session.panes[paneId] = { ...cp0, lastOutputAt: now };
+    // Mutation in-place du champ lastOutputAt uniquement. Le pane object est
+    // owned par la session managée — pas d'aliasing externe puisque l'IPC
+    // structured-clone à l'émission. Évite l'alloc d'un nouveau pane object
+    // à chaque tick 1Hz (1 alloc × N panes × seconds = pression GC notable
+    // sur longues sessions).
+    cp0.lastOutputAt = now;
   }
 
   /** Met à jour le tail roulant et émet une transition d'état d'agent

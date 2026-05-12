@@ -317,6 +317,21 @@ export const useSessionStore = create<SessionStore>()((set) => ({
       if (!target) return {};
       const cur = target.panes[paneId];
       if (!cur || cur.kind !== 'terminal') return {};
+      // Change detection : si aucun champ du patch ne diffère de la valeur
+      // courante, no-op. Évite la cascade de re-renders en aval (Sidebar,
+      // SessionItem, TabBar) déclenchée par un nouvel objet Session quand
+      // rien n'a effectivement bougé. Hot path : paneStatus IPC peut fire
+      // à chaque chunk sous spew agent (lastOutputAt heartbeat 1Hz, etc.).
+      let changed = false;
+      const curRec = cur as unknown as Record<string, unknown>;
+      const patchRec = patch as unknown as Record<string, unknown>;
+      for (const k in patch) {
+        if (curRec[k] !== patchRec[k]) {
+          changed = true;
+          break;
+        }
+      }
+      if (!changed) return {};
       const updated: Session = {
         ...target,
         panes: { ...target.panes, [paneId]: { ...cur, ...patch } }

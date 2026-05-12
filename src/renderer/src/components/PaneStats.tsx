@@ -77,14 +77,18 @@ function PaneStatsImpl({ paneId, compact = false }: Props): JSX.Element | null {
   // Cache de la dernière draw pour pouvoir re-jouer dans le timer.
   const [drawTick, setDrawTick] = useState(0);
 
-  // Couleur CPU dynamique selon la charge — recalculé à chaque last update.
+  // Couleur CPU bucketée par tranches de 30/70 % — un seul recompute quand
+  // la tranche change réellement. Dep ciblée sur `cpu` (number) au lieu de
+  // `last` (objet ref) : évite des re-render à chaque push du stats sample.
+  const lastCpu = stats?.last?.cpu;
+  const cores = stats?.cores;
   const cpuColor = useMemo(() => {
-    if (!stats?.last) return '#f97316';
-    const machinePct = stats.cores > 0 ? stats.last.cpu / stats.cores : stats.last.cpu;
+    if (lastCpu === undefined) return '#f97316';
+    const machinePct = cores && cores > 0 ? lastCpu / cores : lastCpu;
     if (machinePct < 30) return '#22c55e'; // success
     if (machinePct < 70) return '#f97316'; // accent
     return '#ef4444'; // error
-  }, [stats?.last, stats?.cores]);
+  }, [lastCpu, cores]);
 
   useEffect(() => {
     const now = performance.now();

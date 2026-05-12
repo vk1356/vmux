@@ -31,10 +31,20 @@ interface Props {
   onOpenSettings: () => void;
 }
 
+type ClassifiedSession = SessionItemMeta & { running: number };
+
+/** Cache WeakMap par session : classifySession ne dépend que de `tree` + `panes`.
+ *  Tant que ces deux refs sont stables, le résultat est immutable. Quand
+ *  reorderSessions crée un nouvel `sessions[]` (même contenu, ordre différent),
+ *  on évite N tree traversals — on lit directement le cache. */
+const classifyCache = new WeakMap<Session, ClassifiedSession>();
+
 /** Classifie une session ET compte ses panes runnings/total — single pass sur
  *  les paneIds pour éviter le double-sweep (avant : classifySession +
  *  totalRunning faisaient chacun `allPaneIds` séparément). */
-function classifySession(s: Session): SessionItemMeta & { running: number } {
+function classifySession(s: Session): ClassifiedSession {
+  const cached = classifyCache.get(s);
+  if (cached) return cached;
   let isRunning = false;
   let isError = false;
   let isExited = false;
@@ -49,7 +59,9 @@ function classifySession(s: Session): SessionItemMeta & { running: number } {
     if (p.status === 'error') isError = true;
     if (p.status === 'exited') isExited = true;
   }
-  return { session: s, isRunning, isError, isExited, running };
+  const result: ClassifiedSession = { session: s, isRunning, isError, isExited, running };
+  classifyCache.set(s, result);
+  return result;
 }
 
 function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
@@ -57,10 +69,6 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
   const {
     sessions,
     agents,
-    activeSessionId,
-    lastEventBySession,
-    paneActivity,
-    paneAgentState,
     setActiveSession,
     removeSession,
     upsertSession,
@@ -69,16 +77,20 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
     useShallow((s) => ({
       sessions: s.sessions,
       agents: s.agents,
-      activeSessionId: s.activeSessionId,
-      lastEventBySession: s.lastEventBySession,
-      paneActivity: s.paneActivity,
-      paneAgentState: s.paneAgentState,
       setActiveSession: s.setActiveSession,
       removeSession: s.removeSession,
       upsertSession: s.upsertSession,
       reorderSessions: s.reorderSessions
     }))
   );
+  // Selectors séparés : un changement de paneActivity (event bump) ne déclenche
+  // pas un re-render des sessions ; un changement d'activeSessionId ne ré-execute
+  // pas le classifySession sur toutes les sessions. Chaque sous-tree React voit
+  // exactement les données qu'il consomme — granularité optimale pour Zustand.
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const lastEventBySession = useSessionStore((s) => s.lastEventBySession);
+  const paneActivity = useSessionStore((s) => s.paneActivity);
+  const paneAgentState = useSessionStore((s) => s.paneAgentState);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [filter, setFilter] = useState('');

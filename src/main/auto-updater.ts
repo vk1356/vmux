@@ -404,7 +404,13 @@ export async function setupAutoUpdater(
 
   // Source de vérité unique : la conf publish dans package.json. Évite la
   // désynchronisation si on transfère le repo. Fallback hardcodé en dev.
-  const REPO = await readRepoFromUpdateConfig().catch(() => 'vk1356/vmux');
+  // Lazy : on évite le fs.readFile au boot. Le premier check se fait après
+  // BOOT_CHECK_DELAY_MS (3s) — bien après le first paint.
+  let repoPromise: Promise<string> | null = null;
+  const getRepo = (): Promise<string> => {
+    repoPromise ??= readRepoFromUpdateConfig().catch(() => 'vk1356/vmux');
+    return repoPromise;
+  };
 
   /** Path du dernier installer téléchargé manuellement, prêt à être lancé. */
   let pendingManualInstaller: string | null = null;
@@ -431,7 +437,7 @@ export async function setupAutoUpdater(
       sendStatus({ kind: 'checking' });
       const local = app.getVersion();
       try {
-        const latest = await ghFetchLatest(REPO);
+        const latest = await ghFetchLatest(await getRepo());
         log.info(`[updater] local=${local} remote=${latest.version}`);
         if (isNewer(latest.version, local)) {
           sendStatus({
@@ -494,7 +500,7 @@ export async function setupAutoUpdater(
   if (is.dev) {
     log.info('[updater] dev mode — manual download only, no install');
     registerIpcHandler(IPC.updateDownload, async () => {
-      pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
+      pendingManualInstaller = await runManualUpdateFlow(await getRepo(), sendStatus);
     });
     registerIpcHandler(IPC.updateInstall, () => {
       sendStatus({
@@ -570,7 +576,7 @@ export async function setupAutoUpdater(
         await autoUpdater.checkForUpdates();
       } catch (err) {
         log.warn('[updater] electron-updater download failed, manual fallback', err);
-        pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
+        pendingManualInstaller = await runManualUpdateFlow(await getRepo(), sendStatus);
       }
     });
 
@@ -596,7 +602,7 @@ export async function setupAutoUpdater(
   } catch (err) {
     log.warn('[updater] electron-updater unavailable, manual download only', err);
     registerIpcHandler(IPC.updateDownload, async () => {
-      pendingManualInstaller = await runManualUpdateFlow(REPO, sendStatus);
+      pendingManualInstaller = await runManualUpdateFlow(await getRepo(), sendStatus);
     });
     registerIpcHandler(IPC.updateInstall, () => {
       if (pendingManualInstaller) {

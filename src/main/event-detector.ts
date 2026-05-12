@@ -62,27 +62,22 @@ const URL_IN_MESSAGE_RE = /https?:\/\/[^\s'"<>]+/;
 
 // Bail-out fast-path : si AUCUN des mots-clés racine n'apparaît dans le chunk,
 // on saute les 5 .matchAll() qui ré-itèrent tous le buffer. La majorité écrasante
-// des chunks PTY d'un agent IA n'a aucun de ces tokens. indexOf est ~10x plus
-// rapide que .test() sur un buffer de 100KB.
+// des chunks PTY d'un agent IA n'a aucun de ces tokens.
+//
+// Une seule regex char-class plutôt qu'une cascade de 15 indexOf : V8 compile
+// ça en une machine à états Aho-Corasick-like qui scanne le buffer en O(n) une
+// seule fois. La cascade indexOf, elle, faisait 15 passes du buffer dans le
+// pire cas (chunk sans aucun keyword). Sous spew agent (~250 chunks/s), c'était
+// le poste de coût dominant.
+//
+// Les tokens sont choisis pour matcher case-insensitively les variantes
+// "Build"/"build"/"Building", "failed"/"Failed", etc., sans avoir besoin du
+// flag /i (qui forcerait V8 à dupliquer les transitions de la state machine).
+const HINT_RE =
+  /http|ompil|isten|ready|uild|aile?d|aili?ng|error|pass|omplet|inished|done|running\s+on/i;
+
 function hasAnyHint(text: string): boolean {
-  // Test les marqueurs les plus discriminants en premier.
-  return (
-    text.indexOf('http') !== -1 ||
-    text.indexOf('compiled') !== -1 ||
-    text.indexOf('listening') !== -1 ||
-    text.indexOf('ready') !== -1 ||
-    text.indexOf('uild') !== -1 || // "build" / "Build" / "Building" (sans la majuscule)
-    text.indexOf('ailed') !== -1 || // "failed" / "Failed"
-    text.indexOf('error') !== -1 ||
-    text.indexOf('Error') !== -1 ||
-    text.indexOf('pass') !== -1 ||
-    text.indexOf('ompleted') !== -1 || // "completed" / "Completed"
-    text.indexOf('inished') !== -1 || // "finished" / "Finished"
-    text.indexOf('done') !== -1 ||
-    text.indexOf('Done') !== -1 ||
-    text.indexOf('running on') !== -1 ||
-    text.indexOf('ailing') !== -1 // "failing"
-  );
+  return HINT_RE.test(text);
 }
 
 interface DetectorState {

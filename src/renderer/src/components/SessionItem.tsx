@@ -18,6 +18,21 @@ import {
 } from 'lucide-react';
 import type { AgentPreset, AgentRunState, DetectedEvent, Session, TerminalPane } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
+import type { PaneTree } from '@shared/types';
+
+/** Cache memoizé des paneIds d'un tree. `tree` est immutable côté store
+ *  (chaque mutation crée un nouveau tree ref), donc tant que la ref ne change
+ *  pas, le résultat est valide. WeakMap → GC automatique quand le tree est
+ *  remplacé par une nouvelle version. */
+const paneIdsCache = new WeakMap<PaneTree, string[]>();
+function cachedPaneIds(tree: PaneTree): string[] {
+  let ids = paneIdsCache.get(tree);
+  if (!ids) {
+    ids = allPaneIds(tree);
+    paneIdsCache.set(tree, ids);
+  }
+  return ids;
+}
 import { pathBasename } from '@shared/utils';
 import { ATTENTION_RANK, type AttentionLevel } from '../store/sessions';
 import type { TFunction } from '../i18n';
@@ -442,9 +457,12 @@ function arePropsEqual(prev: Props, next: Props): boolean {
 
   // paneActivity / paneAgentState : on compare uniquement les ids des panes
   // de CETTE session — un changement dans une autre session ne doit pas
-  // forcer ce SessionItem à re-render.
-  const paneIds = allPaneIds(ns.tree);
-  for (const id of paneIds) {
+  // forcer ce SessionItem à re-render. Cache WeakMap : allPaneIds est O(panes)
+  // mais le résultat dépend uniquement de `tree` (immutable côté store) —
+  // dédup parfait sur les comparaisons répétées de la même session.
+  const paneIds = cachedPaneIds(ns.tree);
+  for (let i = 0; i < paneIds.length; i++) {
+    const id = paneIds[i];
     if (prev.paneActivity[id] !== next.paneActivity[id]) return false;
     if (prev.paneAgentState[id] !== next.paneAgentState[id]) return false;
   }
