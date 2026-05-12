@@ -407,13 +407,13 @@ function translateAgentDesc(
   return translated && translated !== key ? translated : fallback;
 }
 
+// Resets minimaux pour l'élément <dialog> natif : on neutralise le padding
+// (browser default 1em) et la color (CanvasText). Tout le reste — fond, bordure,
+// border-radius, max-height, overflow:hidden pour clipper les coins — vient de
+// la classe `.dialog` partagée avec SettingsDialog. Surcharger ces propriétés
+// inline cassait le rendu (dialog transparent, sans bordure).
 const dialogResetStyle: React.CSSProperties = {
   padding: 0,
-  border: 0,
-  background: 'transparent',
-  maxWidth: 'unset',
-  maxHeight: 'unset',
-  overflow: 'visible',
   color: 'inherit'
 };
 
