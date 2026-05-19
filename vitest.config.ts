@@ -10,6 +10,25 @@ export default defineConfig({
   test: {
     include: ['src/**/__tests__/**/*.test.ts'],
     globals: true,
-    environment: 'node'
+    environment: 'node',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      // RATCHET: pinned just below current measured floor. Never lower; only raise.
+      thresholds: {
+        lines: 65,
+        statements: 59,
+        functions: 55,
+        branches: 46
+      },
+      exclude: [
+        '**/__tests__/**',
+        '**/*.config.*',
+        'out/**',
+        'release/**',
+        'src/renderer/src/main.tsx',
+        'src/main/index.ts'
+      ]
+    }
   }
 });
