@@ -4,7 +4,7 @@
 
 **Goal:** Establish a regression safety net: a coverage ratchet gate that can only go up, plus real tests covering the Phase 3a-extracted modules, the `sessions` store, and the most testable critical renderer component — so Phase 3b's risky refactors have a net.
 
-**Architecture:** (1) Coverage thresholds in `vitest.config.ts` pinned at/just-below the CURRENT measured floor (never lower — ratchet). (2) Pure-logic tests (node env): i18n engine, deeper `sessions` store. (3) Renderer test infra (`@testing-library/react` + `happy-dom`, env split) + a meaningful `CommandPalette` test. (4) Re-ratchet thresholds up to the new floor.
+**Architecture:** (1) **INTERIM** coverage gate at a conservative floor while Phase 4 runs — a global ratchet pinned at the start regresses transiently every time a new test imports a large under-covered file into the denominator (corrected design: the FINAL ratchet is a Phase-4-EXIT artifact, T6). (2) Pure-logic tests (node env): i18n engine, deeper `sessions` store. (3) Renderer test infra (`@testing-library/react` + `happy-dom`, env split) + a meaningful `CommandPalette` test **+ i18n hook tests** (`useT`/`useLocale`/`useI18n`) so `i18n/index.ts` is well-covered and the aggregate recovers. (4) T6 pins the FINAL ratchet at the true post-all-tests floor, which MUST end ≥ the original 60/47/56/66 baseline.
 
 **Tech Stack:** Vitest 4, @vitest/coverage-v8, @testing-library/react, happy-dom, Zustand.
 
@@ -117,6 +117,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 import '@testing-library/jest-dom/vitest';
 ```
 - [ ] **Step 4:** Read `src/renderer/src/components/CommandPalette.tsx` fully. Identify its props, how it opens, the command/filter source, and any store/IPC deps (mock the IPC bridge `window.api` / store as needed using the patterns already in the repo's tests; read an existing test for the mock style). Write `CommandPalette.test.tsx` with @testing-library: render it open, type a query, assert the filtered list updates, assert keyboard nav (Arrow/Enter) selects/invokes the expected command (assert the real handler is called via a mock). 3–6 meaningful `it` blocks asserting REAL behavior. If a hard dependency (xterm, webview, electron) makes a path untestable, test the tractable surface and note the boundary — do NOT fake behavior.
+
+- [ ] **Step 4b: i18n hook tests** (recovers `i18n/index.ts` coverage, see Architecture note). Create `src/renderer/src/i18n/__tests__/i18n-hooks.test.tsx` using the new happy-dom infra + `@testing-library/react` `renderHook`. Read the real `useT`, `useLocale`, `useI18n` implementations (they subscribe to the i18n store / `useSessionStore` for lang). Mock the store/lang the same way the repo's existing tests do. Assert: `useT()` returns a working `t(key)` for the current lang; switching lang triggers re-render with the new translation (drive the store mock); `useLocale()`/`useI18n()` return the expected shape. 4–8 `it` blocks, REAL behavior, no faking. This is what lifts `index.ts` from ~48% so the T6 final ratchet lands ≥ baseline.
 - [ ] **Step 5:** `npm test` → all prior + new green (node + happy-dom projects both run). `npm run test:coverage` → passes (thresholds still met; CommandPalette + components coverage up). `npm run typecheck` (the .tsx test must typecheck — ensure tsconfig picks it up or it's excluded from build but included for vitest; do NOT break `npm run build`). `npm run lint` 0 · `npm run build` 0. Paste key lines.
 - [ ] **Step 6:** Commit:
 ```bash
@@ -135,7 +137,7 @@ If the infra proves too flaky/heavy to land cleanly after a genuine effort, STOP
 
 **Files:** Modify `vitest.config.ts`; Modify the spec doc.
 
-- [ ] **Step 1:** `npx vitest run --coverage` → record NEW global %. Raise the `thresholds` in `vitest.config.ts` to `Math.floor(new_measured) - 1` for each metric (must be ≥ the Task 2 values — NEVER lower). `npm run test:coverage` → passes at the new higher floor.
+- [ ] **Step 1:** `npx vitest run --coverage` → record NEW global %. This is the FINAL ratchet point. Set `thresholds` in `vitest.config.ts` to `Math.floor(new_measured) - 1` for each metric. **HARD REQUIREMENT:** the new measured floor MUST be ≥ the original baseline (statements 60.03 / branches 47.53 / functions 56.52 / lines 66.04). If any metric is BELOW baseline, Phase 4's added tests did not sufficiently cover the source they pulled into the denominator — do NOT just pin lower; STOP and report (more hook/store coverage is needed, or a genuinely-untestable large file should be added to `coverage.exclude` with written justification). Replace the INTERIM comment with a FINAL ratchet comment ("never lower"). `npm run test:coverage` → passes at the new floor.
 - [ ] **Step 2:** Final gate: typecheck (cache-busted) · lint 0 · `npm test` all green · `npm run test:coverage` pass · `npm run build` 0.
 - [ ] **Step 3:** Update spec `## Phase 4` with a completion block: thresholds (before→after), new test counts, files covered, the documented TerminalPane boundary, and that Phase 3b is now unblocked (safety net exists).
 - [ ] **Step 4:** Commit (config + docs):
