@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isHostEvent, isHostRequest } from '@shared/pty-host-protocol';
+import { isHostEvent, isHostRequest, isHostReply } from '@shared/pty-host-protocol';
 
 describe('pty-host-protocol guards', () => {
   it('accepts a well-formed event', () => {
@@ -14,5 +14,23 @@ describe('pty-host-protocol guards', () => {
   });
   it('rejects a non-request', () => {
     expect(isHostRequest({ id: 1 })).toBe(false);
+  });
+
+  describe('isHostReply', () => {
+    it('accepts a well-formed reply with result', () => {
+      expect(isHostReply({ id: 1, result: undefined })).toBe(true);
+    });
+    it('accepts a well-formed reply with error', () => {
+      expect(isHostReply({ id: 2, error: 'x' })).toBe(true);
+    });
+    it('rejects null', () => {
+      expect(isHostReply(null)).toBe(false);
+    });
+    it('rejects an object with no numeric id', () => {
+      expect(isHostReply({})).toBe(false);
+    });
+    it('rejects an object with a non-numeric id', () => {
+      expect(isHostReply({ id: 'x' })).toBe(false);
+    });
   });
 });
