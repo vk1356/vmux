@@ -13,7 +13,7 @@ import {
   type SystemStatsSample
 } from '@shared/types';
 import { DEFAULT_AGENTS } from '@shared/agents';
-import { ptyManager } from './pty-manager';
+import { ptyManager } from './pty-host-client-singleton';
 import { ptyStats } from './pty-stats';
 import { inspectRepo, listWorktrees } from './worktree-manager';
 import {

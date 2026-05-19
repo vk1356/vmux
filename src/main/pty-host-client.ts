@@ -140,4 +140,9 @@ export class PtyHostClient extends EventEmitter {
   restartPane(s: string, p: string) { return this.call('restartPane', [s, p]); }
   autoRestoreSessions() { return this.call<number>('autoRestoreSessions', []); }
   shutdown() { return this.call<void>('shutdown', []); }
+
+  /** Tear down the host process (called from before-quit after shutdown()). */
+  async stop(): Promise<void> {
+    await this.sup.stop();
+  }
 }

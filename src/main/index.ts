@@ -2,7 +2,7 @@ import { app, BrowserWindow, session, shell } from 'electron';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import log from 'electron-log/main';
 import { registerIpc } from './ipc';
-import { ptyManager } from './pty-manager';
+import { ptyManager } from './pty-host-client-singleton';
 import { IPC } from '@shared/types';
 import {
   getGracefulShutdown,
@@ -254,6 +254,13 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(w);
   });
 
+  // 3b) Boot the PTY Host utilityProcess and AWAIT its ready handshake BEFORE
+  //     registerIpc. registerIpc attaches `ptyManager.on('paneData', ...)` etc.
+  //     synchronously, and the `ptyManager` Proxy throws if the client instance
+  //     is not yet created — so this must complete first.
+  const { initPtyHost } = await import('./pty-host-client-singleton');
+  await initPtyHost();
+
   // 4) Register IPC before the window loads — the renderer wires up listeners
   //    in its bootstrap script and may call invoke() during the first tick.
   registerIpc(() => mainWindow);
@@ -343,8 +350,16 @@ app.on('before-quit', (event) => {
   void ptyManager
     .shutdown()
     .catch((err) => log.error('[main] ptyManager.shutdown failed', err))
-    .finally(() => {
+    .finally(async () => {
       setGracefulShutdown(true);
+      // After panes have been SIGTERM'd, tear down the PTY Host
+      // utilityProcess itself. Best-effort: never block the exit tail on it.
+      try {
+        const { stopPtyHost } = await import('./pty-host-client-singleton');
+        await stopPtyHost();
+      } catch (err) {
+        log.error('[main] stopPtyHost failed', err);
+      }
       // 250ms tail: ConPTY/node-pty on Windows takes ~200-400ms to terminate
       // child processes cleanly. exit(0) skips before-quit re-entry.
       setTimeout(() => app.exit(0), 250);
