@@ -41,7 +41,7 @@ port.on('message', (e) => {
       const result = await fn.apply(mgr, req.args as unknown[]);
       post({ id: req.id, result });
     } catch (err) {
-      post({ id: req.id, error: (err as Error).message });
+      post({ id: req.id, error: err instanceof Error ? err.message : String(err) });
     }
   })();
 });
