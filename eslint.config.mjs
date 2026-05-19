@@ -3,7 +3,6 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
-import reactPlugin from 'eslint-plugin-react';
 import globals from 'globals';
 
 export default tseslint.config(
@@ -13,9 +12,7 @@ export default tseslint.config(
       'release/**',
       'dist/**',
       'node_modules/**',
-      '*.config.{js,mjs,ts}',
-      'electron.vite.config.ts',
-      'vitest.config.ts'
+      '*.config.{js,mjs,ts}'
     ]
   },
   js.configs.recommended,
@@ -33,14 +30,12 @@ export default tseslint.config(
     languageOptions: { globals: { ...globals.browser } },
     plugins: {
       'react-hooks': reactHooks,
-      'react-refresh': reactRefresh,
-      react: reactPlugin
+      'react-refresh': reactRefresh
     },
     rules: {
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
-      'react/no-unknown-property': 'warn'
+      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }]
     }
   },
   {
