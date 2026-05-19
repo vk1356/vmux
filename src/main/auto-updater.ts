@@ -125,6 +125,8 @@ function registerIpcHandler(
   } catch {
     /* pas enregistré, ok */
   }
+  // handler is stored as (...never[]) for type-safe heterogeneous storage;
+  // ipcMain.handle expects (event, ...any[]) => any — cast bridges the two.
   ipcMain.handle(channel, handler as Parameters<typeof ipcMain.handle>[1]);
   registeredIpcChannels.push(channel);
 }
