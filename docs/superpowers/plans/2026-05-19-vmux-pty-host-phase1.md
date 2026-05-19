@@ -33,6 +33,8 @@
 
 ### Task 1: De-risk spike — node-pty inside utilityProcess on Windows (THROWAWAY, HARD GATE)
 
+> **Spike outcome (2026-05-19):** PASS. `node-pty@1.1.0` spawned `powershell.exe` inside an Electron 42.1.0 `utilityProcess.fork`, exercised spawn → resize → write → data → kill with bundled ConPTY (`useConptyDll: true`). Observed stdout: `{"kind":"ready","pid":18200}` → `{"kind":"data","bytes":23}` → `{"kind":"exit","exitCode":1}` → `[spike] PASS`, process exit code 0. No ABI rebuild was needed — node-pty loaded cleanly under Electron's Node ABI with no `NODE_MODULE_VERSION` error. Decision gate: **PROCEED** with the plan.
+
 **Files:**
 - Create: `scripts/spike-pty-host/host.cjs` (throwaway)
 - Create: `scripts/spike-pty-host/run.cjs` (throwaway)
