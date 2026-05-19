@@ -95,7 +95,7 @@ type Events = {
   paneAgentState: [paneId: PaneId, state: AgentRunState];
 };
 
-class PtyManager extends EventEmitter {
+export class PtyManager extends EventEmitter {
   private sessions = new Map<string, ManagedSession>();
   /** Index inversé pane→session pour O(1) lookups dans writePane/resizePane (hot
    *  paths : fire à chaque keystroke / resize). Avant cet index, findSessionByPane
@@ -1117,6 +1117,14 @@ class PtyManager extends EventEmitter {
     });
     ptyStats.shutdown();
   }
+}
+
+/** Factory — used by the PTY Host entry to own the single instance in the
+ *  host process. The module-level `ptyManager` singleton is retained ONLY for
+ *  existing unit tests that import it directly; production main no longer
+ *  imports this module (it uses PtyHostClient). */
+export function createPtyManager(): PtyManager {
+  return new PtyManager();
 }
 
 export const ptyManager = new PtyManager();
