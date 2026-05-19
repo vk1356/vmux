@@ -26,7 +26,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "rebuild:native": "electron-rebuild -f -w node-pty",
     "rebuild": "electron-builder install-app-deps",
-    "lint": "npm run typecheck",
+    "lint": "npm run lint:eslint && npm run typecheck",
     "lint:eslint": "eslint \"src/**/*.{ts,tsx}\"",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json,md}\"",
     "test": "vitest run",
