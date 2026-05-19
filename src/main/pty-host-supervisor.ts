@@ -45,6 +45,7 @@ export class PtyHostSupervisor {
     child.on('exit', (code) => {
       log.error(`[pty-host] exited code=${code}`);
       if (!this.respawning) this.respawn();
+      else log.error('[pty-host] exit while respawning/stopping — not respawned');
     });
   }
 
