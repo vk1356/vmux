@@ -95,7 +95,9 @@
     "npmRebuild": false,
     "buildDependenciesFromSource": false,
     "asarUnpack": [
-      "**/node_modules/node-pty/**"
+      "**/node_modules/node-pty/**",
+      "out/main/pty-host.js",
+      "out/main/chunks/**"
     ],
     "directories": {
       "output": "release"
