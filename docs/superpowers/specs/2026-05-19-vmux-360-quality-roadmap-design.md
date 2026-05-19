@@ -51,6 +51,14 @@ changes (unless separately requested), unrelated refactoring.
 
 ## Phase 1 — Quality Foundations
 
+**Phase 1: COMPLETE (2026-05-19).** Verified end state:
+- ESLint operational (flat config, strict — `recommended` rules at full strength, no stubs, no downgrades); `lint` = eslint + typecheck.
+- `noUnusedLocals` + `noUnusedParameters` enabled in both tsconfigs.
+- Zero `any` / `@ts-ignore` / `@ts-expect-error` in src (the 2 real `auto-updater.ts` `any[]` replaced with `never[]`).
+- Remaining `eslint-disable` directives: 17 — all load-bearing (verified via --report-unused-disable-directives), domain-legitimate (ANSI/control-regex, logger no-console, intentional exhaustive-deps, TS control-flow no-useless-assignment).
+- Gates: typecheck ✅ (cache-busted), lint ✅ 0 errors, tests ✅ 129/11, build ✅.
+- `eslint-plugin-react` was NOT adopted (the only react/* disable was removable); `esbuild@^0.27` added as explicit devDep to keep the build hoist stable after lockfile re-solve.
+
 1. Author a real `eslint.config.mjs` (ESLint 10 flat config) wiring
    `typescript-eslint` 8, `eslint-plugin-react-hooks`,
    `eslint-plugin-react-refresh`, with main/preload vs renderer overrides.
