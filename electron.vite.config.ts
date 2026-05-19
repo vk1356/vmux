@@ -17,9 +17,17 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        // node-pty et pidusage ont du natif (.node) → on garde la garantie
-        // d'externalisation explicite, indépendante du parsing de package.json.
-        external: ['node-pty', 'pidusage']
+        // Two entries: the app main, and the PTY Host utilityProcess.
+        input: {
+          index: resolve('src/main/index.ts'),
+          'pty-host': resolve('src/main/pty-host/entry.ts')
+        },
+        // node-pty / pidusage have native .node — keep externalized so the
+        // host resolves the unpacked copy at runtime (asarUnpack handles it).
+        external: ['node-pty', 'pidusage'],
+        output: {
+          entryFileNames: '[name].js'
+        }
       }
     }
   },
