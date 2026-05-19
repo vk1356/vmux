@@ -1,3 +1,6 @@
+// Pure stateless IPC-boundary validation guards (extracted from ipc.ts).
+// No Electron / no module state — safe to unit-test in isolation.
+
 import path from 'node:path';
 import type {
   AppSettings,

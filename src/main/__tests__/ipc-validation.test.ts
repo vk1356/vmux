@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   MAX_ID_LEN,
+  MAX_STRING_LEN,
   isId,
   isHttpUrl,
   safePath,
+  isUnsafePath,
   isValidPtySize,
   sanitizeSettingsPatch
 } from '../ipc-validation';
@@ -38,8 +40,11 @@ describe('ipc-validation guards (characterization)', () => {
     expect(safePath(null as unknown as string)).toBeNull();
     expect(safePath('')).toBeNull();
 
-    // behavior: '../../etc/passwd' passes isUnsafePath (no NUL, not UNC, within length)
-    // → path.resolve() returns an absolute path string, NOT null
+    // KNOWN PRE-EXISTING WEAKNESS (characterized, NOT endorsed): safePath performs
+    // NO path-traversal containment — '../../etc/passwd' resolves to an absolute
+    // path instead of null. Tracked as a Phase 5 security item. Do NOT "fix" here;
+    // this test intentionally LOCKS current behavior so a future containment fix is
+    // a deliberate, reviewed change.
     const trav = safePath('../../etc/passwd');
     expect(typeof trav).toBe('string'); // behavior: returns absolute resolved path
 
@@ -86,5 +91,18 @@ describe('ipc-validation guards (characterization)', () => {
     // non-object → empty
     expect(sanitizeSettingsPatch(null)).toEqual({});
     expect(sanitizeSettingsPatch(42 as unknown)).toEqual({});
+  });
+
+  it('isUnsafePath: primitive-level characterization (NUL/length/non-string unsafe; traversal NOT)', () => {
+    // normal safe path → not flagged
+    expect(isUnsafePath('C:/Users/me/project')).toBe(false);
+    // NUL byte → unsafe
+    expect(isUnsafePath('a\x00b')).toBe(true);
+    // over-length (> MAX_STRING_LEN cap) → unsafe
+    expect(isUnsafePath('x'.repeat(MAX_STRING_LEN + 1))).toBe(true);
+    // pins the Phase-5-tracked traversal gap at the primitive level
+    expect(isUnsafePath('../../etc/passwd')).toBe(false);
+    // non-string input → unsafe
+    expect(isUnsafePath(123 as unknown as string)).toBe(true);
   });
 });
