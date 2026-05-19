@@ -122,7 +122,15 @@ Rule: one file per PR, behavior unchanged, characterization tests written
    via @testing-library.
 4. Regression tests for each module extracted in Phase 3.
 
-**Exit:** coverage gate enforced in CI/test run; critical renderer paths tested.
+**Phase 4: COMPLETE (2026-05-19).** Verified end state:
+- Coverage **ratchet gate** in `vitest.config.ts` (v8). Final thresholds pinned at floor(measured)−1: **stmts 70 · branches 55 · funcs 73 · lines 75**. Empirically proven to fail CI on regression. One-way: never lower.
+- Coverage rose from baseline **60.03/47.53/56.52/66.04** → **71.49/56.45/74.57/76.39** (all metrics well above baseline).
+- New tests: i18n engine (11) + sessions store deepened (22→51, sessions.ts 61%→97% lines) + renderer infra (Vitest-4 dual-project node/happy-dom + @testing-library) + CommandPalette (7) + i18n hooks (11). **129 → 195 tests, 11 → 15 files.**
+- `TerminalPane.tsx` documented as NOT meaningfully unit-testable (xterm/WebGL/IPC need real GPU) — its logic will be covered by Phase 3b extracting pure hooks and testing those.
+- Sequencing bug found & fixed mid-phase (ratchet must pin at phase exit, not start).
+- Phase 3b is now UNBLOCKED (the safety net exists).
+
+**Exit:** coverage gate enforced in CI/test run; critical renderer paths tested. ✅
 
 ## Phase 5 — Residual perf / a11y / robustness
 

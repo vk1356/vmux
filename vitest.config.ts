@@ -42,20 +42,17 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
-      // INTERIM ratchet floor (Phase 4 in progress). Pinning the final ratchet
-      // at the START was a sequencing bug: each new test that imports a large,
-      // not-yet-fully-covered file expands the coverage *denominator* faster
-      // than it covers it, transiently depressing the global aggregate until
-      // later Phase-4 tests catch up. So during Phase 4 the gate sits at a
-      // conservative floor that still catches a catastrophic regression; the
-      // FINAL ratchet is pinned at Phase-4 exit (P4-T6) against the true
-      // post-all-tests floor (which must end ≥ the original 60/47/56/66
-      // baseline — verified there). Never lower the FINAL ratchet.
+      // FINAL ratchet (Phase 4 complete, 2026-05-19). Pinned at floor(measured)
+      // − 1 of the post-all-tests coverage (195 tests / 15 files):
+      // stmts 71.49 · branch 56.45 · funcs 74.57 · lines 76.39 — all well
+      // above the original 60.03/47.53/56.52/66.04 baseline. This is a one-way
+      // ratchet: NEVER lower these; raise them as coverage grows. CI fails if
+      // coverage drops below. (The −1 margin absorbs v8 branch nondeterminism.)
       thresholds: {
-        lines: 55,
-        statements: 50,
-        functions: 45,
-        branches: 40
+        lines: 75,
+        statements: 70,
+        functions: 73,
+        branches: 55
       },
       exclude: [
         '**/__tests__/**',
