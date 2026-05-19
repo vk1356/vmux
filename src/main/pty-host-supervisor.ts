@@ -9,6 +9,12 @@ import { isHostReply } from '@shared/pty-host-protocol';
 type IncomingHandler = (msg: unknown) => void;
 
 export class PtyHostSupervisor {
+  /** Bounded budget for the INITIAL start() handshake. Generous — the Task-1
+   *  spike showed ready within ~1s. A failed/packaged spawn that never signals
+   *  ready becomes a fast, logged reject (index.ts → app.exit(1)) instead of a
+   *  silent infinite hang with no window. NOT applied to respawn() (Phase-2). */
+  static readonly START_TIMEOUT_MS = 10000;
+
   private child: UtilityProcess | null = null;
   private onMessageCb: IncomingHandler | null = null;
   private readyResolve: (() => void) | null = null;
@@ -22,9 +28,34 @@ export class PtyHostSupervisor {
   }
 
   start(): Promise<void> {
-    this.readyPromise = new Promise((res) => (this.readyResolve = res));
+    const p = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        log.error('[pty-host] start timed out after 10s — host did not signal ready');
+        try {
+          this.child?.kill();
+        } catch {
+          /* already dead */
+        }
+        reject(new Error('PTY host failed to start within 10s'));
+      }, PtyHostSupervisor.START_TIMEOUT_MS);
+      // Never let a clean-path timer keep the event loop alive.
+      if (typeof timer.unref === 'function') timer.unref();
+      // The message handler calls this.readyResolve?.() for BOTH start and
+      // respawn. Wrap it here with the settle+clearTimeout guard so a normal
+      // start resolves exactly once and the timer is cleared (no late reject).
+      this.readyResolve = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+    this.readyPromise = p;
     this.fork();
-    return this.readyPromise;
+    return p;
   }
 
   private fork(): void {
