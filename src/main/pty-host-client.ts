@@ -35,7 +35,7 @@ export class PtyHostClient extends EventEmitter {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(msg.error));
+      if ('error' in msg && msg.error !== undefined) p.reject(new Error(msg.error));
       else p.resolve(msg.result);
       return;
     }
@@ -50,6 +50,16 @@ export class PtyHostClient extends EventEmitter {
     const i = this.snapshot.findIndex((s) => s.id === session.id);
     if (i >= 0) this.snapshot[i] = session;
     else this.snapshot.push(session);
+    this.paneIndex.clear();
+    for (const s of this.snapshot)
+      for (const pid of Object.keys(s.panes)) this.paneIndex.set(pid, s.id);
+  }
+
+  /** Drop a removed session locally. No removal event is pushed by the host
+   *  (PtyManager.removeSession / closePane-of-last-pane emit nothing), so the
+   *  client prunes off the RPC it already proxies. */
+  private prune(sessionId: string): void {
+    this.snapshot = this.snapshot.filter((s) => s.id !== sessionId);
     this.paneIndex.clear();
     for (const s of this.snapshot)
       for (const pid of Object.keys(s.panes)) this.paneIndex.set(pid, s.id);
@@ -85,7 +95,7 @@ export class PtyHostClient extends EventEmitter {
   }
 
   // ---- Synchronous reads served from the snapshot ----
-  list(): Session[] { return this.snapshot; }
+  list(): Session[] { return [...this.snapshot]; }
   sessionForPane(paneId: PaneId): string | undefined { return this.paneIndex.get(paneId); }
 
   // ---- Fire-and-forget (no reply awaited; matches current void methods) ----
@@ -109,9 +119,17 @@ export class PtyHostClient extends EventEmitter {
 
   // ---- Async (already Promise-returning in the current API) ----
   createSession(input: unknown) { return this.call('createSession', [input]); }
-  removeSession(id: string) { return this.call<void>('removeSession', [id]); }
+  removeSession(id: string) {
+    const r = this.call<void>('removeSession', [id]);
+    void r.then(() => this.prune(id), () => {});
+    return r;
+  }
   splitPane(input: unknown) { return this.call('splitPane', [input]); }
-  closePane(s: string, p: string) { return this.call('closePane', [s, p]); }
+  closePane(s: string, p: string) {
+    const r = this.call<Session | null>('closePane', [s, p]);
+    void r.then((res) => { if (res === null) this.prune(s); }, () => {});
+    return r;
+  }
   relayout(s: string, preset: unknown) { return this.call('relayout', [s, preset]); }
   removeUrlFromPane(s: string, p: string, u: string) { return this.call('removeUrlFromPane', [s, p, u]); }
   renamePane(s: string, p: string, l: string) { return this.call('renamePane', [s, p, l]); }

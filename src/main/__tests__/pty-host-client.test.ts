@@ -51,4 +51,59 @@ describe('PtyHostClient', () => {
     push({ kind: 'sessionUpdate', session: { id: 's1', name: 'x', panes: { p1: { id: 'p1', kind: 'terminal', agentId: 'shell', status: 'running', cwd: '/', createdAt: 0 } }, tree: { kind: 'leaf', paneId: 'p1' }, cwd: '/', createdAt: 0, activePaneId: 'p1' } });
     expect(client.sessionForPane('p1')).toBe('s1');
   });
+
+  it('removeSession prunes the snapshot + pane index after the reply resolves', async () => {
+    const { sup, sent, push } = makeFakeSupervisor();
+    const client = new PtyHostClient(sup as never);
+    push({ kind: 'sessionUpdate', session: { id: 's1', name: 'x', panes: { p1: { id: 'p1', kind: 'terminal', agentId: 'shell', status: 'running', cwd: '/', createdAt: 0 } }, tree: { kind: 'leaf', paneId: 'p1' }, cwd: '/', createdAt: 0, activePaneId: 'p1' } });
+    expect(client.list().map((s) => s.id)).toEqual(['s1']);
+    expect(client.sessionForPane('p1')).toBe('s1');
+    const p = client.removeSession('s1');
+    const reqId = (sent[0] as { id: number }).id;
+    push({ id: reqId, result: undefined });
+    await p;
+    expect(client.list()).toEqual([]);
+    expect(client.sessionForPane('p1')).toBeUndefined();
+  });
+
+  it('closePane returning null prunes the whole session', async () => {
+    const { sup, sent, push } = makeFakeSupervisor();
+    const client = new PtyHostClient(sup as never);
+    push({ kind: 'sessionUpdate', session: { id: 's1', name: 'x', panes: { p1: { id: 'p1', kind: 'terminal', agentId: 'shell', status: 'running', cwd: '/', createdAt: 0 } }, tree: { kind: 'leaf', paneId: 'p1' }, cwd: '/', createdAt: 0, activePaneId: 'p1' } });
+    const p = client.closePane('s1', 'p1');
+    const reqId = (sent[0] as { id: number }).id;
+    push({ id: reqId, result: null });
+    await p;
+    expect(client.list()).toEqual([]);
+    expect(client.sessionForPane('p1')).toBeUndefined();
+  });
+
+  it('closePane returning a Session does NOT prune', async () => {
+    const { sup, sent, push } = makeFakeSupervisor();
+    const client = new PtyHostClient(sup as never);
+    const s1 = {
+      id: 's1', name: 'x',
+      panes: {
+        p1: { id: 'p1', kind: 'terminal', agentId: 'shell', status: 'running', cwd: '/', createdAt: 0 },
+        p2: { id: 'p2', kind: 'terminal', agentId: 'shell', status: 'running', cwd: '/', createdAt: 0 }
+      },
+      tree: { kind: 'leaf', paneId: 'p2' }, cwd: '/', createdAt: 0, activePaneId: 'p2'
+    };
+    push({ kind: 'sessionUpdate', session: s1 });
+    const p = client.closePane('s1', 'p1');
+    const reqId = (sent[0] as { id: number }).id;
+    const remaining = { ...s1, panes: { p2: s1.panes.p2 } };
+    push({ id: reqId, result: remaining });
+    await p;
+    expect(client.list().map((s) => s.id)).toEqual(['s1']);
+  });
+
+  it('rejects on a reply with an empty-string error', async () => {
+    const { sup, sent, push } = makeFakeSupervisor();
+    const client = new PtyHostClient(sup as never);
+    const p = client.removeSession('x');
+    const reqId = (sent[0] as { id: number }).id;
+    push({ id: reqId, error: '' });
+    await expect(p).rejects.toThrow();
+  });
 });
