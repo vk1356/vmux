@@ -104,8 +104,14 @@ Rule: one file per PR, behavior unchanged, characterization tests written
 - `TerminalPane.tsx` → extract hooks (`useXterm`, `usePaneIpc`, …).
 - `i18n/index.ts` → separate locale data from the i18n engine.
 
-**Exit:** no source file > ~400L without a documented reason; each extracted
-module has a clear name, interface, and dependency set; behavior identical.
+**Phase 3a: COMPLETE (2026-05-19)** — the two LOW-RISK extractions:
+- `i18n/index.ts` 771 → **327 L**; `EN` catalog + `TKey` moved verbatim to `i18n/en.ts` (447 L). Verbatim diff EMPTY; public surface preserved; gates green.
+- `ipc.ts` 836 → **611 L**; 22 pure stateless guards/consts moved verbatim to `ipc-validation.ts` (246 L) + 6 characterization tests (`ipc-validation.test.ts`). Verbatim diff EMPTY for all 22; `registerIpc`/`isTrustedSender`/`safe`/`throttle` byte-identical; 129 → **135 tests / 12 files**.
+- Both behavior-preserving, spec + quality reviewed (Opus).
+
+**Phase 3b: DEFERRED to AFTER Phase 4** (intentional, risk-based): `pty-manager.ts` (1122 L stateful `EventEmitter`, near-zero orchestration test coverage) and `TerminalPane.tsx` (776 L, complex xterm lifecycle, no tests). This spec's own rule ("characterization tests written **before** extraction") + the Risks table ("Refactor introduces regressions → characterization tests before extraction") mandate a regression net first. Refactoring untested stateful/UI code without Phase 4's safety net is the canonical anti-pattern. Order is now: 3a ✅ → Phase 4 → 3b → Phase 5.
+
+**Exit (Phase 3 overall):** no source file > ~400L without a documented reason; each extracted module has a clear name, interface, and dependency set; behavior identical. (3a done; pty-manager.ts/TerminalPane.tsx pending 3b.)
 
 ## Phase 4 — Test safety net
 
@@ -123,6 +129,16 @@ module has a clear name, interface, and dependency set; behavior identical.
 Targeted pass on gaps not already covered by the v0.7.x audit commits: IPC
 error handling, node-pty edge cases (spawn failure, child death races), focus
 management, color contrast. Scope confirmed against current state before work.
+
+**Logged security item (found during Phase 3a, characterized & test-pinned):**
+`safePath` / `isUnsafePath` in `src/main/ipc-validation.ts` perform NUL / UNC /
+length checks but **no path-traversal containment** — a renderer-supplied
+`../../etc/passwd` resolves to a real absolute path and is accepted by IPC
+handlers. Pre-existing (not introduced by the refactor); behavior is locked by
+`ipc-validation.test.ts` so a containment fix here is a deliberate, reviewed
+change. **Phase 5 task:** add base-directory containment to `safePath`, update
+the characterization tests in the same commit, audit all IPC handlers that
+consume `safePath` for the corrected contract.
 
 **Exit:** identified residual issues fixed or explicitly deferred with rationale.
 
