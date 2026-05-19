@@ -6,7 +6,6 @@ import * as pty from 'node-pty';
 import { app } from 'electron';
 import log from 'electron-log/main';
 import type {
-  AgentPreset,
   AgentRunState,
   CreateSessionInput,
   DetectedEvent,

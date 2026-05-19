@@ -12,7 +12,6 @@ import {
   type IpcResult,
   type Lang,
   type McpServer,
-  type PaneId,
   type PaneStatSample,
   type PtySize,
   type Snippet,
