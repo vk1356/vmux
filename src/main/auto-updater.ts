@@ -52,8 +52,7 @@ const inflightAborts = new Set<AbortController>();
 /** Listeners enregistrés sur autoUpdater pour pouvoir les détacher au quit. */
 const updaterListeners: Array<{
   event: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  fn: (...args: any[]) => void;
+  fn: (...args: never[]) => void;
 }> = [];
 /** IPC channels enregistrés — unhandle au quit pour éviter le leak entre tests. */
 const registeredIpcChannels: string[] = [];
@@ -96,7 +95,7 @@ export function stopAutoUpdater(): void {
         autoUpdaterModule as unknown as
           | { removeListener: (e: string, f: (...a: unknown[]) => void) => void }
           | null
-      )?.removeListener(event, fn);
+      )?.removeListener(event, fn as (...a: unknown[]) => void);
     } catch {
       /* module pas chargé */
     }
@@ -117,8 +116,7 @@ export function stopAutoUpdater(): void {
 /** Wrap ipcMain.handle en trackant le channel pour le cleanup. */
 function registerIpcHandler(
   channel: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  handler: (...args: any[]) => Promise<unknown> | unknown
+  handler: (...args: never[]) => Promise<unknown> | unknown
 ): void {
   // Idempotent : retire un handler résiduel d'un setup précédent avant de
   // re-register (sinon Electron throw "Attempted to register a second handler").
@@ -127,7 +125,7 @@ function registerIpcHandler(
   } catch {
     /* pas enregistré, ok */
   }
-  ipcMain.handle(channel, handler);
+  ipcMain.handle(channel, handler as Parameters<typeof ipcMain.handle>[1]);
   registeredIpcChannels.push(channel);
 }
 
