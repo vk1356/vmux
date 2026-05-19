@@ -2,6 +2,7 @@ node_modules/
 out/
 dist/
 release/
+coverage/
 *.log
 # Binaires search-tools téléchargés par scripts/fetch-search-tools.ps1 — pas
 # committés (téléchargés on-demand avant `npm run release`). Le dossier reste
