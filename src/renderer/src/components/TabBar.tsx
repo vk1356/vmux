@@ -183,6 +183,7 @@ function TabBarImpl({ session, onShowShortcuts, detached = false }: Props): JSX.
 
           let label = pane.label || '';
           let icon: JSX.Element | null = null;
+          // eslint-disable-next-line no-useless-assignment -- if/else below always overwrites; initializer satisfies TypeScript definite-assignment
           let dotClass = 'idle';
           if (pane.kind === 'terminal') {
             const term = pane as TerminalPane;

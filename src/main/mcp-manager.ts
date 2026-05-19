@@ -81,7 +81,7 @@ async function readConfig(): Promise<ClaudeConfigShape> {
       // une liste vide mais ne pourra pas écrire (le prochain writeConfig ne
       // sera jamais appelé tant qu'on ne récupère pas un objet valide).
       log.error('[mcp] config parse failed, refusing to clobber existing file', parseErr);
-      throw new Error('Claude config file is corrupted (invalid JSON). Fix or remove ~/.claude.json before using vMux MCP manager.');
+      throw new Error('Claude config file is corrupted (invalid JSON). Fix or remove ~/.claude.json before using vMux MCP manager.', { cause: parseErr });
     }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return parsed as ClaudeConfigShape;
@@ -238,7 +238,7 @@ export async function listServers(): Promise<McpServer[]> {
 function validateServer(s: McpServer): void {
   if (!s.name || typeof s.name !== 'string') throw new Error('Server name required');
   if (s.name.length > 80) throw new Error('Server name too long (max 80 chars)');
-  if (!/^[a-zA-Z0-9_.@\-]{1,80}$/.test(s.name)) {
+  if (!/^[a-zA-Z0-9_.@-]{1,80}$/.test(s.name)) {
     throw new Error('Invalid server name (use letters, digits, ._-@, max 80 chars)');
   }
   if (s.name === '__proto__' || s.name === 'constructor' || s.name === 'prototype') {

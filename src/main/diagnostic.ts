@@ -109,6 +109,7 @@ export async function generateDiagnostic(): Promise<DiagnosticReport> {
 
   // Lit les dernières lignes du log (capées à 512 KB + 200 lignes) en scrubbant
   // les patterns de secrets (tokens API, paths absolus, etc.).
+  // eslint-disable-next-line no-useless-assignment -- initializer makes TypeScript control-flow happy; both branches of try/catch overwrite it
   let recentLogs = '';
   try {
     const logPath = log.transports.file.getFile().path;

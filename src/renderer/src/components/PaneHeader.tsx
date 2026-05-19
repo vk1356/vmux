@@ -26,6 +26,7 @@ function PaneHeaderImpl({ sessionId, pane, active, accent }: Props): JSX.Element
   const attention = useSessionStore((s) => s.paneActivity[pane.id] ?? 'idle');
   const t = useT();
   let label = pane.label || '';
+  // eslint-disable-next-line no-useless-assignment -- if/else below always overwrites; initializer satisfies TypeScript definite-assignment
   let dotClass = 'idle';
   let icon: JSX.Element;
   let isRunningTerm = false;

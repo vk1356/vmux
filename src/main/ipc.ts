@@ -131,6 +131,7 @@ function isHttpUrl(u: unknown): u is string {
   if (typeof u !== 'string' || u.length === 0 || u.length > MAX_STRING_LEN) return false;
   if (!/^https?:\/\//i.test(u)) return false;
   // Refuse les NUL et autres ctrl chars qui peuvent masquer le scheme.
+  // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(u)) return false;
   try {
     // URL parser valide la structure (host non vide, port valide…). Sans ça,
@@ -177,7 +178,7 @@ function isValidMcpServer(s: unknown): s is McpServer {
   if (!s || typeof s !== 'object') return false;
   const o = s as Record<string, unknown>;
   if (typeof o.name !== 'string' || o.name.length === 0 || o.name.length > 80) return false;
-  if (o.name.indexOf('\0') !== -1 || /[\/\\]/.test(o.name)) return false;
+  if (o.name.indexOf('\0') !== -1 || /[/\\]/.test(o.name)) return false;
   if (o.type !== 'stdio' && o.type !== 'http' && o.type !== 'sse') return false;
   if (o.command !== undefined) {
     if (typeof o.command !== 'string' || o.command.length > 2048) return false;

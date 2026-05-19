@@ -431,7 +431,6 @@ function PreviewPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Eleme
       </div>
 
       <div className="preview-host" aria-busy={loading || undefined}>
-        {/* eslint-disable-next-line react/no-unknown-property */}
         {visible &&
           React.createElement<WebviewProps>('webview', {
             ref: (el: HTMLElement | null) => {
