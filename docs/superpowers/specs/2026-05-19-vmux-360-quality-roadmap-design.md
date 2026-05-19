@@ -15,9 +15,9 @@ typecheck + tests green + app boots.
 | Decision | Choice |
 |---|---|
 | Scope | Full 360° quality audit (deps, type-safety, architecture, tests, perf/a11y) |
-| Version risk | Stable-latest only — zero pre-release in production |
+| Version risk | Stable-latest only — zero pre-release **in production runtime** |
 | Execution | Phased roadmap (5 phases), one concern at a time |
-| electron-vite | Downgrade `^6.0.0-beta.1` → `5.0.0` stable |
+| electron-vite | **REVISED (2026-05-19):** stays `^6.0.0-beta.1`. No stable electron-vite supports Vite 8 (`5.0.0` peer = `vite ^5‖^6‖^7`); the only Vite-8-compatible release is the 6.x beta. electron-vite is a **build-time devDependency, never shipped in the production app bundle**. Decision (user-approved): keep the beta as a single documented, justified exception rather than regress Vite 8 + @vitejs/plugin-react 6 (true latest stable runtime tooling). Re-evaluate when electron-vite 6.0.0 stable ships. |
 
 ## Baseline (measured 2026-05-19)
 
@@ -73,6 +73,12 @@ changes (unless separately requested), unrelated refactoring.
 count documented and minimized.
 
 ## Phase 2 — Dependencies → stable-latest
+
+**Phase 2: COMPLETE (2026-05-19).** Verified end state:
+- 10 patch/minor bumps applied to latest stable: electron 42.1.0, vite 8.0.13, eslint 10.4.0, typescript-eslint 8.59.4, electron-log 5.4.4, vitest+@vitest/coverage-v8 4.1.6, @vitejs/plugin-react 6.0.2, lucide-react 1.16.0, @types/node 25.9.0. All other deps already at latest stable.
+- **electron-vite: documented exception** — stays `^6.0.0-beta.1`. No stable electron-vite supports Vite 8 (see revised locked decision). It is a build-time devDependency, absent from the shipped production bundle. This is the ONLY pre-release and is a reasoned carve-out, not a defect.
+- Production runtime dependencies: zero pre-release.
+- Gates: typecheck ✅ · lint ✅ 0 errors · tests ✅ 129/11 · build ✅.
 
 1. Re-verify every target version against the npm registry at execution time
    (registry is source of truth — never training memory).
