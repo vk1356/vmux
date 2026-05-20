@@ -167,4 +167,101 @@ describe('PaneDataBuffer (byte mode)', () => {
     vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
     expect(seen).toHaveLength(0);
   });
+
+  // ---- Phase 3 — adaptive flush ----
+
+  it('first push for a pane goes through the timer, not the adaptive path', () => {
+    const buf = new PaneDataBuffer();
+    const seen: string[] = [];
+    buf.on('flush', (_p, combined) => seen.push(decode(combined)));
+    buf.push('p', u8('X'));
+    // No synchronous flush — first-ever push for the pane stays timer-driven
+    // so a shell's boot output (which arrives in one initial chunk per pane)
+    // doesn't dispatch a tiny flush before the rest of the burst lands.
+    expect(seen).toHaveLength(0);
+    vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
+    expect(seen).toEqual(['X']);
+    expect(buf.lastFlushReason).toBe('coalesced');
+  });
+
+  it('tiny push after > SILENCE_WINDOW_MS of silence flushes immediately', () => {
+    const buf = new PaneDataBuffer();
+    const seen: string[] = [];
+    buf.on('flush', (_p, combined) => seen.push(decode(combined)));
+
+    // Prime the pane with a first push (establishes lastActivityAt).
+    buf.push('p', u8('first'));
+    vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
+    expect(seen).toEqual(['first']);
+
+    // Silence > SILENCE_WINDOW_MS, then a keystroke-sized push — instant flush.
+    vi.advanceTimersByTime(PaneDataBuffer.SILENCE_WINDOW_MS + 5);
+    buf.push('p', u8('y'));
+    expect(seen).toEqual(['first', 'y']);
+    expect(buf.lastFlushReason).toBe('interactive');
+  });
+
+  it('large push (>= INTERACTIVE_THRESHOLD) coalesces via the timer even after silence', () => {
+    const buf = new PaneDataBuffer();
+    const seen: number[] = [];
+    buf.on('flush', (_p, combined) => seen.push(combined.byteLength));
+
+    // Prime + silence.
+    buf.push('p', u8('first'));
+    vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
+    vi.advanceTimersByTime(PaneDataBuffer.SILENCE_WINDOW_MS + 5);
+
+    // A 1 KiB push exceeds INTERACTIVE_THRESHOLD (512) → spew regime, coalesce.
+    buf.push('p', new Uint8Array(1024).fill(0x41));
+    expect(seen).toHaveLength(1); // only the prime flush so far
+    vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(1024);
+    expect(buf.lastFlushReason).toBe('coalesced');
+  });
+
+  it('back-to-back tiny pushes (no silence) coalesce into one timer flush', () => {
+    const buf = new PaneDataBuffer();
+    const seen: string[] = [];
+    buf.on('flush', (_p, combined) => seen.push(decode(combined)));
+
+    buf.push('p', u8('a'));
+    buf.push('p', u8('b'));
+    buf.push('p', u8('c'));
+    // All three are sub-threshold AND happen with silence=0 → timer path.
+    expect(seen).toHaveLength(0);
+    vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
+    expect(seen).toEqual(['abc']);
+  });
+
+  it('per-pane independence — silence on one pane does not affect the other', () => {
+    const buf = new PaneDataBuffer();
+    const seen: Array<[string, string]> = [];
+    buf.on('flush', (paneId, combined) => seen.push([paneId, decode(combined)]));
+
+    // Prime both panes.
+    buf.push('p1', u8('init1'));
+    buf.push('p2', u8('init2'));
+    vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
+    expect(seen).toHaveLength(2);
+
+    // Idle p1 only.
+    vi.advanceTimersByTime(PaneDataBuffer.SILENCE_WINDOW_MS + 5);
+    buf.push('p1', u8('k')); // interactive
+    expect(seen.at(-1)).toEqual(['p1', 'k']);
+    expect(buf.lastFlushReason).toBe('interactive');
+
+    // Push on p2 within its silence window — should not fire interactive
+    // (p2's lastActivityAt was just before the 55ms advance? actually the prime
+    // happened at the same tick as p1's prime; after the +55ms advance, p2 has
+    // silence ~55ms. Hmm — to keep this test focused, push something LARGE
+    // to force coalesce regardless of silence).
+    buf.push('p2', new Uint8Array(2048).fill(0x42));
+    // 2 KiB > threshold → coalesce, not interactive.
+    const lastIdx = seen.length - 1;
+    vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
+    expect(seen.length).toBeGreaterThan(lastIdx);
+    expect(seen.at(-1)?.[0]).toBe('p2');
+    expect(buf.lastFlushReason).toBe('coalesced');
+  });
 });

@@ -49,26 +49,26 @@ describe('PaneDataBuffer — perf bench harness', () => {
     buf.shutdown();
   });
 
-  // P3 (adaptive flush, Task 3.1) will introduce `lastFlushReason` on the
-  // buffer + an immediate flush path when (pending < INTERACTIVE_THRESHOLD &&
-  // silence > SILENCE_WINDOW_MS). Until then, a single small push after a long
-  // idle still pays the full 16ms timer — this assertion is skipped and
-  // re-enabled in Task 3.1.
-  it.skip('keystroke-echo: tiny push after silence flushes within one tick (P3)', () => {
+  it('keystroke-echo: tiny push after silence flushes within one tick (P3)', () => {
     const buf = new PaneDataBuffer();
-    let flushedAt: number | null = null;
+    const flushes: Array<{ at: number; reason: string }> = [];
     buf.on('flush', () => {
-      flushedAt = Date.now();
+      flushes.push({ at: Date.now(), reason: buf.lastFlushReason });
     });
 
+    // Establish prior activity so the adaptive-flush heuristic has a baseline
+    // (first-ever push for a pane is intentionally timer-driven — see code).
+    buf.push('p', new Uint8Array([0x58]));
+    vi.advanceTimersByTime(FLUSH_MS + 1); // drains via timer
+    expect(flushes.at(-1)?.reason).toBe('coalesced');
+
+    // Long silence, then a tiny push — must flush synchronously, no timer wait.
+    vi.advanceTimersByTime(200);
     const t0 = Date.now();
-    buf.push('p', new Uint8Array([0x58])); // 1 byte 'X' after a long quiet period
-    // P3 contract: synchronous flush, no timer wait.
-    expect(flushedAt).not.toBeNull();
-    expect((flushedAt as unknown as number) - t0).toBeLessThan(2);
-    // And the buffer would expose `lastFlushReason === 'interactive'` —
-    // referenced here as a string literal to avoid coupling to a not-yet-
-    // existent field. The real assertion goes in P3.
+    buf.push('p', new Uint8Array([0x59])); // 1 byte 'Y' after 200ms idle
+    const interactiveFlush = flushes.at(-1);
+    expect(interactiveFlush?.at).toBe(t0); // same fake-time tick → synchronous
+    expect(interactiveFlush?.reason).toBe('interactive');
 
     buf.shutdown();
   });

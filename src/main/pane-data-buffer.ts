@@ -9,6 +9,13 @@ type Events = {
   flush: [paneId: PaneId, combined: Uint8Array];
 };
 
+/** Cause d'un flush — utile pour benchs / debugging / instrumentation.
+ *  `interactive` : flush immédiat synchrone déclenché par la heuristique
+ *    Phase-3 (petit chunk après silence) → frappe→écho sans pénalité 16 ms.
+ *  `coalesced`   : flush via le timer 60 Hz — spew agent, débit prioritaire.
+ *  `manual`      : `buf.flush()` appelé explicitement (shutdown gracieux). */
+export type FlushReason = 'interactive' | 'coalesced' | 'manual';
+
 /**
  * Strip un tail d'échappement ANSI/VT orphelin qui peut apparaître en tête
  * d'un buffer après qu'un drop de chunks ait coupé une séquence CSI au milieu.
@@ -54,7 +61,15 @@ export class PaneDataBuffer extends EventEmitter {
   private buffers = new Map<PaneId, Uint8Array[]>();
   /** Octets accumulés par pane, pour appliquer le cap sans relancer byteLength. */
   private sizes = new Map<PaneId, number>();
+  /** Date.now() du dernier push par pane — sert au heuristique adaptive flush
+   *  Phase 3 (echo immédiat si petit chunk arrive après une longue silence). */
+  private lastActivityAt = new Map<PaneId, number>();
   private timer: NodeJS.Timeout | null = null;
+
+  /** Cause du dernier flush émis. Exposé pour les benchs/tests (l'API
+   *  fonctionnelle reste l'événement `flush`). Initialisé à 'coalesced' —
+   *  valeur neutre avant tout flush. */
+  lastFlushReason: FlushReason = 'coalesced';
 
   /** 60 Hz — aligné sur le refresh écran natif. xterm.js batche déjà ses
    *  writes en interne, donc descendre sous 16ms gaspille des cycles IPC sans
@@ -65,6 +80,14 @@ export class PaneDataBuffer extends EventEmitter {
    *  brut d'un agent bavard. Au-delà, on droppe les chunks de tête (un terminal
    *  ne s'intéresse qu'à la tail). */
   static readonly MAX_PANE_BYTES = 4 * 1024 * 1024;
+
+  /** Adaptive flush — Phase 3 : un petit chunk (< THRESHOLD) qui arrive après
+   *  > SILENCE_WINDOW_MS de silence est flushé IMMÉDIATEMENT et synchroniquement
+   *  au lieu d'attendre le tick 16 ms. Profil cible : keystroke→echo. Pendant
+   *  le spew (chunks > 512 ou succession rapide), on reste sur le timer 60 Hz
+   *  pour bénéficier de la coalescence (débit prioritaire). */
+  static readonly INTERACTIVE_THRESHOLD = 512;
+  static readonly SILENCE_WINDOW_MS = 50;
 
   push(paneId: PaneId, data: Uint8Array): void {
     if (data.byteLength === 0) return;
@@ -113,27 +136,55 @@ export class PaneDataBuffer extends EventEmitter {
       this.sizes.set(paneId, total);
     }
 
+    // Adaptive flush (Phase 3) : un chunk < THRESHOLD après > SILENCE_WINDOW_MS
+    // de silence est flushé synchroniquement maintenant — l'écho clavier ne paie
+    // jamais le 16 ms du timer. Pendant un spew (chunks > 512 ou succession
+    // rapide), silence est court → on retombe sur la coalescence.
+    // La toute première push pour un pane (lastActivityAt absent) prend le
+    // chemin timer : pas de "silence préalable" à mesurer, et ça évite que
+    // les chunks de boot (output initial shell) ne déclenchent N flushs en
+    // série au lieu d'un seul.
+    const now = Date.now();
+    const hadActivity = this.lastActivityAt.has(paneId);
+    const lastAt = this.lastActivityAt.get(paneId) ?? now;
+    const silence = now - lastAt;
+    this.lastActivityAt.set(paneId, now);
+    const currentSize = this.sizes.get(paneId) ?? 0;
+    if (
+      hadActivity &&
+      currentSize < PaneDataBuffer.INTERACTIVE_THRESHOLD &&
+      silence > PaneDataBuffer.SILENCE_WINDOW_MS
+    ) {
+      this.flushPane(paneId, 'interactive');
+      return;
+    }
+
     if (this.timer === null) {
-      this.timer = setTimeout(() => this.flushAll(), PaneDataBuffer.FLUSH_INTERVAL_MS);
+      this.timer = setTimeout(() => this.flushAll('coalesced'), PaneDataBuffer.FLUSH_INTERVAL_MS);
     }
   }
 
-  private flushAll(): void {
+  /** Flush UN pane synchroniquement. Helper partagé par flushAll (boucle) et
+   *  par le chemin adaptive flush (echo immédiat). */
+  private flushPane(paneId: PaneId, reason: FlushReason): void {
+    const chunks = this.buffers.get(paneId);
+    if (!chunks || chunks.length === 0) return;
+    const combined = concatU8(chunks);
+    this.buffers.delete(paneId);
+    this.sizes.delete(paneId);
+    this.lastFlushReason = reason;
+    this.emit('flush', paneId, combined);
+  }
+
+  private flushAll(reason: FlushReason): void {
     this.timer = null;
     // Snapshot de la Map avant itération. emit() est synchrone — un listener
     // flush peut appeler push(), ajoutant de nouvelles entrées pour des panes
     // non encore visités. Sans snapshot, le for-of visiterait ces nouvelles
     // entrées dans la même tick, fusionnant pre-flush + post-flush dans un
     // unique message IPC envoyé out-of-order.
-    for (const [paneId, chunks] of Array.from(this.buffers)) {
-      if (chunks.length === 0) continue;
-      const combined = concatU8(chunks);
-      // Delete plutôt que set([], ...) : un pane churn rapide (ouverture/
-      // fermeture) ne laisse pas de slots vides dans la Map. push() lazily
-      // re-créera l'entrée à la prochaine arrivée de data.
-      this.buffers.delete(paneId);
-      this.sizes.delete(paneId);
-      this.emit('flush', paneId, combined);
+    for (const paneId of Array.from(this.buffers.keys())) {
+      this.flushPane(paneId, reason);
     }
   }
 
@@ -144,12 +195,13 @@ export class PaneDataBuffer extends EventEmitter {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    this.flushAll();
+    this.flushAll('manual');
   }
 
   delete(paneId: PaneId): void {
     this.buffers.delete(paneId);
     this.sizes.delete(paneId);
+    this.lastActivityAt.delete(paneId);
   }
 
   shutdown(): void {
@@ -159,6 +211,7 @@ export class PaneDataBuffer extends EventEmitter {
     }
     this.buffers.clear();
     this.sizes.clear();
+    this.lastActivityAt.clear();
     this.removeAllListeners();
   }
 

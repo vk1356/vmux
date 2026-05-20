@@ -48,3 +48,30 @@ latency wins are Phases 2–3 — not expected here.
 - pty-host CPU under spew:                 <fill>
 - Echo latency (quiet pane during spew):   <fill>  (expected: ~halved — one structured-clone hop removed)
 - Respawn recovery time (host kill→bytes): <fill>  (expected: <1 s)
+
+---
+
+# PTY Host Phase 3 — adaptive flush (keystroke→echo)
+
+## What shipped
+- `PaneDataBuffer` learns to distinguish interactive vs. spew:
+  - INTERACTIVE_THRESHOLD = 512 bytes
+  - SILENCE_WINDOW_MS = 50 ms
+  - A push of < 512 bytes that arrives > 50 ms after the previous push for
+    that pane is flushed **synchronously**, same tick — no 16 ms timer wait.
+  - A push during a burst (any size ≥ 512 OR < 50 ms since last push) stays
+    on the 60 Hz coalescing timer — throughput preserved.
+- New `lastFlushReason: 'interactive' | 'coalesced' | 'manual'` for instrumentation.
+- First-ever push for a pane intentionally takes the timer path (shell boot
+  output arrives as one chunk per pane; firing N interactive flushes on
+  init would be useless overhead).
+
+## Smoke checklist
+1. Type a single keystroke in an idle pane → echo should feel "no perceptible delay" (was: up to 16 ms tax even with the rest of Phase 2 in place).
+2. Run a spew loop while typing in a quiet pane — typing still snappy (Phase 2 already removed the IPC hop cost; Phase 3 removes the timer floor).
+3. Tail a large file (`cat huge.log`) — throughput unaffected (spew regime still coalesces).
+
+## Phase 3 measurements (record after manual smoke)
+- Echo latency (idle pane, single keystroke):  <fill>  (expected: ≪ 16 ms — one event-loop tick)
+- Echo latency under spew (quiet 4th pane):    <fill>  (expected: same as P2; spew regime unchanged)
+- Spew throughput regression check:            <fill>  (expected: none — coalescing tick unchanged)
