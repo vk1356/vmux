@@ -23,6 +23,7 @@ export function SettingsTerminal({ settings, apply }: Props): JSX.Element {
   const pasteRcId = useId();
   const webglId = useId();
   const webglPoolId = useId();
+  const zeroCopyId = useId();
 
   const scrollbackFormatted = useMemo(
     () => new Intl.NumberFormat(locale).format(settings.scrollback),
@@ -110,6 +111,18 @@ export function SettingsTerminal({ settings, apply }: Props): JSX.Element {
         />
         <span className="hint" style={{ marginLeft: 8 }}>
           {t('fieldWebglPoolSizeHint')}
+        </span>
+      </label>
+      <label className="checkbox-row" htmlFor={zeroCopyId}>
+        <input
+          id={zeroCopyId}
+          type="checkbox"
+          checked={settings.experimentalZeroCopyIpc === true}
+          onChange={(e) => void apply({ experimentalZeroCopyIpc: e.target.checked })}
+        />
+        {t('fieldZeroCopyIpc')}
+        <span className="hint" style={{ marginLeft: 8 }}>
+          {t('fieldZeroCopyIpcHint')}
         </span>
       </label>
     </>

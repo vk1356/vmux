@@ -64,6 +64,9 @@ const FR = {
   fieldWebglHint: "redémarre l'app pour appliquer",
   fieldWebglPoolSize: 'Taille du pool de contextes WebGL',
   fieldWebglPoolSizeHint: 'max contextes GPU (1–16, défaut 6) — les panes en plus passent en DOM',
+  fieldZeroCopyIpc: 'IPC PTY zero-copy (expérimental)',
+  fieldZeroCopyIpcHint:
+    'route les bytes PTY host→renderer en direct, en sautant le main process. Gros gain de perf sur agent qui spew. Redémarrage requis. Si ton terminal reste vide, désactive.',
   fieldNotifs: 'Notifications système Windows',
   fieldNotifsHint:
     "Reçois une notif push (avec icône vMux) quand un agent demande une action ou qu'un événement (build, server, tests) est détecté en arrière-plan.",

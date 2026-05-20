@@ -216,6 +216,13 @@ export interface AppSettings {
    *  proprement sur le renderer DOM au lieu de subir la perte de contexte.
    *  Default: 6. Borne pratique [1, 16]. Ignoré si webglRenderer:false. */
   webglPoolSize?: number;
+  /** Expérimental — route les bytes PTY directement host→renderer via un
+   *  MessageChannel zero-copy au lieu de passer par le main process. Élimine
+   *  un structured-clone par flush 60Hz (la taille moyenne d'un flush sous
+   *  spew agent peut atteindre 100KB+). Risque : si Electron drop les
+   *  ArrayBuffer transférés sur ta version, le terminal n'affiche plus rien
+   *  jusqu'à ce que tu désactives ce flag. Default: false. */
+  experimentalZeroCopyIpc?: boolean;
 }
 
 // ============================================================

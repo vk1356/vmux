@@ -125,7 +125,8 @@ export const ALLOWED_SETTINGS_KEYS = new Set<keyof AppSettings>([
   'sidebarWidth', 'previewToastEnabled', 'previewAutoOpen', 'notificationsEnabled',
   'notificationSound', 'notificationSoundPath', 'autoLaunch', 'previewDefaultSplit',
   'agentOverrides', 'onboardingCompleted', 'autoRestoreOnBoot',
-  'lastActiveSessionId', 'cdpEnabled', 'cdpPort', 'claudeCommandsEnabled'
+  'lastActiveSessionId', 'cdpEnabled', 'cdpPort', 'claudeCommandsEnabled',
+  'performanceMode', 'webglPoolSize', 'experimentalZeroCopyIpc'
 ]);
 
 export function sanitizeSettingsPatch(patch: unknown): Partial<AppSettings> {

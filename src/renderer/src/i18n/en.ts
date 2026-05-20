@@ -70,6 +70,9 @@ export const EN = {
   fieldWebglHint: 'restart the app to apply',
   fieldWebglPoolSize: 'WebGL context pool size',
   fieldWebglPoolSizeHint: 'max GPU contexts (1–16, default 6) — extra panes fall back to DOM',
+  fieldZeroCopyIpc: 'Zero-copy PTY IPC (experimental)',
+  fieldZeroCopyIpcHint:
+    'route PTY bytes host→renderer directly, skipping the main process. Big perf win on heavy agent output. Restart required. If your terminal stays empty, disable this.',
 
   // Settings → Notifications
   fieldNotifs: 'Windows system notifications',

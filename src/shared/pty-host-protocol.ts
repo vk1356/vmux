@@ -69,9 +69,11 @@ export function isHostReply(v: unknown): v is HostReply {
  *  can't travel inside a HostRequest/Reply structured-clone payload. The port
  *  itself goes via the `transfer` array of `postMessage(msg, [port])`; this
  *  envelope just declares "the next port you receive is the pane-data channel".
- *  Phase 2: only `attachDataPort` exists. */
+ *  `useDirectPort` opts in to the zero-copy path : the host posts paneData
+ *  frames directly through this port instead of via parentPort → main → IPC.
+ *  When false (or absent), the port is accepted but not used for traffic. */
 export type HostControl =
-  | { readonly kind: 'attachDataPort' };
+  | { readonly kind: 'attachDataPort'; readonly useDirectPort?: boolean };
 
 export function isHostControl(v: unknown): v is HostControl {
   return (

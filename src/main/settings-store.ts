@@ -48,7 +48,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastActiveSessionId: null,
   cdpEnabled: true,
   cdpPort: 9222,
-  claudeCommandsEnabled: true
+  claudeCommandsEnabled: true,
+  experimentalZeroCopyIpc: false
 };
 
 const DEFAULT_WINDOW_STATE: WindowState = {

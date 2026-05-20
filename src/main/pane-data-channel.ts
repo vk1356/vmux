@@ -20,6 +20,7 @@
 import { BrowserWindow, MessageChannelMain } from 'electron';
 import log from 'electron-log/main';
 import { IPC } from '@shared/types';
+import { getSettings } from './settings-store';
 import type { PtyHostSupervisor } from './pty-host-supervisor';
 
 interface ChannelEntry {
@@ -43,9 +44,15 @@ export class PaneDataChannelManager {
     this.entries.push({ win, channel });
 
     // Host side: hand port1 to the PTY Host now (utilityProcess is already
-    // forked at this point — bootPtyHost runs before window creation).
+    // forked at this point — bootPtyHost runs before window creation). The
+    // `useDirectPort` flag tells the host whether to actually route paneData
+    // through this port (zero-copy path) or to keep using parentPort routing.
+    const useDirectPort = getSettings().experimentalZeroCopyIpc === true;
     try {
-      this.supervisor.sendWithPorts({ kind: 'attachDataPort' }, [channel.port1]);
+      this.supervisor.sendWithPorts(
+        { kind: 'attachDataPort', useDirectPort },
+        [channel.port1]
+      );
     } catch (err) {
       log.error('[pane-data-channel] sendWithPorts failed', err);
     }

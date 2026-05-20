@@ -1,22 +1,32 @@
 // Runs inside an Electron utilityProcess. Owns the single PtyManager instance
 // (node-pty + PaneDataBuffer + all analysis). Bridges parentPort <-> manager:
-//   inbound  HostRequest                              -> manager method call -> HostReply
-//   inbound  HostControl(attachDataPort) + ports[0]   -> released (Phase-2 dormant)
-//   manager  paneData event                           -> parentPort post (structured-clone Uint8Array)
-//   manager  other meta events                        -> parentPort post
+//   inbound  HostRequest                                       -> manager method call -> HostReply
+//   inbound  HostControl(attachDataPort, useDirectPort:false)  -> port released
+//   inbound  HostControl(attachDataPort, useDirectPort:true)   -> port retained for paneData broadcast
+//   manager  paneData event                                    -> direct port frame (if any) OR parentPort
+//   manager  other meta events                                 -> parentPort post
 //
-// Why paneData also goes through parentPort: the Phase-2 MessagePortMain
-// transport silently dropped ArrayBuffer messages on Electron 42 utilityProcess
-// in our setup. Until we identify the right message shape (Buffer? wrapped
-// typed-array?), all paneData traffic flows via the proven structured-clone
-// IPC path — one v8 context crossing per 60Hz flush, still well below the cost
-// of any analysis work which all happens here off the main thread.
+// Zero-copy path (opt-in via settings.experimentalZeroCopyIpc):
+//   When direct ports are attached, paneData frames are posted directly to
+//   each renderer's MessagePortMain with the underlying ArrayBuffer in the
+//   transfer list — zero copy, the bytes never touch main process v8. Saves
+//   one structured-clone hop per 60Hz flush. Fallback to parentPort is
+//   automatic when no direct port is alive (initial boot, window closed,
+//   or feature flag disabled).
 import { createPtyManager } from '../pty-manager';
+import { encodeFrame } from '@shared/pane-data-frame';
 import {
   isHostRequest, isHostControl, type HostEvent, type HostReply
 } from '@shared/pty-host-protocol';
 
 const port = process.parentPort;
+
+/** Ports retenus pour le zero-copy path. Chaque fenêtre qui opt-in
+ *  (`useDirectPort: true`) ajoute son port ici. Le broadcast `paneData`
+ *  diffuse à tous les ports vivants — les renderers filtrent par subscriber
+ *  (cf. paneDataBus). Quand un port émet 'close' (entanglement rompue par
+ *  fermeture de window), on le retire de la liste. */
+const directPorts: Electron.MessagePortMain[] = [];
 
 /** Best-effort: try to post a message; swallow any throw so a dead/closed
  *  parentPort cannot kill the host via a rethrown EventEmitter error. */
@@ -92,9 +102,30 @@ safeOn<[string, Uint8Array]>(mgr, 'paneData', (paneId, data) => {
     safePost({
       kind: 'hostError',
       where: 'paneData:first',
-      message: `received ${data.byteLength}B for ${paneId}`
+      message: `received ${data.byteLength}B for ${paneId} (directPorts=${directPorts.length})`
     });
   }
+  // Direct-port fast path : broadcast to all attached renderer ports.
+  // The frame is a contiguous ArrayBuffer (encodeFrame). MessagePortMain
+  // doesn't expose ArrayBuffer transfer in its TypeScript surface (Electron
+  // 42), so we send via structured-clone — bytes are copied once host→renderer
+  // instead of twice (host→main + main→renderer). One v8 hop saved per flush
+  // is still a real win for spew workloads. If true zero-copy becomes
+  // available in a future Electron, swap to `postMessage(frame, [frame])`.
+  if (directPorts.length > 0) {
+    let posted = 0;
+    for (const p of directPorts) {
+      try {
+        const frame = encodeFrame(paneId, data);
+        p.postMessage(frame);
+        posted++;
+      } catch {
+        /* port dead — will be GC'd via 'close' handler */
+      }
+    }
+    if (posted > 0) return;
+  }
+  // Fallback : parentPort route. Always works (proven structured-clone path).
   post({ kind: 'paneData', paneId, data });
 });
 
@@ -117,14 +148,32 @@ safeOn(mgr, 'paneAgentState', (paneId, state) =>
 port.on('message', (e) => {
   const msg = e.data;
 
-  // Control: attach a renderer data port. Phase-2 dormant — we accept the port
-  // so pane-data-channel's wiring stays sound, but release it immediately
-  // (paneData currently flows via parentPort, not via this port). The infra in
-  // pane-data-channel.ts/preload remains active so re-enabling is a one-line
-  // change to the `mgr.on('paneData', …)` binding below.
+  // Control: attach a renderer data port.
+  //   useDirectPort:true  → keep the port and broadcast paneData frames on it
+  //                          (zero-copy path, opt-in via settings).
+  //   useDirectPort:false → release immediately (legacy path, parentPort only).
   if (isHostControl(msg) && msg.kind === 'attachDataPort') {
     const [p] = e.ports ?? [];
-    if (p) {
+    if (!p) return;
+    if (msg.useDirectPort === true) {
+      directPorts.push(p);
+      // Le 'close' est émis quand le port distant ferme (window fermée OU
+      // renderer GC). On le retire du broadcast pour qu'un postMessage ne
+      // jette pas silencieusement à chaque flush. start() est requis car
+      // sinon le port reste paused et postMessage n'est jamais délivré
+      // (Electron MessagePortMain est synchronously en pause au transfer).
+      const off = (): void => {
+        const idx = directPorts.indexOf(p);
+        if (idx >= 0) directPorts.splice(idx, 1);
+      };
+      try { p.on('close', off); } catch { /* ignore */ }
+      try { p.start(); } catch { /* already started */ }
+      safePost({
+        kind: 'hostError',
+        where: 'attachDataPort',
+        message: `direct port attached (total=${directPorts.length})`
+      });
+    } else {
       try { p.close(); } catch { /* already closed */ }
     }
     return;

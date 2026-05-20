@@ -4,6 +4,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('electron-log/main', () => ({
   default: { error: vi.fn(), warn: vi.fn(), info: vi.fn() }
 }));
+vi.mock('../settings-store', () => ({
+  getSettings: () => ({ experimentalZeroCopyIpc: false })
+}));
 
 let chanCount = 0;
 function makeFakeChannel(): { port1: object; port2: object } {
@@ -78,7 +81,7 @@ describe('PaneDataChannelManager', () => {
     // port1 went to host.
     expect(sup.sendWithPorts).toHaveBeenCalledTimes(1);
     const [msg, transfer] = sup.sendWithPorts.mock.calls[0];
-    expect(msg).toEqual({ kind: 'attachDataPort' });
+    expect(msg).toEqual({ kind: 'attachDataPort', useDirectPort: false });
     expect((transfer as object[])[0]).toMatchObject({ __port1: expect.any(Number) });
 
     // port2 went straight to renderer (not loading).
