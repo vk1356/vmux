@@ -699,10 +699,20 @@ class PtyManager extends EventEmitter {
     // Le dossier peut être absent si l'user n'a pas lancé `npm run fetch-tools`
     // avant la build — dans ce cas no-op silencieux.
     if (process.platform === 'win32') {
-      const bundledBin = app.isPackaged
+      // Garde défensive sur `app` : selon le contexte d'évaluation (interop
+      // ESM↔CJS sous electron-vite 6 beta, HMR du main), l'import nommé peut
+      // ne pas être résolu à l'instant T alors qu'il l'était au boot. On
+      // no-op alors plutôt que de crasher la création de session — même
+      // comportement que si le dossier bin était absent (build sans
+      // `npm run fetch-tools`).
+      const isPackaged = app?.isPackaged === true;
+      const appPath = !isPackaged ? app?.getAppPath?.() : undefined;
+      const bundledBin = isPackaged
         ? path.join(process.resourcesPath, 'bin')
-        : path.join(app.getAppPath(), 'build', 'bin-win');
-      if (existsSync(bundledBin)) {
+        : appPath
+          ? path.join(appPath, 'build', 'bin-win')
+          : undefined;
+      if (bundledBin && existsSync(bundledBin)) {
         const sep = ';'; // win32 PATH separator
         const curPath = env.Path ?? env.PATH ?? '';
         // On utilise `Path` (mixed-case) car c'est ce que ConPTY/cmd voient ;
