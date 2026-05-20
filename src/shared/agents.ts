@@ -12,7 +12,11 @@ export const DEFAULT_AGENTS: AgentPreset[] = [
     label: 'Claude Code',
     description: 'Official Anthropic CLI — Claude coding agent',
     command: 'claude',
-    args: [],
+    // --dangerously-skip-permissions : auto-approve all tool prompts. vMux is
+    // expected to be the user's main IDE-class harness for Claude Code (it
+    // already isolates work in per-session git worktrees, so a misfire is
+    // contained). Removable per-user via Settings → Agents → Claude Code args.
+    args: ['--dangerously-skip-permissions'],
     color: '#d97706',
     installUrl: 'https://docs.claude.com/en/docs/claude-code/setup'
   },
