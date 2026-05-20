@@ -14,6 +14,7 @@
 // couche RAF ici ajouterait de la latence keystroke→echo sans bénéfice.
 
 import type { PaneId } from '@shared/types';
+import { concatU8 } from '@shared/utils';
 
 type Handler = (data: Uint8Array) => void;
 
@@ -32,25 +33,40 @@ const subscriptions = new Map<PaneId, Subscription>();
  *  Cap par BYTES (pas par chunks) — un seul gros chunk peut faire MB. */
 const pending = new Map<PaneId, { chunks: Uint8Array[]; bytes: number }>();
 
-/** Concat in-place d'un array de Uint8Array en une seule Uint8Array. Évite
- *  le coût d'un .join('') string-based qui passerait par UTF-16. */
-function concatChunks(chunks: Uint8Array[]): Uint8Array {
-  if (chunks.length === 1) return chunks[0];
-  let total = 0;
-  for (const c of chunks) total += c.byteLength;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.byteLength;
-  }
-  return out;
-}
-
 /** Cap mémoire global du pending par pane. 256 KB est généreux : le pending
  *  ne sert qu'à couvrir la fenêtre entre un restart PTY (côté main) et le
  *  premier mount du <TerminalPane> côté renderer — typiquement < 50 ms. */
 const PENDING_MAX_BYTES = 256 * 1024;
+
+/** Ring d'octets retenus par pane — perf phase 4. Conserve les chunks
+ *  délivrés/queued pour permettre un "replay" complet quand un Terminal
+ *  hidden > 30 s est dispose() puis re-mount (virtualization). Le ring est
+ *  capé en octets ; au-delà on droppe la tête sur frontière de chunk et on
+ *  marque `truncated` — le snapshot suivant préfixera un reset xterm (`\x1bc`)
+ *  pour que la re-attache parte d'un état propre au lieu de rendre du
+ *  garbage mid-stream. */
+const retained = new Map<PaneId, { chunks: Uint8Array[]; bytes: number; truncated: boolean }>();
+const RETAIN_CAP_BYTES = 2 * 1024 * 1024;
+
+function teeRetained(paneId: PaneId, data: Uint8Array): void {
+  let buf = retained.get(paneId);
+  if (!buf) {
+    buf = { chunks: [], bytes: 0, truncated: false };
+    retained.set(paneId, buf);
+  }
+  buf.chunks.push(data);
+  buf.bytes += data.byteLength;
+  // Drop on chunk boundaries (preserves ANSI state across the cut where
+  // possible — never mid-sequence). The reset prefix in snapshotRetained
+  // covers the resulting parser-state gap.
+  while (buf.bytes > RETAIN_CAP_BYTES && buf.chunks.length > 1) {
+    const dropped = buf.chunks.shift();
+    if (dropped !== undefined) {
+      buf.bytes -= dropped.byteLength;
+      buf.truncated = true;
+    }
+  }
+}
 
 let installed = false;
 let unsubIpc: (() => void) | null = null;
@@ -70,7 +86,7 @@ if (typeof document !== 'undefined') {
         if (!sub || buf.chunks.length === 0) continue;
         pending.delete(paneId);
         // Concat unique : un seul write xterm — moins de WriteBuffer enqueue.
-        sub.handler(concatChunks(buf.chunks));
+        sub.handler(concatU8(buf.chunks));
       }
     }
   });
@@ -80,6 +96,12 @@ function ensureInstalled(): void {
   if (installed) return;
   installed = true;
   unsubIpc = window.cmux.panes.onData((paneId, data) => {
+    // Tee to the retained ring on EVERY chunk (delivered live OR queued in
+    // pending). The retained ring is the single source of truth for
+    // virtualization replay — survives Terminal.dispose() because it lives
+    // outside the React component.
+    teeRetained(paneId, data);
+
     const sub = subscriptions.get(paneId);
     // Si fenêtre masquée, on bypass le handler et accumule. xterm.write() coûte
     // ~5-50µs/chunk même invisible (parser ANSI, WriteBuffer). Sur 100 panes
@@ -103,6 +125,23 @@ function ensureInstalled(): void {
       if (dropped !== undefined) buf.bytes -= dropped.byteLength;
     }
   });
+}
+
+/** Snapshot the retained byte ring for a pane — used by virtualization to
+ *  replay state into a freshly re-instantiated Terminal after a hidden-pane
+ *  dispose. When the ring is truncated (cap hit, head dropped), prefix a
+ *  full-reset sequence (`\x1bc` = RIS) so xterm restarts its parser cleanly
+ *  instead of rendering whatever ANSI state would be implied by the tail. */
+export function snapshotRetained(paneId: PaneId): Uint8Array | null {
+  const buf = retained.get(paneId);
+  if (!buf || buf.chunks.length === 0) return null;
+  const body = concatU8(buf.chunks);
+  if (!buf.truncated) return body;
+  const reset = new Uint8Array([0x1b, 0x63]); // ESC c — full terminal reset
+  const out = new Uint8Array(reset.byteLength + body.byteLength);
+  out.set(reset, 0);
+  out.set(body, reset.byteLength);
+  return out;
 }
 
 /** S'abonne aux chunks pour un pane. Retourne la fonction de désinscription
@@ -142,6 +181,7 @@ export function subscribePaneData(paneId: PaneId, handler: Handler): () => void 
 export function clearPaneData(paneId: PaneId): void {
   pending.delete(paneId);
   subscriptions.delete(paneId);
+  retained.delete(paneId);
 }
 
 /** Diagnostic — peut être appelé depuis la devtools si besoin. */
@@ -149,10 +189,20 @@ export function _paneDataBusStats(): {
   handlers: number;
   pending: number;
   pendingBytes: number;
+  retained: number;
+  retainedBytes: number;
 } {
   let pendingBytes = 0;
   for (const buf of pending.values()) pendingBytes += buf.bytes;
-  return { handlers: subscriptions.size, pending: pending.size, pendingBytes };
+  let retainedBytes = 0;
+  for (const buf of retained.values()) retainedBytes += buf.bytes;
+  return {
+    handlers: subscriptions.size,
+    pending: pending.size,
+    pendingBytes,
+    retained: retained.size,
+    retainedBytes
+  };
 }
 
 /** Cleanup global (HMR / unload). */
@@ -162,6 +212,7 @@ export function teardownPaneDataBus(): void {
   installed = false;
   subscriptions.clear();
   pending.clear();
+  retained.clear();
 }
 
 // HMR : sans dispose hook, le module re-évalué laisserait l'ancien listener IPC

@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
+import { createPaneDataDispatcher } from './pane-data-port';
 import {
   IPC,
   type AgentAvailability,
@@ -55,6 +56,30 @@ function subscribe<Args extends readonly unknown[]>(
     ipcRenderer.off(channel, listener);
   };
 }
+
+// ----- PTY data port (zero-copy MessagePort transport) ----------------------
+// Main hands this preload a fresh MessagePort each time a window is wired or
+// the PTY Host is respawned (channel rebuild). We swap the port's onmessage
+// to the same dispatcher so subscribers ride through respawn transparently.
+const paneDataDispatcher = createPaneDataDispatcher();
+let currentDataPort: MessagePort | null = null;
+ipcRenderer.on(IPC.paneDataPort, (event) => {
+  const port = event.ports[0];
+  if (!port) return;
+  // Detach the previous port so its in-flight messages can be GC'd; the new
+  // port from main supersedes it.
+  if (currentDataPort) {
+    try { currentDataPort.onmessage = null; } catch { /* dead port */ }
+    try { currentDataPort.close(); } catch { /* already closed */ }
+  }
+  currentDataPort = port;
+  port.onmessage = (e: MessageEvent): void => {
+    // The host transferred an ArrayBuffer; the renderer receives the same
+    // memory as a new ArrayBuffer (zero-copy). Decode + fan out.
+    paneDataDispatcher.dispatch(e.data as ArrayBuffer);
+  };
+  port.start();
+});
 
 const api = {
   window: {
@@ -142,8 +167,12 @@ const api = {
       ipcRenderer.send(IPC.paneResize, paneId, size);
     },
 
+    /** PTY data — receives bytes over the zero-copy MessagePort transport
+     *  (set up at module load above). Surface unchanged: callback signature
+     *  identical to the previous IPC.paneData subscribe, so paneDataBus.ts
+     *  and TerminalPane.tsx don't change. */
     onData: (cb: (paneId: PaneId, data: Uint8Array) => void): Unsubscribe =>
-      subscribe<[PaneId, Uint8Array]>(IPC.paneData, cb),
+      paneDataDispatcher.subscribe(cb),
     onStatus: (
       cb: (sessionId: string, paneId: PaneId, pane: TerminalPane) => void
     ): Unsubscribe => subscribe<[string, PaneId, TerminalPane]>(IPC.paneStatus, cb),

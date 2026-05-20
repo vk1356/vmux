@@ -13,7 +13,7 @@ import {
   type SystemStatsSample
 } from '@shared/types';
 import { DEFAULT_AGENTS } from '@shared/agents';
-import { ptyManager } from './pty-manager';
+import { ptyManager } from './pty-host-client-singleton';
 import { ptyStats } from './pty-stats';
 import { inspectRepo, listWorktrees } from './worktree-manager';
 import {
@@ -276,6 +276,12 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     const win = createDetachedWindow(sessionId);
     detachedWindows.set(sessionId, win);
     registerTrustedWindow(win);
+    // Wire the zero-copy PTY data channel for this detached window too —
+    // its renderer needs the same `window.cmux.panes.onData` surface that
+    // the main window has, served by a dedicated MessageChannelMain.
+    void import('./pty-host-client-singleton').then(({ getPaneDataChannelManager }) => {
+      getPaneDataChannelManager()?.attachWindow(win);
+    });
     win.on('closed', () => {
       // Nettoie la map seulement si l'entrée pointe encore sur cette window
       // (au cas où une race aurait déjà ré-attribué la slot).
@@ -414,9 +420,10 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   // cas où la webContents est destroyed.
   // ============================================================
 
-  ptyManager.on('paneData', (paneId, data) => {
-    sendForPane(paneId, IPC.paneData, paneId, data);
-  });
+  // NOTE: paneData no longer crosses the main thread. PTY bytes flow from the
+  // PTY Host straight to the renderer via the transferred MessagePortMain (set
+  // up per-window in pane-data-channel.ts). sendForPane(paneId, IPC.paneData)
+  // is intentionally NOT re-registered — zero-copy is the whole point.
   ptyManager.on('paneStatus', (sessionId, paneId, pane) => {
     sendForSession(sessionId, IPC.paneStatus, sessionId, paneId, pane);
   });

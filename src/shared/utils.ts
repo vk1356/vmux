@@ -54,3 +54,22 @@ export function hostFromUrl(url: string): string {
     return url.slice(0, 24);
   }
 }
+
+/** Concatène N Uint8Array en une seule allocation. Plus rapide qu'un decode →
+ *  string.join('') → encode car évite le round-trip UTF-16. Fast path zéro-copie
+ *  pour un seul chunk : retourne la même référence (callers ne mutent pas).
+ *  Utilisé sur le hot path PTY : paneDataBus (flush pending), TerminalPane
+ *  (replay visibility), PaneDataBuffer (flush byte-mode, perf phase 2). */
+export function concatU8(chunks: readonly Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) return new Uint8Array(0);
+  if (chunks.length === 1) return chunks[0];
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
+}

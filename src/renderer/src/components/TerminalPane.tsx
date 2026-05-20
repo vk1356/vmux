@@ -19,8 +19,10 @@ import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { Play } from 'lucide-react';
 import type { TerminalPane as TerminalPaneT } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
+import { concatU8 } from '@shared/utils';
 import { useSessionStore } from '../store/sessions';
 import { subscribePaneData } from '../store/paneDataBus';
+import { webglPool, type WebglSlotHandle } from '../store/webglContextPool';
 import { useT } from '../i18n';
 import { TerminalSearchBar } from './TerminalSearchBar';
 
@@ -100,21 +102,6 @@ const HIDDEN_TRIM_AFTER_MS = 5_000;
 /** Limite des highlights search — décorateurs au-delà ferait stutter sur de gros buffers. */
 const SEARCH_HIGHLIGHT_LIMIT = 1000;
 
-/** Concatène N Uint8Array en une seule allocation. Plus rapide qu'un decode →
- *  string.join('') → encode car évite le round-trip UTF-16. */
-function concatU8(chunks: Uint8Array[]): Uint8Array {
-  if (chunks.length === 1) return chunks[0];
-  let total = 0;
-  for (const c of chunks) total += c.byteLength;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.byteLength;
-  }
-  return out;
-}
-
 function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Element {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -122,6 +109,11 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   const fitRef = useRef<FitAddon | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const webglRef = useRef<WebglAddon | null>(null);
+  /** Slot handle from the bounded WebGL renderer pool. When non-null, holds a
+   *  GPU context; when null, the pane uses xterm's default DOM renderer.
+   *  Releasing the slot disposes the addon AND frees the slot for the next
+   *  pane (which may have a requestUpgrade waiter pending). */
+  const webglSlotRef = useRef<WebglSlotHandle | null>(null);
   const ligaturesRef = useRef<LigaturesAddon | null>(null);
   /** Tous les IDisposable owned par ce pane (event handlers xterm). Disposed
    *  dans l'ordre inverse au unmount, AVANT `term.dispose()`. */
@@ -289,26 +281,29 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     term.open(hostRef.current);
 
     if (s.webglRenderer) {
-      try {
-        const webgl = new WebglAddon();
-        // ⚠️ context loss : dispose ligatures aussi (lié au renderer canvas/webgl).
-        const ctxLost = webgl.onContextLoss(() => {
-          try {
-            ligaturesRef.current?.dispose();
-          } catch {
-            /* ignore */
-          }
+      // Acquire a slot from the bounded pool — null when capacity is hit OR
+      // this pane is on a context-loss cooldown. Falling back to the DOM
+      // renderer (xterm's default after term.open) is graceful: terminal
+      // still works, just without GPU acceleration.
+      const pid = pane.id;
+      const slot = webglPool.acquire(pid, term, (t) => {
+        const w = new WebglAddon();
+        // Context loss: dispose ligatures (canvas-bound), release the slot
+        // with cooldown so the same pane can't immediately re-take the slot
+        // and re-trigger the loss. Pool re-acquire on next visibility/show.
+        w.onContextLoss(() => {
+          try { ligaturesRef.current?.dispose(); } catch { /* ignore */ }
           ligaturesRef.current = null;
-          try {
-            webgl.dispose();
-          } catch {
-            /* ignore */
-          }
+          try { webglSlotRef.current?.release({ cooldown: true }); } catch { /* idempotent */ }
+          webglSlotRef.current = null;
           webglRef.current = null;
         });
-        collected.push(ctxLost);
-        term.loadAddon(webgl);
-        webglRef.current = webgl;
+        t.loadAddon(w);
+        return w;
+      });
+      if (slot) {
+        webglSlotRef.current = slot;
+        webglRef.current = slot.addon as WebglAddon;
         // Lazy ligatures : seulement si la fonte choisie en supporte. Le perfMode
         // les désactive aussi quoi qu'il arrive (harfbuzz parse + shape par draw).
         if (!perfMode && fontSupportsLigatures(s.fontFamily)) {
@@ -320,8 +315,6 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
             console.warn('[term] LigaturesAddon load failed', err);
           }
         }
-      } catch (err) {
-        console.warn('[term] WebGL indisponible, fallback DOM', err);
       }
     }
 
@@ -556,26 +549,23 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
   useEffect(() => {
     const term = termRef.current;
     if (!term || !settings) return;
-    if (settings.webglRenderer && !webglRef.current) {
-      try {
-        const webgl = new WebglAddon();
-        const ctxLost = webgl.onContextLoss(() => {
-          try {
-            ligaturesRef.current?.dispose();
-          } catch {
-            /* ignore */
-          }
+    if (settings.webglRenderer && !webglSlotRef.current) {
+      const pid = pane.id;
+      const slot = webglPool.acquire(pid, term, (t) => {
+        const w = new WebglAddon();
+        w.onContextLoss(() => {
+          try { ligaturesRef.current?.dispose(); } catch { /* ignore */ }
           ligaturesRef.current = null;
-          try {
-            webgl.dispose();
-          } catch {
-            /* ignore */
-          }
+          try { webglSlotRef.current?.release({ cooldown: true }); } catch { /* idempotent */ }
+          webglSlotRef.current = null;
           webglRef.current = null;
         });
-        disposablesRef.current.push(ctxLost);
-        term.loadAddon(webgl);
-        webglRef.current = webgl;
+        t.loadAddon(w);
+        return w;
+      });
+      if (slot) {
+        webglSlotRef.current = slot;
+        webglRef.current = slot.addon as WebglAddon;
         try {
           const lig = new LigaturesAddon();
           term.loadAddon(lig);
@@ -583,10 +573,8 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         } catch (err) {
           console.warn('[term] LigaturesAddon load failed', err);
         }
-      } catch (err) {
-        console.warn('[term] WebGL enable failed', err);
       }
-    } else if (!settings.webglRenderer && webglRef.current) {
+    } else if (!settings.webglRenderer && webglSlotRef.current) {
       try {
         ligaturesRef.current?.dispose();
       } catch {
@@ -594,13 +582,80 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       }
       ligaturesRef.current = null;
       try {
-        webglRef.current.dispose();
+        webglSlotRef.current.release();
       } catch {
         /* ignore */
       }
+      webglSlotRef.current = null;
       webglRef.current = null;
     }
   }, [settings?.webglRenderer, settings]);
+
+  // Perf phase 4 — hidden-pane WebGL slot release.
+  //   Visible → hidden: drop the GPU context immediately (frees pool capacity
+  //     for the active session's panes — kills the >16-context cascade-loss
+  //     bug). xterm falls back to its DOM renderer until visibility returns.
+  //   Hidden → visible: re-acquire a slot if WebGL is enabled and the pool
+  //     has room. If full, register a one-shot upgrade waiter so we attach
+  //     WebGL the moment another pane releases.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !settings?.webglRenderer) return undefined;
+    const pid = pane.id;
+    if (!visible) {
+      if (webglSlotRef.current) {
+        try { ligaturesRef.current?.dispose(); } catch { /* ignore */ }
+        ligaturesRef.current = null;
+        try { webglSlotRef.current.release(); } catch { /* idempotent */ }
+        webglSlotRef.current = null;
+        webglRef.current = null;
+      }
+      return undefined;
+    }
+    // Visible: try to re-acquire if we don't have a slot already.
+    if (!webglSlotRef.current) {
+      const factory = (t: Terminal): import('@xterm/xterm').ITerminalAddon => {
+        const w = new WebglAddon();
+        w.onContextLoss(() => {
+          try { ligaturesRef.current?.dispose(); } catch { /* ignore */ }
+          ligaturesRef.current = null;
+          try { webglSlotRef.current?.release({ cooldown: true }); } catch { /* idempotent */ }
+          webglSlotRef.current = null;
+          webglRef.current = null;
+        });
+        t.loadAddon(w);
+        return w;
+      };
+      const slot = webglPool.acquire(pid, term, factory);
+      if (slot) {
+        webglSlotRef.current = slot;
+        webglRef.current = slot.addon as WebglAddon;
+      } else {
+        // Pool full or cooldown — wait for a slot to free, then retry.
+        const off = webglPool.requestUpgrade(pid, () => {
+          const t = termRef.current;
+          if (!t || webglSlotRef.current) return;
+          const s = webglPool.acquire(pid, t, factory);
+          if (s) {
+            webglSlotRef.current = s;
+            webglRef.current = s.addon as WebglAddon;
+          }
+        });
+        return () => off();
+      }
+    } else {
+      // Already holds a slot — refresh LRU recency.
+      webglPool.touch(pid);
+    }
+    return undefined;
+  }, [visible, pane.id, settings?.webglRenderer]);
+
+  // Live `webglPoolSize` — applies immediately (shrink evicts LRU, grow
+  // unblocks waiters via the pool's setSize implementation).
+  useEffect(() => {
+    if (!settings) return;
+    webglPool.setSize(settings.webglPoolSize ?? 6);
+  }, [settings?.webglPoolSize, settings]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // CLEANUP au démontage. Ordre critique :
@@ -639,11 +694,16 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
         /* ignore */
       }
       ligaturesRef.current = null;
+      // Release the pool slot — the handle's release() disposes the addon
+      // AND frees the slot capacity for the next pane (which may have a
+      // requestUpgrade waiter pending). Falls back gracefully if no slot
+      // was acquired (DOM-renderer pane).
       try {
-        webglRef.current?.dispose();
+        webglSlotRef.current?.release();
       } catch {
-        /* ignore */
+        /* idempotent */
       }
+      webglSlotRef.current = null;
       webglRef.current = null;
 
       try {

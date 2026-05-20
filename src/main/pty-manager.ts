@@ -73,6 +73,13 @@ interface ManagedPane {
   detectorBuf?: string;
   detectorRawBuf?: string;
   detectorTimer?: NodeJS.Timeout;
+  /** Streaming UTF-8 decoder for the analysis path. node-pty in Buffer mode
+   *  can deliver a chunk that ends mid-codepoint (e.g. a 2-byte UTF-8 letter
+   *  split across two reads); a non-streaming decoder would emit a replacement
+   *  char and a follow-up garbled char. {stream:true} buffers the incomplete
+   *  tail until the next chunk completes it. Bytes for xterm bypass this path
+   *  entirely (raw bytes via PaneDataBuffer → MessagePort). */
+  decoder?: TextDecoder;
 }
 
 interface ManagedSession {
@@ -95,7 +102,7 @@ type Events = {
   paneAgentState: [paneId: PaneId, state: AgentRunState];
 };
 
-class PtyManager extends EventEmitter {
+export class PtyManager extends EventEmitter {
   private sessions = new Map<string, ManagedSession>();
   /** Index inversé pane→session pour O(1) lookups dans writePane/resizePane (hot
    *  paths : fire à chaque keystroke / resize). Avant cet index, findSessionByPane
@@ -148,13 +155,13 @@ class PtyManager extends EventEmitter {
 
   constructor() {
     super();
-    // Forward des chunks agrégés du buffer vers les listeners IPC, en UTF-8
-    // binaire. Conversion unique par flush (60 Hz max) — l'IPC Electron passe
-    // alors un ArrayBuffer plus rapide qu'une string V8, et xterm.js parse
-    // un Uint8Array sans avoir à re-décoder l'UTF-16.
+    // Forward des chunks agrégés du buffer vers les listeners IPC. Le buffer
+    // travaille en byte-mode (perf phase 2) : `combined` est déjà un Uint8Array,
+    // zéro transcode UTF-16↔UTF-8 sur le hot path — l'IPC Electron passe un
+    // ArrayBuffer et xterm.js parse directement.
     this.dataBuffer.on('flush', (paneId, combined) => {
       if (this.isShuttingDown) return;
-      this.emit('paneData', paneId, this.encoder.encode(combined));
+      this.emit('paneData', paneId, combined);
     });
     // Filet de sécurité : sans ça, une exception dans un listener (renderer
     // crashé, etc.) cracherait le main process et tuerait *tous* les PTY.
@@ -744,9 +751,12 @@ class PtyManager extends EventEmitter {
         rows,
         cwd: pane.cwd,
         env,
-        // utf8 est le défaut de node-pty 1.1 mais on l'explicite — forward-compat
-        // si un futur major change le défaut, et clarifie l'intention.
-        encoding: 'utf8',
+        // Byte-mode (perf phase 2) : node-pty livre des Buffer bruts au lieu
+        // de strings utf-8 décodées. On évite ainsi le coût UTF-16↔UTF-8 sur
+        // chaque chunk (onData appelée à plusieurs centaines de Hz en spew).
+        // Les bytes filent direct vers PaneDataBuffer → MessagePort transfer.
+        // node-pty types `data` comme string dans .d.ts ; cast côté runtime.
+        encoding: null as unknown as 'utf8',
         ...winOpts
       });
     } catch (err) {
@@ -798,8 +808,12 @@ class PtyManager extends EventEmitter {
 
     mp.dataSub = child.onData((data) => {
       if (this.isShuttingDown) return;
-      // Batch côté main : agrège les chunks pour réduire l'overhead IPC.
-      this.dataBuffer.push(paneId, data);
+      // node-pty est en encoding:null → `data` est en fait un Buffer au runtime
+      // bien que typé string dans .d.ts. Cast safe pour le hot path byte-mode.
+      const bytes = data as unknown as Buffer;
+      // Batch côté main : agrège les bytes pour réduire l'overhead IPC.
+      // Zéro transcode — le buffer livrera ces mêmes octets sur le flush.
+      this.dataBuffer.push(paneId, bytes);
 
       const cur = this.sessions.get(sessionId);
       if (!cur) return;
@@ -808,26 +822,36 @@ class PtyManager extends EventEmitter {
       // que de leak dans le nouveau pane.
       if (!curMp || curMp.process !== child) return;
 
+      // Décode UTF-8 streaming pour les détecteurs (agent-state, attention,
+      // OSC, URL, event). {stream:true} buffer le tail incomplet entre chunks
+      // pour qu'un codepoint multi-byte coupé à la frontière ne soit pas
+      // émis comme deux caractères replacement. Le decoder est par pane
+      // (state isolation au restart/process-replace). Les bytes pour xterm
+      // sont déjà partis dans dataBuffer — l'analyse n'est PAS sur le chemin
+      // renderer.
+      if (!curMp.decoder) curMp.decoder = new TextDecoder('utf-8');
+      const text = curMp.decoder.decode(bytes, { stream: true });
+
       // Strip ANSI une seule fois et router le résultat aux consommateurs.
       // Avant : stripAnsi() appelé 3x par chunk (updateAgentState +
       // emitAttention + detectEvents) sur le même input. Sur des streams
       // d'agent (Claude Code peut sortir des centaines de chunks/s), ça
       // dominait le coût CPU du hot path.
-      const stripped = stripAnsi(data);
+      const stripped = stripAnsi(text);
 
       try {
         // Real-time : heartbeat, attention (badge), agent state (spinner UI),
         // OSC notifications (action utilisateur explicite). Ne peuvent pas
         // être throttlés sans dégrader la UX.
         this.updateHeartbeat(curMp, paneId);
-        this.emitAttention(paneId, data, stripped);
+        this.emitAttention(paneId, text, stripped);
         this.updateAgentState(paneId, curMp, stripped);
-        for (const ev of detectOscEvents(paneId, data)) this.emit('eventDetected', ev);
+        for (const ev of detectOscEvents(paneId, text)) this.emit('eventDetected', ev);
         this.maybeWriteInitialInput(curMp);
         // Throttled (4Hz max) : URL detection + event detection (build/test).
         // Ces deux ne sont pas latence-sensibles (< 250ms imperceptible) et
         // dominent le coût regex sur un spew agent intense.
-        this.scheduleThrottledDetectors(cur, curMp, paneId, data, stripped);
+        this.scheduleThrottledDetectors(cur, curMp, paneId, text, stripped);
       } catch (err) {
         // Une exception dans un helper ne doit jamais tuer le main process —
         // on log et on continue pour ne pas perdre le PTY.
@@ -1057,6 +1081,10 @@ class PtyManager extends EventEmitter {
     }
     mp.dataSub = undefined;
     mp.exitSub = undefined;
+    // Reset the streaming decoder when the child goes away — a respawn opens
+    // a fresh process with no continuation of the old byte stream, so any
+    // buffered incomplete codepoint must be discarded.
+    mp.decoder = undefined;
   }
 
   private updatePane(sessionId: string, paneId: PaneId, patch: Partial<TerminalPane> & { status?: PaneStatus }): void {
@@ -1127,6 +1155,14 @@ class PtyManager extends EventEmitter {
     });
     ptyStats.shutdown();
   }
+}
+
+/** Factory — used by the PTY Host entry to own the single instance in the
+ *  host process. The module-level `ptyManager` singleton is retained ONLY for
+ *  existing unit tests that import it directly; production main no longer
+ *  imports this module (it uses PtyHostClient). */
+export function createPtyManager(): PtyManager {
+  return new PtyManager();
 }
 
 export const ptyManager = new PtyManager();

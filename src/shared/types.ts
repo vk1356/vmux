@@ -210,6 +210,12 @@ export interface AppSettings {
    *  sous spew d'agent au prix d'un rendu légèrement moins fidèle.
    *  Default: false (qualité visuelle privilégiée). */
   performanceMode?: boolean;
+  /** Taille max du pool de contextes WebGL — perf phase 4. Chromium plafonne
+   *  à ~16 contextes par document avant cascade de loss ; on borne le pool
+   *  pour qu'au-delà de cette limite, les panes excédentaires basculent
+   *  proprement sur le renderer DOM au lieu de subir la perte de contexte.
+   *  Default: 6. Borne pratique [1, 16]. Ignoré si webglRenderer:false. */
+  webglPoolSize?: number;
 }
 
 // ============================================================
@@ -364,6 +370,12 @@ export const IPC = {
   paneResize: 'pane:resize',
   paneData: 'pane:data',
   paneStatus: 'pane:status',
+  /** Main → renderer : transports a MessagePortMain (in event.ports[0]) so the
+   *  renderer can receive PTY byte frames directly from the PTY Host (zero-copy
+   *  via ArrayBuffer transfer). The IPC channel is the carrier; the actual
+   *  hot path is the port itself. Sent once per window after `did-finish-load`,
+   *  re-sent after a host crash respawn. */
+  paneDataPort: 'pane:data-port',
 
   // URLs détectées
   urlsDetected: 'urls:detected',
