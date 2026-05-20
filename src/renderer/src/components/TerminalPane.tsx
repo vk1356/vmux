@@ -19,6 +19,7 @@ import { LigaturesAddon } from '@xterm/addon-ligatures';
 import { Play } from 'lucide-react';
 import type { TerminalPane as TerminalPaneT } from '@shared/types';
 import { allPaneIds } from '@shared/tree';
+import { concatU8 } from '@shared/utils';
 import { useSessionStore } from '../store/sessions';
 import { subscribePaneData } from '../store/paneDataBus';
 import { useT } from '../i18n';
@@ -99,21 +100,6 @@ const HIDDEN_PENDING_CAP_BYTES = 256_000;
 const HIDDEN_TRIM_AFTER_MS = 5_000;
 /** Limite des highlights search — décorateurs au-delà ferait stutter sur de gros buffers. */
 const SEARCH_HIGHLIGHT_LIMIT = 1000;
-
-/** Concatène N Uint8Array en une seule allocation. Plus rapide qu'un decode →
- *  string.join('') → encode car évite le round-trip UTF-16. */
-function concatU8(chunks: Uint8Array[]): Uint8Array {
-  if (chunks.length === 1) return chunks[0];
-  let total = 0;
-  for (const c of chunks) total += c.byteLength;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.byteLength;
-  }
-  return out;
-}
 
 function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Element {
   const t = useT();

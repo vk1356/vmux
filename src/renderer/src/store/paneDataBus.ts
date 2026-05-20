@@ -14,6 +14,7 @@
 // couche RAF ici ajouterait de la latence keystroke→echo sans bénéfice.
 
 import type { PaneId } from '@shared/types';
+import { concatU8 } from '@shared/utils';
 
 type Handler = (data: Uint8Array) => void;
 
@@ -31,21 +32,6 @@ const subscriptions = new Map<PaneId, Subscription>();
  *  (cas du restart : le PTY peut écrire avant que <TerminalPane> ne s'init).
  *  Cap par BYTES (pas par chunks) — un seul gros chunk peut faire MB. */
 const pending = new Map<PaneId, { chunks: Uint8Array[]; bytes: number }>();
-
-/** Concat in-place d'un array de Uint8Array en une seule Uint8Array. Évite
- *  le coût d'un .join('') string-based qui passerait par UTF-16. */
-function concatChunks(chunks: Uint8Array[]): Uint8Array {
-  if (chunks.length === 1) return chunks[0];
-  let total = 0;
-  for (const c of chunks) total += c.byteLength;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.byteLength;
-  }
-  return out;
-}
 
 /** Cap mémoire global du pending par pane. 256 KB est généreux : le pending
  *  ne sert qu'à couvrir la fenêtre entre un restart PTY (côté main) et le
@@ -70,7 +56,7 @@ if (typeof document !== 'undefined') {
         if (!sub || buf.chunks.length === 0) continue;
         pending.delete(paneId);
         // Concat unique : un seul write xterm — moins de WriteBuffer enqueue.
-        sub.handler(concatChunks(buf.chunks));
+        sub.handler(concatU8(buf.chunks));
       }
     }
   });
