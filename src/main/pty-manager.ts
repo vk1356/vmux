@@ -73,13 +73,6 @@ interface ManagedPane {
   detectorBuf?: string;
   detectorRawBuf?: string;
   detectorTimer?: NodeJS.Timeout;
-  /** Streaming UTF-8 decoder for the analysis path. node-pty in Buffer mode
-   *  can deliver a chunk that ends mid-codepoint (e.g. a 2-byte UTF-8 letter
-   *  split across two reads); a non-streaming decoder would emit a replacement
-   *  char and a follow-up garbled char. {stream:true} buffers the incomplete
-   *  tail until the next chunk completes it. Bytes for xterm bypass this path
-   *  entirely (raw bytes via PaneDataBuffer → MessagePort). */
-  decoder?: TextDecoder;
 }
 
 interface ManagedSession {
@@ -751,12 +744,13 @@ export class PtyManager extends EventEmitter {
         rows,
         cwd: pane.cwd,
         env,
-        // Byte-mode (perf phase 2) : node-pty livre des Buffer bruts au lieu
-        // de strings utf-8 décodées. On évite ainsi le coût UTF-16↔UTF-8 sur
-        // chaque chunk (onData appelée à plusieurs centaines de Hz en spew).
-        // Les bytes filent direct vers PaneDataBuffer → MessagePort transfer.
-        // node-pty types `data` comme string dans .d.ts ; cast côté runtime.
-        encoding: null as unknown as 'utf8',
+        // node-pty default = 'utf8' string mode. We previously cast `null`
+        // through `as 'utf8'` to force Buffer mode, but on packaged Windows
+        // builds that cast crashed the host: node-pty rejected the value at
+        // runtime and ended up delivering strings anyway, which then blew up
+        // PaneDataBuffer/concatU8 (Uint8Array.set(string) → out-of-bounds) and
+        // TextDecoder.decode (ERR_INVALID_ARG_TYPE). We accept strings and
+        // encode once below — same end result, no crash.
         ...winOpts
       });
     } catch (err) {
@@ -808,11 +802,13 @@ export class PtyManager extends EventEmitter {
 
     mp.dataSub = child.onData((data) => {
       if (this.isShuttingDown) return;
-      // node-pty est en encoding:null → `data` est en fait un Buffer au runtime
-      // bien que typé string dans .d.ts. Cast safe pour le hot path byte-mode.
-      const bytes = data as unknown as Buffer;
-      // Batch côté main : agrège les bytes pour réduire l'overhead IPC.
-      // Zéro transcode — le buffer livrera ces mêmes octets sur le flush.
+      // node-pty delivers a utf-8 decoded string. Encode once to Uint8Array
+      // for the renderer side (xterm.write accepts Uint8Array directly, no
+      // UTF-16 re-decode in xterm's parser) and reuse the string as-is for
+      // the analysis path (detectors take strings) — saves a TextDecoder
+      // round-trip per chunk vs. the old byte-mode path.
+      const text = data;
+      const bytes = this.encoder.encode(text);
       this.dataBuffer.push(paneId, bytes);
 
       const cur = this.sessions.get(sessionId);
@@ -821,16 +817,6 @@ export class PtyManager extends EventEmitter {
       // Si le slot a été remplacé (restart en cours) on jette le chunk plutôt
       // que de leak dans le nouveau pane.
       if (!curMp || curMp.process !== child) return;
-
-      // Décode UTF-8 streaming pour les détecteurs (agent-state, attention,
-      // OSC, URL, event). {stream:true} buffer le tail incomplet entre chunks
-      // pour qu'un codepoint multi-byte coupé à la frontière ne soit pas
-      // émis comme deux caractères replacement. Le decoder est par pane
-      // (state isolation au restart/process-replace). Les bytes pour xterm
-      // sont déjà partis dans dataBuffer — l'analyse n'est PAS sur le chemin
-      // renderer.
-      if (!curMp.decoder) curMp.decoder = new TextDecoder('utf-8');
-      const text = curMp.decoder.decode(bytes, { stream: true });
 
       // Strip ANSI une seule fois et router le résultat aux consommateurs.
       // Avant : stripAnsi() appelé 3x par chunk (updateAgentState +
@@ -1081,10 +1067,6 @@ export class PtyManager extends EventEmitter {
     }
     mp.dataSub = undefined;
     mp.exitSub = undefined;
-    // Reset the streaming decoder when the child goes away — a respawn opens
-    // a fresh process with no continuation of the old byte stream, so any
-    // buffered incomplete codepoint must be discarded.
-    mp.decoder = undefined;
   }
 
   private updatePane(sessionId: string, paneId: PaneId, patch: Partial<TerminalPane> & { status?: PaneStatus }): void {
