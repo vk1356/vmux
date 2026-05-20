@@ -5,50 +5,53 @@
 .dialog-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
   display: grid;
   place-items: center;
   z-index: 100;
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(6px) saturate(140%);
+  -webkit-backdrop-filter: blur(6px) saturate(140%);
   animation: fadeIn 120ms ease-out;
 }
 .dialog {
   width: min(560px, 90vw);
   max-height: 90vh;
-  background: var(--bg-elev);
+  background: var(--bg-elev-3);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: zoomIn 140ms ease-out;
+  animation: zoomIn 140ms var(--easing-out);
 }
 @keyframes fadeIn { from { opacity: 0; } }
-@keyframes zoomIn { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
+@keyframes zoomIn { from { opacity: 0; transform: translateY(12px) scale(0.96); } }
 
 .dialog-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 .dialog-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
+  color: var(--text-strong);
 }
 .dialog-body {
-  padding: 20px;
+  padding: 22px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
   overflow-y: auto;
 }
 .dialog-footer {
-  padding: 12px 20px;
-  border-top: 1px solid var(--border);
+  padding: 14px 22px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-elev-2);
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -71,17 +74,24 @@
 .select {
   background: var(--bg-input);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
   color: var(--text);
   font-family: inherit;
   font-size: 13px;
-  transition: border-color 120ms, box-shadow 120ms;
+  transition: border-color var(--duration-fast) var(--easing),
+              box-shadow var(--duration-fast) var(--easing),
+              background var(--duration-fast) var(--easing);
+}
+.input:hover,
+.select:hover {
+  border-color: var(--border-strong);
 }
 .input:focus,
 .select:focus {
   outline: none;
   border-color: var(--accent);
+  background: var(--bg);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .input-group {
@@ -100,19 +110,24 @@ input[type='range'] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 7px;
   padding: 8px 14px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--bg-elev-2);
   color: var(--text);
   font-weight: 500;
   font-size: 13px;
-  transition: all 120ms;
+  letter-spacing: -0.005em;
+  transition: all var(--duration-fast) var(--easing);
+  font-family: inherit;
 }
 .btn:hover:not(:disabled) {
-  background: var(--bg-input);
+  background: var(--bg-elev-3);
   border-color: var(--border-strong);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 .btn:disabled {
   opacity: 0.5;
@@ -121,11 +136,18 @@ input[type='range'] {
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a0a00;
+  color: var(--accent-ink);
+  font-weight: 600;
+  box-shadow:
+    0 2px 6px -1px rgba(249, 115, 22, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 .btn.primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  box-shadow:
+    0 4px 12px -1px rgba(249, 115, 22, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 .btn.ghost {
   background: transparent;
@@ -138,6 +160,9 @@ input[type='range'] {
   background: var(--error);
   border-color: var(--error);
   color: #fff;
+  box-shadow:
+    0 2px 6px -1px rgba(239, 68, 68, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
 }
 .btn.danger:hover:not(:disabled) {
   background: #dc2626;

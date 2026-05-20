@@ -11,13 +11,15 @@
   height: 100%;
 }
 
+/* Tab bar — fond légèrement plus clair que la zone terminal pour créer
+ * une séparation visible sans avoir besoin d'une bordure forte. */
 .tab-bar {
   display: flex;
   align-items: center;
   background: var(--bg-elev);
-  border-bottom: 1px solid var(--border);
-  padding: 0 8px;
-  height: 38px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 10px;
+  height: 40px;
   gap: 6px;
   flex-shrink: 0;
   overflow-x: auto;
@@ -30,32 +32,36 @@
 .tab-bar-list {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   flex-shrink: 0;
 }
 .tab-bar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   margin-left: auto;
   flex-shrink: 0;
 }
 
+/* Tab — onglets style segmented control. Actif = surface qui "pop" du fond
+ * via une élévation légère + accent inférieur. Inactif = simple texte muted. */
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   padding: 0 12px;
-  height: 28px;
-  border-radius: 6px;
+  height: 30px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: all 100ms;
+  transition: all var(--duration-fast) var(--easing);
   user-select: none;
   white-space: nowrap;
+  position: relative;
 }
 .tab:hover {
   background: var(--bg-elev-2);
@@ -63,52 +69,91 @@
 }
 .tab.active {
   background: var(--bg);
-  color: var(--text);
-  border-color: var(--border-strong);
-  box-shadow: 0 -2px 0 var(--accent) inset;
+  color: var(--text-strong);
+  border-color: var(--border);
+  box-shadow:
+    0 1px 0 var(--accent) inset,
+    0 -1px 0 var(--accent) inset,
+    0 1px 2px rgba(0, 0, 0, 0.2);
+}
+.tab.active::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  transform: translateX(-50%);
+  width: 28px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+  box-shadow: 0 0 8px var(--accent);
 }
 .tab-label {
   font-weight: 500;
   max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: -0.005em;
+}
+.tab.active .tab-label {
+  font-weight: 600;
 }
 .tab-close {
   display: inline-grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   padding: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   background: transparent;
   border: 0;
   color: var(--text-dim);
   margin-left: 2px;
   opacity: 0;
   flex-shrink: 0;
-  transition: background 80ms, color 80ms, opacity 80ms;
+  transition: background var(--duration-fast) var(--easing),
+              color var(--duration-fast) var(--easing),
+              opacity var(--duration-fast) var(--easing);
 }
 .tab-close > svg {
   display: block;
 }
 .tab:hover .tab-close,
 .tab.active .tab-close {
-  opacity: 1;
+  opacity: 0.85;
 }
 .tab-close:hover {
-  background: rgba(239, 68, 68, 0.18);
+  background: var(--error-soft);
   color: var(--error);
+  opacity: 1;
 }
 .tab-rename-input {
   background: var(--bg-input);
   border: 1px solid var(--accent);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 1px 6px;
   font-family: inherit;
   font-size: 12px;
   color: var(--text);
   outline: 0;
   width: 140px;
+}
+
+/* Unread badge sur tab */
+.tab-unread {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 9.5px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 2px 4px -1px rgba(249, 115, 22, 0.4);
 }
 
 /* Context menu */
@@ -120,22 +165,23 @@
 .context-menu {
   position: fixed;
   z-index: 81;
-  background: var(--bg-elev);
+  background: var(--bg-elev-3);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 4px;
-  min-width: 180px;
+  box-shadow: var(--shadow-lg);
+  padding: 5px;
+  min-width: 190px;
   display: flex;
   flex-direction: column;
-  animation: zoomIn 80ms ease-out;
+  animation: zoomIn 100ms var(--easing-out);
+  backdrop-filter: blur(12px);
 }
 .context-menu-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border-radius: 4px;
+  gap: 9px;
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
   background: transparent;
   border: 0;
   color: var(--text-muted);
@@ -149,7 +195,7 @@
   color: var(--text);
 }
 .context-menu-item.danger:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: var(--error-soft);
   color: var(--error);
 }
 .tab-status {
@@ -170,4 +216,3 @@
   flex-direction: column;
   overflow: hidden;
 }
-

@@ -29,20 +29,23 @@
 .pane-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
+  gap: 7px;
+  padding: 4px 10px;
   background: var(--bg-elev);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: 11px;
   color: var(--text-muted);
   flex-shrink: 0;
-  height: 22px;
+  height: 24px;
   user-select: none;
+  transition: background var(--duration-fast) var(--easing),
+              color var(--duration-fast) var(--easing);
 }
 .pane-header.active {
   background: var(--bg-elev-2);
   color: var(--text);
   border-bottom-color: var(--accent);
+  box-shadow: 0 1px 0 var(--accent);
 }
 .pane-header-icon {
   display: inline-flex;
@@ -132,63 +135,8 @@
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
 }
-.statusbar-stats {
-  margin-left: -4px;
-}
-
-/* PID cliquable dans la status bar — feedback visuel sur copy */
-.statusbar-pid {
-  background: transparent;
-  border: 0;
-  color: inherit;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font: inherit;
-  cursor: pointer;
-  border-radius: 3px;
-  padding: 0 4px;
-  margin: 0 -4px;
-  transition: background 100ms, color 100ms;
-}
-.statusbar-pid:hover {
-  background: var(--bg-elev-2);
-  color: var(--accent);
-}
-.statusbar-pid:active {
-  background: var(--accent-soft);
-}
-
-/* Système : CPU machine + RAM totale dans la status bar */
-.statusbar-system {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 6px;
-  background: var(--bg-elev-2);
-  border-radius: 3px;
-  font-variant-numeric: tabular-nums;
-  font-size: 10.5px;
-  cursor: help;
-  border: 1px solid transparent;
-  transition: border-color 120ms;
-}
-.statusbar-system:hover {
-  border-color: var(--border);
-}
-.statusbar-system-cpu {
-  font-weight: 600;
-  min-width: 28px;
-  text-align: right;
-}
-.statusbar-system-spark {
-  display: block;
-  margin: 0 2px;
-}
-.statusbar-system-mem {
-  opacity: 0.85;
-}
+/* (statusbar-pid, statusbar-system, etc. sont définis dans _statusbar.css —
+ *  retirés d'ici pour éviter les override croisés.) */
 
 /* Pane header : uptime + stale */
 .pane-header-uptime {
@@ -252,25 +200,11 @@
   filter: saturate(1.1);
 }
 
-/* Tab unread counter (compteur d'événements non lus par pane) */
-.tab-unread {
-  display: inline-grid;
-  place-items: center;
-  min-width: 16px;
-  height: 14px;
-  padding: 0 4px;
-  margin-left: 2px;
-  border-radius: 7px;
-  background: var(--accent);
-  color: #1a0a00;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
+/* .tab-unread défini dans _main.css — surcharge attention-needs-input ici */
 .tab.attention-needs-input .tab-unread {
   background: var(--error);
   color: #fff;
+  box-shadow: 0 2px 4px -1px rgba(239, 68, 68, 0.4);
 }
 
 /* Sidebar collapsed (Ctrl+B) */
@@ -328,15 +262,15 @@ body.split-dragging .pane-split-handle {
   min-width: 0;
   min-height: 0;
   position: relative;
-  background: #0a0a0b;
+  background: var(--bg);
   border: 1px solid transparent;
-  transition: border-color 80ms;
+  transition: border-color var(--duration-fast) var(--easing);
   /* Isolation : le navigateur skip layout/paint cascadé hors de ce pane.
      Gain notable quand un terminal stream du contenu sans réflux global. */
   contain: layout paint style;
 }
 .terminal-pane.active {
-  border-color: rgba(249, 115, 22, 0.4);
+  border-color: var(--accent-ring);
 }
 .terminal-pane.sync {
   border-color: rgba(239, 68, 68, 0.55);
@@ -349,8 +283,8 @@ body.split-dragging .pane-split-handle {
 .terminal-host {
   flex: 1;
   min-height: 0;
-  background: #0a0a0b;
-  padding: 8px 4px 8px 12px;
+  background: var(--bg);
+  padding: 10px 4px 10px 14px;
   position: relative;
 }
 

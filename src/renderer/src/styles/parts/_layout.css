@@ -1,10 +1,7 @@
 /* ============================================================
-   Responsive — sidebar compact en dessous de 900px
+   Responsive / accessibility helpers
    ============================================================ */
 
-/* a11y : label visible pour les lecteurs d'écran, invisible visuellement.
-   Pattern standard (clip-rect + clip-path), pas display:none/visibility:hidden
-   qui retirent l'élément de l'arbre d'accessibilité. */
 .sr-only {
   position: absolute;
   width: 1px;
@@ -61,6 +58,25 @@
   flex-direction: column;
   height: 100vh;
   background: var(--bg);
+  position: relative;
+}
+
+/* Ambiance lumineuse subtile derrière le shell : donne de la profondeur sans
+ * bouger la perf (un seul gradient fixe, pas d'animation). */
+.app::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(249, 115, 22, 0.07) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 40% at 0% 100%, rgba(56, 189, 248, 0.03) 0%, transparent 60%);
+  z-index: 0;
+}
+
+.app > * {
+  position: relative;
+  z-index: 1;
 }
 
 .app-body {
@@ -76,15 +92,14 @@
   background: var(--border);
   position: relative;
   cursor: col-resize;
-  transition: background 120ms;
+  transition: background var(--duration-fast) var(--easing);
 }
 .resize-handle::after {
   content: '';
   position: absolute;
-  inset: 0 -3px;
+  inset: 0 -4px;
 }
 .resize-handle:hover,
 .resize-handle:active {
   background: var(--accent);
 }
-
