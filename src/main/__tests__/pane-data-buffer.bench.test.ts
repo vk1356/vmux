@@ -2,10 +2,6 @@
 // placeholder for the keystroke-echo latency assertion that P3 (adaptive flush)
 // will satisfy. Lives next to the regular tests so `npm test` enforces the
 // regime as a regression gate, not a one-off measurement.
-//
-// At Phase 2 / Task 2.2 the buffer is still string-mode; Task 2.3 converts to
-// Uint8Array — the spew baseline is mode-neutral (count of flushes + total
-// bytes delivered + wall-time budget).
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PaneDataBuffer } from '../pane-data-buffer';
 
@@ -25,10 +21,7 @@ describe('PaneDataBuffer — perf bench harness', () => {
     let bytes = 0;
     buf.on('flush', (_p, combined) => {
       flushes += 1;
-      // combined is `string` today (Task 2.3 will change to Uint8Array — bench
-      // remains correct: .length is char-count today, byteLength later; this
-      // assertion only checks "we delivered something").
-      bytes += (combined as { length: number }).length;
+      bytes += combined.byteLength;
     });
 
     // 8 MiB total in 4 KiB chunks, spread across 16 fake-time ticks (≈ one per
@@ -36,10 +29,10 @@ describe('PaneDataBuffer — perf bench harness', () => {
     // per tick (128 × 4 KiB = 512 KiB), advance one flush interval, repeat.
     // Total pushed = 16 × 512 KiB = 8 MiB. Expected flushes ≈ 16 (one per
     // tick). Cap (4 MiB) is generous vs. per-tick 512 KiB so no drop.
-    const chunk = 'x'.repeat(4 * 1024);
+    const chunk = new Uint8Array(4 * 1024).fill(0x78); // 'x'
     const ticks = 16;
     const chunksPerTick = 128;
-    const totalPushed = ticks * chunksPerTick * chunk.length; // 8 MiB
+    const totalPushed = ticks * chunksPerTick * chunk.byteLength; // 8 MiB
     for (let t = 0; t < ticks; t++) {
       for (let i = 0; i < chunksPerTick; i++) buf.push('p', chunk);
       vi.advanceTimersByTime(FLUSH_MS);
@@ -69,7 +62,7 @@ describe('PaneDataBuffer — perf bench harness', () => {
     });
 
     const t0 = Date.now();
-    buf.push('p', 'X'); // 1 byte after a long quiet period
+    buf.push('p', new Uint8Array([0x58])); // 1 byte 'X' after a long quiet period
     // P3 contract: synchronous flush, no timer wait.
     expect(flushedAt).not.toBeNull();
     expect((flushedAt as unknown as number) - t0).toBeLessThan(2);

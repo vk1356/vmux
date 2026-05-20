@@ -1,9 +1,12 @@
 import { EventEmitter } from 'node:events';
 import type { PaneId } from '@shared/types';
+import { concatU8 } from '@shared/utils';
 
 type Events = {
-  /** Émis quand un batch de chunks a été agrégé pour un pane. */
-  flush: [paneId: PaneId, combined: string];
+  /** Émis quand un batch de chunks a été agrégé pour un pane. Payload en
+   *  Uint8Array (byte-mode) — node-pty fournit des Buffer (perf phase 2),
+   *  on évite ainsi tout transcode UTF-16↔UTF-8 sur le hot path. */
+  flush: [paneId: PaneId, combined: Uint8Array];
 };
 
 /**
@@ -15,27 +18,22 @@ type Events = {
  * survivant commence par les param bytes ("0;32") + final byte ("m") — donnant
  * à xterm.js du garbage à rendre.
  *
- * Heuristique : si la string commence par des param/intermediate bytes
- * (0x20–0x3f : chiffres, points-virgules, deux-points, espaces…) suivis d'un
- * final byte (0x40–0x7e) sans ESC préalable, c'est un tail CSI orphelin.
+ * Heuristique byte-mode : si le buffer commence par des param/intermediate
+ * bytes (0x20–0x3f) suivis d'un final byte (0x40–0x7e) sans ESC préalable,
+ * c'est un tail CSI orphelin — on coupe jusqu'au final inclus.
  */
-function stripLeadingAnsiOrphan(s: string): string {
-  if (s.length === 0) return s;
-  const first = s.charCodeAt(0);
-  if (first < 0x20 || first > 0x3f) return s;
-  const match = /^[\x20-\x3f]+([\x40-\x7e])/.exec(s);
-  if (!match) return s;
-  return s.slice(match[0].length);
-}
-
-/**
- * Retourne un offset de slice qui ne coupe jamais une surrogate pair UTF-16.
- * Si offset pointe sur un low surrogate (0xDC00–0xDFFF), avance d'une unité.
- */
-function safeSurrogateOffset(s: string, offset: number): number {
-  if (offset <= 0 || offset >= s.length) return Math.max(0, offset);
-  const code = s.charCodeAt(offset);
-  return code >= 0xdc00 && code <= 0xdfff ? offset + 1 : offset;
+function stripLeadingAnsiOrphan(buf: Uint8Array): Uint8Array {
+  if (buf.byteLength === 0) return buf;
+  const first = buf[0];
+  if (first < 0x20 || first > 0x3f) return buf;
+  // Avance tant qu'on voit des param/intermediate bytes (0x20-0x3f).
+  let i = 1;
+  while (i < buf.byteLength && buf[i] >= 0x20 && buf[i] <= 0x3f) i++;
+  // Doit suivre un final byte (0x40-0x7e) pour confirmer une séquence CSI.
+  if (i >= buf.byteLength) return buf;
+  const final = buf[i];
+  if (final < 0x40 || final > 0x7e) return buf;
+  return buf.subarray(i + 1);
 }
 
 /**
@@ -44,11 +42,8 @@ function safeSurrogateOffset(s: string, offset: number): number {
  *
  * Utilisation :
  *   const buf = new PaneDataBuffer();
- *   buf.on('flush', (paneId, combined) => webContents.send('pane:data', paneId, combined));
- *   pty.onData((data) => buf.push(paneId, data));
- *
- * Extraction isolée de pty-manager.ts pour faciliter les tests et clarifier la
- * responsabilité (1 fichier = 1 problème : agréger des chunks).
+ *   buf.on('flush', (paneId, combined) => port.postMessage(combined, [combined.buffer]));
+ *   pty.onData((data) => buf.push(paneId, data));  // data: Buffer (node-pty Buffer-mode)
  *
  * Mémoire : cap dur par pane (`MAX_PANE_BYTES`). Si le renderer est freezé et
  * qu'un agent spew, on garde la TAIL (un terminal n'a besoin que des derniers
@@ -56,8 +51,8 @@ function safeSurrogateOffset(s: string, offset: number): number {
  * bavard avec renderer freeze pourrait OOM le main process.
  */
 export class PaneDataBuffer extends EventEmitter {
-  private buffers = new Map<PaneId, string[]>();
-  /** Octets accumulés par pane, pour appliquer le cap sans relancer length(). */
+  private buffers = new Map<PaneId, Uint8Array[]>();
+  /** Octets accumulés par pane, pour appliquer le cap sans relancer byteLength. */
   private sizes = new Map<PaneId, number>();
   private timer: NodeJS.Timeout | null = null;
 
@@ -71,8 +66,8 @@ export class PaneDataBuffer extends EventEmitter {
    *  ne s'intéresse qu'à la tail). */
   static readonly MAX_PANE_BYTES = 4 * 1024 * 1024;
 
-  push(paneId: PaneId, data: string): void {
-    if (!data) return;
+  push(paneId: PaneId, data: Uint8Array): void {
+    if (data.byteLength === 0) return;
     let buf = this.buffers.get(paneId);
     if (!buf) {
       buf = [];
@@ -80,7 +75,7 @@ export class PaneDataBuffer extends EventEmitter {
       this.sizes.set(paneId, 0);
     }
     buf.push(data);
-    const size = (this.sizes.get(paneId) ?? 0) + data.length;
+    const size = (this.sizes.get(paneId) ?? 0) + data.byteLength;
     this.sizes.set(paneId, size);
 
     // Cap dur : on droppe les chunks de tête. On préserve la tail car un
@@ -92,19 +87,17 @@ export class PaneDataBuffer extends EventEmitter {
       while (total > PaneDataBuffer.MAX_PANE_BYTES && buf.length > 1) {
         const dropped = buf.shift();
         if (dropped !== undefined) {
-          total -= dropped.length;
+          total -= dropped.byteLength;
           droppedAny = true;
         }
       }
-      // Si même le dernier chunk dépasse le cap, on le tronque côté tail.
+      // Si même le dernier chunk dépasse le cap, on le tronque côté tail via
+      // subarray (zero-copy view sur le même ArrayBuffer).
       if (total > PaneDataBuffer.MAX_PANE_BYTES && buf.length === 1) {
         const last = buf[0];
-        // safeSurrogateOffset évite de couper une surrogate pair UTF-16 (ce qui
-        // produirait un low surrogate orphelin et corromprait la sérialisation IPC).
-        const rawOffset = last.length - PaneDataBuffer.MAX_PANE_BYTES;
-        const offset = safeSurrogateOffset(last, rawOffset);
-        buf[0] = last.slice(offset);
-        total = buf[0].length;
+        const offset = last.byteLength - PaneDataBuffer.MAX_PANE_BYTES;
+        buf[0] = last.subarray(offset);
+        total = buf[0].byteLength;
         droppedAny = true;
       }
       // Après drop : buf[0] peut commencer par le tail d'une séquence ANSI dont
@@ -113,7 +106,7 @@ export class PaneDataBuffer extends EventEmitter {
       if (droppedAny && buf.length > 0) {
         const cleaned = stripLeadingAnsiOrphan(buf[0]);
         if (cleaned !== buf[0]) {
-          total -= buf[0].length - cleaned.length;
+          total -= buf[0].byteLength - cleaned.byteLength;
           buf[0] = cleaned;
         }
       }
@@ -134,7 +127,7 @@ export class PaneDataBuffer extends EventEmitter {
     // unique message IPC envoyé out-of-order.
     for (const [paneId, chunks] of Array.from(this.buffers)) {
       if (chunks.length === 0) continue;
-      const combined = chunks.length === 1 ? chunks[0] : chunks.join('');
+      const combined = concatU8(chunks);
       // Delete plutôt que set([], ...) : un pane churn rapide (ouverture/
       // fermeture) ne laisse pas de slots vides dans la Map. push() lazily
       // re-créera l'entrée à la prochaine arrivée de data.

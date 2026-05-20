@@ -148,13 +148,13 @@ export class PtyManager extends EventEmitter {
 
   constructor() {
     super();
-    // Forward des chunks agrégés du buffer vers les listeners IPC, en UTF-8
-    // binaire. Conversion unique par flush (60 Hz max) — l'IPC Electron passe
-    // alors un ArrayBuffer plus rapide qu'une string V8, et xterm.js parse
-    // un Uint8Array sans avoir à re-décoder l'UTF-16.
+    // Forward des chunks agrégés du buffer vers les listeners IPC. Le buffer
+    // travaille en byte-mode (perf phase 2) : `combined` est déjà un Uint8Array,
+    // zéro transcode UTF-16↔UTF-8 sur le hot path — l'IPC Electron passe un
+    // ArrayBuffer et xterm.js parse directement.
     this.dataBuffer.on('flush', (paneId, combined) => {
       if (this.isShuttingDown) return;
-      this.emit('paneData', paneId, this.encoder.encode(combined));
+      this.emit('paneData', paneId, combined);
     });
     // Filet de sécurité : sans ça, une exception dans un listener (renderer
     // crashé, etc.) cracherait le main process et tuerait *tous* les PTY.
@@ -789,7 +789,9 @@ export class PtyManager extends EventEmitter {
     mp.dataSub = child.onData((data) => {
       if (this.isShuttingDown) return;
       // Batch côté main : agrège les chunks pour réduire l'overhead IPC.
-      this.dataBuffer.push(paneId, data);
+      // Transient encode string→bytes — Task 2.4 switches node-pty to Buffer
+      // mode (encoding:null) and `data` arrives as a Buffer directly.
+      this.dataBuffer.push(paneId, this.encoder.encode(data));
 
       const cur = this.sessions.get(sessionId);
       if (!cur) return;
