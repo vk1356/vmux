@@ -420,10 +420,15 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   // cas où la webContents est destroyed.
   // ============================================================
 
-  // NOTE: paneData no longer crosses the main thread. PTY bytes flow from the
-  // PTY Host straight to the renderer via the transferred MessagePortMain (set
-  // up per-window in pane-data-channel.ts). sendForPane(paneId, IPC.paneData)
-  // is intentionally NOT re-registered — zero-copy is the whole point.
+  // paneData: forward bytes from PTY Host → renderer via main-process IPC.
+  // The Phase-2 MessagePort transport (transferred MessagePortMain) is wired
+  // and ready to take over, but in Electron 42 our ArrayBuffer messages were
+  // silently dropped on the host side — falling back to structured-clone IPC
+  // here so the terminal actually shows output. The renderer accepts both
+  // paths (preload feeds them into the same paneDataDispatcher).
+  ptyManager.on('paneData', (paneId: string, data: Uint8Array) => {
+    sendForPane(paneId, IPC.paneData, paneId, data);
+  });
   ptyManager.on('paneStatus', (sessionId, paneId, pane) => {
     sendForSession(sessionId, IPC.paneStatus, sessionId, paneId, pane);
   });

@@ -68,13 +68,16 @@ export class PtyHostClient extends EventEmitter {
   /** Translate a HostEvent into the legacy EventEmitter signature so ipc.ts's
    *  `ptyManager.on('paneStatus', ...)` etc. work unchanged.
    *
-   *  paneData is intentionally NOT dispatched here — it travels host→renderer
-   *  via transferred MessagePort (zero-copy), never reaching main. The variant
-   *  still exists in the HostEvent union as a no-op fallback for any stale
-   *  host emit that might predate the cross-process transport. */
+   *  paneData goes through the main process IPC path (`ptyManager.on('paneData',
+   *  …)` → `webContents.send(IPC.paneData, …)`). The Phase-2 MessagePort
+   *  transport is preserved in the codebase but currently dormant — Electron's
+   *  MessagePortMain silently dropped ArrayBuffer messages in our setup, so we
+   *  fell back to the proven structured-clone IPC path. One additional v8
+   *  context crossing per 60Hz flush — negligible vs the gain of a working
+   *  terminal. */
   private dispatch(e: HostEvent): void {
     switch (e.kind) {
-      case 'paneData': /* via MessagePort — no main hop */ break;
+      case 'paneData': this.emit('paneData', e.paneId, e.data); break;
       case 'paneStatus': this.emit('paneStatus', e.sessionId, e.paneId, e.pane); break;
       case 'sessionUpdate':
         this.emit('sessionUpdate', e.session); break;

@@ -57,11 +57,22 @@ function subscribe<Args extends readonly unknown[]>(
   };
 }
 
-// ----- PTY data port (zero-copy MessagePort transport) ----------------------
-// Main hands this preload a fresh MessagePort each time a window is wired or
-// the PTY Host is respawned (channel rebuild). We swap the port's onmessage
-// to the same dispatcher so subscribers ride through respawn transparently.
+// ----- PTY data routes ------------------------------------------------------
+// Two parallel transports feed the same dispatcher (renderer subscribes once):
+//   - Main-process IPC (`IPC.paneData`) — the proven structured-clone path,
+//     currently the ONLY one actually delivering bytes in production. One v8
+//     context crossing per 60Hz flush; negligible vs the cost of an empty
+//     terminal.
+//   - MessagePortMain (`IPC.paneDataPort`) — Phase-2 zero-copy transport.
+//     Wired and ready, but ArrayBuffer messages silently dropped on Electron
+//     42 utilityProcess in our setup; kept active so it'll just start working
+//     once we figure out the right message shape (Buffer? typed-array wrapper?).
 const paneDataDispatcher = createPaneDataDispatcher();
+
+ipcRenderer.on(IPC.paneData, (_e, paneId: PaneId, data: Uint8Array) => {
+  paneDataDispatcher.deliver(paneId, data);
+});
+
 let currentDataPort: MessagePort | null = null;
 ipcRenderer.on(IPC.paneDataPort, (event) => {
   const port = event.ports[0];
@@ -74,8 +85,6 @@ ipcRenderer.on(IPC.paneDataPort, (event) => {
   }
   currentDataPort = port;
   port.onmessage = (e: MessageEvent): void => {
-    // The host transferred an ArrayBuffer; the renderer receives the same
-    // memory as a new ArrayBuffer (zero-copy). Decode + fan out.
     paneDataDispatcher.dispatch(e.data as ArrayBuffer);
   };
   port.start();

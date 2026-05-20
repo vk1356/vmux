@@ -18,17 +18,16 @@ function makeFakeSupervisor() {
 }
 
 describe('PtyHostClient', () => {
-  it('does NOT forward paneData through the main EventEmitter (zero-copy transport)', () => {
-    // PTY bytes travel host→renderer via a transferred MessagePortMain and
-    // never cross main. Any stale `paneData` HostEvent that might still
-    // arrive on parentPort is dropped silently — the variant is preserved in
-    // the union for type compat with old host builds during rolling restart.
+  it('forwards paneData through the main EventEmitter (ipc.ts → webContents.send)', () => {
+    // PTY bytes flow via parentPort structured-clone. ipc.ts subscribes to
+    // ptyManager.on('paneData', ...) and forwards to the renderer per window
+    // (Phase-2 MessagePort transport is wired but dormant — see entry.ts).
     const { sup, push } = makeFakeSupervisor();
     const client = new PtyHostClient(sup as never);
     const seen: Array<[string, Uint8Array]> = [];
     client.on('paneData', (paneId, data) => seen.push([paneId, data]));
     push({ kind: 'paneData', paneId: 'p1', data: new Uint8Array([65]) });
-    expect(seen).toEqual([]);
+    expect(seen).toEqual([['p1', new Uint8Array([65])]]);
   });
 
   it('proxies a method call as a HostRequest and resolves on reply', async () => {

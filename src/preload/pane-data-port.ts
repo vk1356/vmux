@@ -18,6 +18,11 @@ export type PaneDataCallback = (paneId: PaneId, data: Uint8Array) => void;
 export interface PaneDataDispatcher {
   /** Feed a single frame (the ArrayBuffer transferred via the MessagePort). */
   dispatch(frame: ArrayBuffer): void;
+  /** Feed an already-decoded (paneId, data) pair — used by the main-process IPC
+   *  fallback transport which delivers paneId + Uint8Array directly, skipping
+   *  the encodeFrame/decodeFrame round-trip. Same fan-out + preQueue semantics
+   *  as `dispatch`. */
+  deliver(paneId: PaneId, data: Uint8Array): void;
   /** Subscribe to all subsequent frames; on first subscribe, drains any frames
    *  buffered while no subscriber was present. Returns an unsubscribe. */
   subscribe(cb: PaneDataCallback): () => void;
@@ -25,13 +30,17 @@ export interface PaneDataDispatcher {
 
 export function createPaneDataDispatcher(): PaneDataDispatcher {
   const subscribers: PaneDataCallback[] = [];
-  let preQueue: ArrayBuffer[] = [];
+  // Buffered before any subscriber is attached. We keep both encoded frames
+  // (MessagePort path) and pre-decoded (paneId, data) pairs (main-IPC path).
+  // The renderer paneDataBus subscribes once, drains both lists, then the
+  // routes converge.
+  let preQueueFrames: ArrayBuffer[] = [];
+  let preQueuePairs: Array<{ paneId: PaneId; data: Uint8Array }> = [];
 
-  function deliver(frame: ArrayBuffer): void {
-    const { paneId, payload } = decodeFrame(frame);
+  function fanout(paneId: PaneId, data: Uint8Array): void {
     for (const cb of subscribers) {
       try {
-        cb(paneId, payload);
+        cb(paneId, data);
       } catch (err) {
         // One throwing subscriber must not strand frames headed for the rest.
         // Renderer console catches it; we explicitly do nothing else here.
@@ -41,21 +50,42 @@ export function createPaneDataDispatcher(): PaneDataDispatcher {
     }
   }
 
+  function deliverFrame(frame: ArrayBuffer): void {
+    const { paneId, payload } = decodeFrame(frame);
+    fanout(paneId, payload);
+  }
+
   return {
     dispatch(frame: ArrayBuffer): void {
       if (subscribers.length === 0) {
-        preQueue.push(frame);
+        preQueueFrames.push(frame);
         return;
       }
-      deliver(frame);
+      deliverFrame(frame);
+    },
+    deliver(paneId: PaneId, data: Uint8Array): void {
+      if (subscribers.length === 0) {
+        preQueuePairs.push({ paneId, data });
+        return;
+      }
+      fanout(paneId, data);
     },
     subscribe(cb: PaneDataCallback): () => void {
       subscribers.push(cb);
-      // On the FIRST subscribe, replay everything that arrived early.
-      if (subscribers.length === 1 && preQueue.length > 0) {
-        const queued = preQueue;
-        preQueue = [];
-        for (const frame of queued) deliver(frame);
+      // On the FIRST subscribe, replay everything that arrived early — frames
+      // first, then pairs, preserving the original arrival interleaving inside
+      // each route (across-route order is best-effort).
+      if (subscribers.length === 1) {
+        if (preQueueFrames.length > 0) {
+          const queued = preQueueFrames;
+          preQueueFrames = [];
+          for (const frame of queued) deliverFrame(frame);
+        }
+        if (preQueuePairs.length > 0) {
+          const queued = preQueuePairs;
+          preQueuePairs = [];
+          for (const { paneId, data } of queued) fanout(paneId, data);
+        }
       }
       return () => {
         const idx = subscribers.indexOf(cb);
