@@ -420,9 +420,10 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
   // cas où la webContents est destroyed.
   // ============================================================
 
-  ptyManager.on('paneData', (paneId, data) => {
-    sendForPane(paneId, IPC.paneData, paneId, data);
-  });
+  // NOTE: paneData no longer crosses the main thread. PTY bytes flow from the
+  // PTY Host straight to the renderer via the transferred MessagePortMain (set
+  // up per-window in pane-data-channel.ts). sendForPane(paneId, IPC.paneData)
+  // is intentionally NOT re-registered — zero-copy is the whole point.
   ptyManager.on('paneStatus', (sessionId, paneId, pane) => {
     sendForSession(sessionId, IPC.paneStatus, sessionId, paneId, pane);
   });

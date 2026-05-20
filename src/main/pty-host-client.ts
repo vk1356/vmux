@@ -66,10 +66,15 @@ export class PtyHostClient extends EventEmitter {
   }
 
   /** Translate a HostEvent into the legacy EventEmitter signature so ipc.ts's
-   *  `ptyManager.on('paneData', (paneId, data) => ...)` works unchanged. */
+   *  `ptyManager.on('paneStatus', ...)` etc. work unchanged.
+   *
+   *  paneData is intentionally NOT dispatched here — it travels host→renderer
+   *  via transferred MessagePort (zero-copy), never reaching main. The variant
+   *  still exists in the HostEvent union as a no-op fallback for any stale
+   *  host emit that might predate the cross-process transport. */
   private dispatch(e: HostEvent): void {
     switch (e.kind) {
-      case 'paneData': this.emit('paneData', e.paneId, e.data); break;
+      case 'paneData': /* zero-copy via MessagePort — no main hop */ break;
       case 'paneStatus': this.emit('paneStatus', e.sessionId, e.paneId, e.pane); break;
       case 'sessionUpdate':
         this.emit('sessionUpdate', e.session); break;

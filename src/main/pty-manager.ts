@@ -73,6 +73,13 @@ interface ManagedPane {
   detectorBuf?: string;
   detectorRawBuf?: string;
   detectorTimer?: NodeJS.Timeout;
+  /** Streaming UTF-8 decoder for the analysis path. node-pty in Buffer mode
+   *  can deliver a chunk that ends mid-codepoint (e.g. a 2-byte UTF-8 letter
+   *  split across two reads); a non-streaming decoder would emit a replacement
+   *  char and a follow-up garbled char. {stream:true} buffers the incomplete
+   *  tail until the next chunk completes it. Bytes for xterm bypass this path
+   *  entirely (raw bytes via PaneDataBuffer → MessagePort). */
+  decoder?: TextDecoder;
 }
 
 interface ManagedSession {
@@ -805,12 +812,15 @@ export class PtyManager extends EventEmitter {
       // que de leak dans le nouveau pane.
       if (!curMp || curMp.process !== child) return;
 
-      // Décode UTF-8 pour les détecteurs/agent-state qui travaillent en string.
-      // Phase-2 transient : décodage non-streaming (Task 2.8 introduira un
-      // TextDecoder {stream:true} par pane pour gérer les multi-byte coupés
-      // aux frontières de chunks). Les bytes pour xterm sont déjà partis dans
-      // le buffer — l'analyse n'est PAS sur le chemin renderer.
-      const text = new TextDecoder('utf-8').decode(bytes);
+      // Décode UTF-8 streaming pour les détecteurs (agent-state, attention,
+      // OSC, URL, event). {stream:true} buffer le tail incomplet entre chunks
+      // pour qu'un codepoint multi-byte coupé à la frontière ne soit pas
+      // émis comme deux caractères replacement. Le decoder est par pane
+      // (state isolation au restart/process-replace). Les bytes pour xterm
+      // sont déjà partis dans dataBuffer — l'analyse n'est PAS sur le chemin
+      // renderer.
+      if (!curMp.decoder) curMp.decoder = new TextDecoder('utf-8');
+      const text = curMp.decoder.decode(bytes, { stream: true });
 
       // Strip ANSI une seule fois et router le résultat aux consommateurs.
       // Avant : stripAnsi() appelé 3x par chunk (updateAgentState +
@@ -1061,6 +1071,10 @@ export class PtyManager extends EventEmitter {
     }
     mp.dataSub = undefined;
     mp.exitSub = undefined;
+    // Reset the streaming decoder when the child goes away — a respawn opens
+    // a fresh process with no continuation of the old byte stream, so any
+    // buffered incomplete codepoint must be discarded.
+    mp.decoder = undefined;
   }
 
   private updatePane(sessionId: string, paneId: PaneId, patch: Partial<TerminalPane> & { status?: PaneStatus }): void {
