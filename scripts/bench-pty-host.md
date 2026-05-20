@@ -75,3 +75,45 @@ latency wins are Phases 2–3 — not expected here.
 - Echo latency (idle pane, single keystroke):  <fill>  (expected: ≪ 16 ms — one event-loop tick)
 - Echo latency under spew (quiet 4th pane):    <fill>  (expected: same as P2; spew regime unchanged)
 - Spew throughput regression check:            <fill>  (expected: none — coalescing tick unchanged)
+
+---
+
+# PTY Host Phase 4 — bounded WebGL pool + retained byte ring
+
+## What shipped
+- `src/renderer/src/store/webglContextPool.ts` — pure LRU pool with injectable
+  addon factory (testable in happy-dom/node without a real GL context).
+  10 unit tests cover capacity, idempotent acquire/release, requestUpgrade
+  fire-once + cancel, setSize live shrink, factory throw, ~5 s context-loss
+  cooldown.
+- `src/renderer/src/store/paneDataBus.ts` — retained byte ring (`RETAIN_CAP_BYTES
+  = 2 MiB`) tees every chunk; `snapshotRetained(paneId)` returns a single
+  Uint8Array with ESC c (RIS reset) prefix when truncated. 6 unit tests.
+- `AppSettings.webglPoolSize` (default 6, range [1, 16]) + Settings UI input
+  + en/fr i18n.
+- `TerminalPane.tsx`: all WebglAddon construction routes through
+  `webglPool.acquire(paneId, term, factory)`. Visible → hidden releases the
+  slot immediately (frees pool capacity for the active session). Hidden →
+  visible re-acquires or registers an upgrade waiter. Live setSize effect.
+
+## Net effect
+- WebGL contexts at any time ≤ poolSize — independent of total pane count
+  across sessions. Kills the >16-context cascade-loss bug that previously
+  fell back to slow DOM rendering with visible flicker.
+- LRU eviction protects the most-recently-used panes when the pool shrinks
+  or a new visible pane needs a slot.
+
+## Smoke checklist (manual)
+1. Open ≥3 sessions × 4 panes = 12 total panes.
+2. `chrome://gpu` / DevTools → live WebGL contexts ≤ `webglPoolSize` (default 6).
+3. Rapid session-switch — smooth; at most a brief DOM frame on a just-shown
+   pane before its WebGL re-acquire lands (typically same tick).
+4. Set `webglPoolSize=2` in Settings → only 2 GL contexts; the rest run on
+   DOM but remain fully functional.
+5. Toggle `webglRenderer` off → on with panes open: no leak, contexts
+   released then re-acquired.
+
+## Phase 4 measurements (record after manual smoke)
+- Active WebGL contexts at 12 panes / 3 sessions:  <fill>  (expected: ≤ poolSize)
+- Cascade-loss events in console under heavy use:  <fill>  (expected: 0)
+- Visible jank on session switch:                  <fill>  (expected: imperceptible)
