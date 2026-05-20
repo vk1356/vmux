@@ -269,6 +269,12 @@ app.whenReady().then(async () => {
   //    blocked by I/O.
   mainWindow = createWindow({ startHidden: initialCliCommand.kind === 'hidden' });
 
+  // 5b) Wire the per-window zero-copy data channel (PTY Host → renderer via
+  //     transferred MessagePortMain). One channel per window, deferred port
+  //     post until did-finish-load (handled inside attachWindow).
+  const { getPaneDataChannelManager } = await import('./pty-host-client-singleton');
+  getPaneDataChannelManager()?.attachWindow(mainWindow);
+
   // 6) Fire-and-forget initialization — fully parallel, each item logs its
   //    own failures. None of these should block window creation or each other.
   void ensureDevShortcutForNotifications(APP_USER_MODEL_ID);

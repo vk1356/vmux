@@ -276,6 +276,12 @@ export function registerIpc(getMainWindow: () => BrowserWindow | null): void {
     const win = createDetachedWindow(sessionId);
     detachedWindows.set(sessionId, win);
     registerTrustedWindow(win);
+    // Wire the zero-copy PTY data channel for this detached window too —
+    // its renderer needs the same `window.cmux.panes.onData` surface that
+    // the main window has, served by a dedicated MessageChannelMain.
+    void import('./pty-host-client-singleton').then(({ getPaneDataChannelManager }) => {
+      getPaneDataChannelManager()?.attachWindow(win);
+    });
     win.on('closed', () => {
       // Nettoie la map seulement si l'entrée pointe encore sur cette window
       // (au cas où une race aurait déjà ré-attribué la slot).
