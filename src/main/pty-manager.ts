@@ -66,13 +66,12 @@ interface ManagedPane {
   /** Timer de debounce pour proc.resize() — évite les storms 60Hz pendant
    *  les drags de window resize (ConPTY n'aime pas être hammered). */
   resizeTimer?: NodeJS.Timeout;
-  /** Accumulateur des bytes stripped depuis le dernier flush des détecteurs
-   *  non-critiques (URL detection, build/test/server-ready events). On les
-   *  trigger à 4Hz max au lieu d'à chaque chunk : pour de l'agent spew
-   *  intense (100+ chunks/s), réduit le coût des regex de ~95% sans coût UX. */
-  detectorBuf?: string;
-  detectorRawBuf?: string;
-  detectorTimer?: NodeJS.Timeout;
+  /** Accumulateur du raw PTY entre deux ticks d'analyse. Un seul `stripAnsi`
+   *  + une seule passe regex (agent state, needs-input, URL, build/test events)
+   *  par tick au lieu de N fois par chunk. Pour un spew d'agent (100-300
+   *  chunks/s), on passe de ~250 strips/s à ~16 strips/s (>90% économisé). */
+  analysisRawBuf?: string;
+  analysisTimer?: NodeJS.Timeout;
 }
 
 interface ManagedSession {
@@ -128,12 +127,11 @@ export class PtyManager extends EventEmitter {
       clearTimeout(mp.resizeTimer);
       mp.resizeTimer = undefined;
     }
-    if (mp.detectorTimer) {
-      clearTimeout(mp.detectorTimer);
-      mp.detectorTimer = undefined;
+    if (mp.analysisTimer) {
+      clearTimeout(mp.analysisTimer);
+      mp.analysisTimer = undefined;
     }
-    mp.detectorBuf = undefined;
-    mp.detectorRawBuf = undefined;
+    mp.analysisRawBuf = undefined;
   }
 
   /** AbortController : annulé au shutdown pour que tout async en vol
@@ -818,26 +816,21 @@ export class PtyManager extends EventEmitter {
       // que de leak dans le nouveau pane.
       if (!curMp || curMp.process !== child) return;
 
-      // Strip ANSI une seule fois et router le résultat aux consommateurs.
-      // Avant : stripAnsi() appelé 3x par chunk (updateAgentState +
-      // emitAttention + detectEvents) sur le même input. Sur des streams
-      // d'agent (Claude Code peut sortir des centaines de chunks/s), ça
-      // dominait le coût CPU du hot path.
-      const stripped = stripAnsi(text);
-
       try {
-        // Real-time : heartbeat, attention (badge), agent state (spinner UI),
-        // OSC notifications (action utilisateur explicite). Ne peuvent pas
-        // être throttlés sans dégrader la UX.
-        this.updateHeartbeat(curMp, paneId);
-        this.emitAttention(paneId, text, stripped);
-        this.updateAgentState(paneId, curMp, stripped);
+        // Per-chunk (critique temps-réel, coût constant) :
+        //  - heartbeat (mutation in-place + emit throttled 1Hz)
+        //  - bell (1 char scan, signal rare)
+        //  - OSC events (notifications agent explicites)
+        //  - boot/initialInput state machine
+        // Le strip ANSI + tous les détecteurs regex (agent state, needs-input,
+        // URL, build/test) sont déplacés dans un tick coalescé 60 ms — pour
+        // un spew à 200 chunks/s on passe de 200 strips/s à ~16 strips/s.
+        const now = Date.now();
+        this.updateHeartbeat(curMp, paneId, now);
+        if (text.indexOf('\x07') >= 0) this.emit('paneAttention', paneId, 'alert');
         for (const ev of detectOscEvents(paneId, text)) this.emit('eventDetected', ev);
         this.maybeWriteInitialInput(curMp);
-        // Throttled (4Hz max) : URL detection + event detection (build/test).
-        // Ces deux ne sont pas latence-sensibles (< 250ms imperceptible) et
-        // dominent le coût regex sur un spew agent intense.
-        this.scheduleThrottledDetectors(cur, curMp, paneId, text, stripped);
+        this.scheduleAnalysisTick(cur, curMp, paneId, text, now);
       } catch (err) {
         // Une exception dans un helper ne doit jamais tuer le main process —
         // on log et on continue pour ne pas perdre le PTY.
@@ -889,8 +882,7 @@ export class PtyManager extends EventEmitter {
    *  la valeur n'est de toute façon visible côté renderer que quand un autre
    *  event piggyback la session — 1s de fraîcheur suffit largement aux
    *  consommateurs (useIsTyping 600ms tick, useStaleness 30s tick). */
-  private updateHeartbeat(mp: ManagedPane, paneId: PaneId): void {
-    const now = Date.now();
+  private updateHeartbeat(mp: ManagedPane, paneId: PaneId, now: number = Date.now()): void {
     mp.lastDataAt = now;
     if (now - (mp.lastHeartbeatEmit ?? 0) < 1000) return;
     mp.lastHeartbeatEmit = now;
@@ -959,66 +951,63 @@ export class PtyManager extends EventEmitter {
     }, IDLE_AFTER_MS + 100);
   }
 
-  /** Détection d'attention (style tmux) — needs-input > alert (bell) > activity.
-   *  Activity throttlé à 500ms — sinon on flood quand l'agent stream.
-   *  L'appelant fournit déjà `stripped` (cf. onData). */
-  private emitAttention(paneId: PaneId, data: string, stripped: string): void {
-    const isBell = data.includes('\x07');
-    if (detectsNeedsInput(stripped)) {
-      this.emit('paneAttention', paneId, 'needs-input');
-      return;
-    }
-    if (isBell) {
-      this.emit('paneAttention', paneId, 'alert');
-      return;
-    }
-    const now = Date.now();
-    const last = this.lastActivityEmit.get(paneId) ?? 0;
-    if (now - last > 500) {
-      this.lastActivityEmit.set(paneId, now);
-      this.emit('paneAttention', paneId, 'activity');
-    }
-  }
-
-  /** Détection d'URLs — merge dans recentUrls du pane et émet urlsDetected.
-   *  L'appelant fournit déjà `stripped` (cf. onData). */
-  /** Accumule les chunks et trigger les détecteurs URL/event à 4Hz max.
-   *  Throttle car ces détecteurs (regex URL_RE, event regex patterns) sont
-   *  les plus coûteux mais aucun n'est latence-critique : 250ms d'attente
-   *  sur une URL détectée ou un "build success" est imperceptible pour l'UX. */
-  private scheduleThrottledDetectors(
+  /** Tick coalescé 60 ms — concentre TOUT le travail regex/strip ANSI pour un
+   *  pane en une seule passe par tick au lieu d'à chaque chunk PTY :
+   *    1. `stripAnsi(raw)` — alloue 1 string au lieu de N
+   *    2. agent state derivation (3 regex tests sur le tail clamped à 2 KB)
+   *    3. needs-input detection (regex sur le tail clamped à 200 chars)
+   *    4. URL extraction + merge dans recentUrls
+   *    5. event detection (build/test/server-ready)
+   *    6. activity attention (throttle 500 ms — émise depuis le tick)
+   *
+   *  Cadence 60 ms = 16.6 Hz : plus rapide que le seuil de perception humaine
+   *  (~100 ms), donc spinner et badges restent ressentis comme temps-réel.
+   *  Bell (alert) et OSC events restent inline dans onData pour rester
+   *  strictement synchrones — ces signaux sont rares mais latence-critiques. */
+  private static readonly ANALYSIS_TICK_MS = 60;
+  private static readonly ANALYSIS_RAW_MAX = 64_000;
+  private scheduleAnalysisTick(
     cur: ManagedSession,
     mp: ManagedPane,
     paneId: PaneId,
     raw: string,
-    stripped: string
+    now: number
   ): void {
-    // Accumule. Cap à 16KB pour éviter qu'un flush retardé concatène un buffer
-    // énorme (l'agent peut spew des MB par seconde) — on garde la tail.
-    const MAX = 16_384;
-    mp.detectorBuf = (mp.detectorBuf ?? '') + stripped;
-    mp.detectorRawBuf = (mp.detectorRawBuf ?? '') + raw;
-    if (mp.detectorBuf.length > MAX) mp.detectorBuf = mp.detectorBuf.slice(-MAX);
-    if (mp.detectorRawBuf.length > MAX) mp.detectorRawBuf = mp.detectorRawBuf.slice(-MAX);
-    if (mp.detectorTimer) return;
-    mp.detectorTimer = setTimeout(() => {
-      mp.detectorTimer = undefined;
-      const stripBatch = mp.detectorBuf;
-      const rawBatch = mp.detectorRawBuf;
-      mp.detectorBuf = undefined;
-      mp.detectorRawBuf = undefined;
-      if (!stripBatch) return;
+    mp.analysisRawBuf = (mp.analysisRawBuf ?? '') + raw;
+    if (mp.analysisRawBuf.length > PtyManager.ANALYSIS_RAW_MAX) {
+      mp.analysisRawBuf = mp.analysisRawBuf.slice(-PtyManager.ANALYSIS_RAW_MAX);
+    }
+    // Activity attention — la mesure du throttle est ici (idem ancien
+    // emitAttention) mais le check exploite le `now` cached du onData.
+    const lastAct = this.lastActivityEmit.get(paneId) ?? 0;
+    if (now - lastAct > 500) {
+      this.lastActivityEmit.set(paneId, now);
+      this.emit('paneAttention', paneId, 'activity');
+    }
+    if (mp.analysisTimer) return;
+    mp.analysisTimer = setTimeout(() => {
+      mp.analysisTimer = undefined;
+      const rawBatch = mp.analysisRawBuf;
+      mp.analysisRawBuf = undefined;
+      if (!rawBatch) return;
       try {
-        this.processNewUrls(cur, paneId, stripBatch);
-        for (const ev of detectEventsFromStripped(paneId, stripBatch))
+        const stripped = stripAnsi(rawBatch);
+        // 1. État d'agent (spinner / generating / idle).
+        this.updateAgentState(paneId, mp, stripped);
+        // 2. needs-input — overrides activity dans l'UI (badge dédié).
+        if (detectsNeedsInput(stripped)) {
+          this.emit('paneAttention', paneId, 'needs-input');
+        }
+        // 3. URL detection (additive, dédupliquée dans processNewUrls).
+        this.processNewUrls(cur, paneId, stripped);
+        // 4. Event detection (build/test/server-ready — additif).
+        for (const ev of detectEventsFromStripped(paneId, stripped)) {
           this.emit('eventDetected', ev);
-        // detectOscEvents reste sur le raw — déjà fait inline (real-time) sur
-        // chaque chunk. Pas besoin de le rejouer ici.
-        void rawBatch;
+        }
       } catch (err) {
-        log.error('[pty] throttled detectors threw', err);
+        log.error('[pty] analysis tick threw', err);
       }
-    }, 250);
+    }, PtyManager.ANALYSIS_TICK_MS);
   }
 
   private processNewUrls(cur: ManagedSession, paneId: PaneId, stripped: string): void {

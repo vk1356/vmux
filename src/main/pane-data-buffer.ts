@@ -84,10 +84,18 @@ export class PaneDataBuffer extends EventEmitter {
   /** Adaptive flush — Phase 3 : un petit chunk (< THRESHOLD) qui arrive après
    *  > SILENCE_WINDOW_MS de silence est flushé IMMÉDIATEMENT et synchroniquement
    *  au lieu d'attendre le tick 16 ms. Profil cible : keystroke→echo. Pendant
-   *  le spew (chunks > 512 ou succession rapide), on reste sur le timer 60 Hz
-   *  pour bénéficier de la coalescence (débit prioritaire). */
-  static readonly INTERACTIVE_THRESHOLD = 512;
-  static readonly SILENCE_WINDOW_MS = 50;
+   *  le spew (chunks > THRESHOLD ou succession rapide), on reste sur le timer
+   *  pour bénéficier de la coalescence (débit prioritaire).
+   *
+   *  Seuils calibrés v0.13.7 pour battre la latence PowerShell native :
+   *    - SILENCE_WINDOW = 16 ms (≤ 1 frame). Un typist à 60 Hz (16ms/touche)
+   *      déclenche encore l'interactive flush — avant à 50ms le 2e keystroke
+   *      tombait dans le timer 16ms et accumulait 16-30ms de latence.
+   *    - THRESHOLD     = 2048 B. Un prompt pwsh complet (timestamp + cwd +
+   *      ANSI styling) tient < 1KB, donc tout le re-paint du prompt après un
+   *      keystroke part en interactive flush au lieu d'attendre le timer. */
+  static readonly INTERACTIVE_THRESHOLD = 2048;
+  static readonly SILENCE_WINDOW_MS = 16;
 
   push(paneId: PaneId, data: Uint8Array): void {
     if (data.byteLength === 0) return;

@@ -211,12 +211,13 @@ describe('PaneDataBuffer (byte mode)', () => {
     vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
     vi.advanceTimersByTime(PaneDataBuffer.SILENCE_WINDOW_MS + 5);
 
-    // A 1 KiB push exceeds INTERACTIVE_THRESHOLD (512) → spew regime, coalesce.
-    buf.push('p', new Uint8Array(1024).fill(0x41));
+    // A push >= INTERACTIVE_THRESHOLD → spew regime, coalesce via timer.
+    const size = PaneDataBuffer.INTERACTIVE_THRESHOLD + 64;
+    buf.push('p', new Uint8Array(size).fill(0x41));
     expect(seen).toHaveLength(1); // only the prime flush so far
     vi.advanceTimersByTime(PaneDataBuffer.FLUSH_INTERVAL_MS + 1);
     expect(seen).toHaveLength(2);
-    expect(seen[1]).toBe(1024);
+    expect(seen[1]).toBe(size);
     expect(buf.lastFlushReason).toBe('coalesced');
   });
 

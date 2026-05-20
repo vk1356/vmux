@@ -103,27 +103,41 @@ export class PtyHostClient extends EventEmitter {
     });
   }
 
+  /** Fire-and-forget RPC : skip l'alloc Promise + pending Map entry du `call()`
+   *  classique. Le host renvoie quand même un reply ; PtyHostClient.handle()
+   *  drop silencieusement les replies sans match (cf. `if (!p) return`).
+   *
+   *  Utilisé pour les hot paths où la latence d'allocation compte (writePane
+   *  à chaque keystroke, resizePane pendant un drag). Économie : ~1 Promise
+   *  + 1 Map.set par appel, soit ~100-500 ns chacun. */
+  private notify(method: HostRequest['method'], args: readonly unknown[]): void {
+    const id = this.nextId++;
+    try {
+      this.sup.send({ id, method, args });
+    } catch (err) {
+      log.debug('[pty-host-client] notify', err);
+    }
+  }
+
   // ---- Synchronous reads served from the snapshot ----
   list(): Session[] { return [...this.snapshot]; }
   sessionForPane(paneId: PaneId): string | undefined { return this.paneIndex.get(paneId); }
 
   // ---- Fire-and-forget (no reply awaited; matches current void methods) ----
   writePane(paneId: string, data: string): void {
-    void this.call('writePane', [paneId, data]).catch((e) =>
-      log.debug('[pty-host-client] writePane', e));
+    this.notify('writePane', [paneId, data]);
   }
   resizePane(paneId: string, size: unknown): void {
-    void this.call('resizePane', [paneId, size]).catch((e) =>
-      log.debug('[pty-host-client] resizePane', e));
+    this.notify('resizePane', [paneId, size]);
   }
   focusPane(sessionId: string, paneId: string): void {
-    void this.call('focusPane', [sessionId, paneId]);
+    this.notify('focusPane', [sessionId, paneId]);
   }
   resizeSplit(sessionId: string, splitPath: unknown, sizes: number[]): void {
-    void this.call('resizeSplit', [sessionId, splitPath, sizes]);
+    this.notify('resizeSplit', [sessionId, splitPath, sizes]);
   }
   setPaneUrl(sessionId: string, paneId: string, url: string): void {
-    void this.call('setPaneUrl', [sessionId, paneId, url]);
+    this.notify('setPaneUrl', [sessionId, paneId, url]);
   }
 
   // ---- Async (already Promise-returning in the current API) ----
