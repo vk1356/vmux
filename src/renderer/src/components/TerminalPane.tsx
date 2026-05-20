@@ -591,6 +591,72 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     }
   }, [settings?.webglRenderer, settings]);
 
+  // Perf phase 4 — hidden-pane WebGL slot release.
+  //   Visible → hidden: drop the GPU context immediately (frees pool capacity
+  //     for the active session's panes — kills the >16-context cascade-loss
+  //     bug). xterm falls back to its DOM renderer until visibility returns.
+  //   Hidden → visible: re-acquire a slot if WebGL is enabled and the pool
+  //     has room. If full, register a one-shot upgrade waiter so we attach
+  //     WebGL the moment another pane releases.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term || !settings?.webglRenderer) return undefined;
+    const pid = pane.id;
+    if (!visible) {
+      if (webglSlotRef.current) {
+        try { ligaturesRef.current?.dispose(); } catch { /* ignore */ }
+        ligaturesRef.current = null;
+        try { webglSlotRef.current.release(); } catch { /* idempotent */ }
+        webglSlotRef.current = null;
+        webglRef.current = null;
+      }
+      return undefined;
+    }
+    // Visible: try to re-acquire if we don't have a slot already.
+    if (!webglSlotRef.current) {
+      const factory = (t: Terminal): import('@xterm/xterm').ITerminalAddon => {
+        const w = new WebglAddon();
+        w.onContextLoss(() => {
+          try { ligaturesRef.current?.dispose(); } catch { /* ignore */ }
+          ligaturesRef.current = null;
+          try { webglSlotRef.current?.release({ cooldown: true }); } catch { /* idempotent */ }
+          webglSlotRef.current = null;
+          webglRef.current = null;
+        });
+        t.loadAddon(w);
+        return w;
+      };
+      const slot = webglPool.acquire(pid, term, factory);
+      if (slot) {
+        webglSlotRef.current = slot;
+        webglRef.current = slot.addon as WebglAddon;
+      } else {
+        // Pool full or cooldown — wait for a slot to free, then retry.
+        const off = webglPool.requestUpgrade(pid, () => {
+          const t = termRef.current;
+          if (!t || webglSlotRef.current) return;
+          const s = webglPool.acquire(pid, t, factory);
+          if (s) {
+            webglSlotRef.current = s;
+            webglRef.current = s.addon as WebglAddon;
+          }
+        });
+        return () => off();
+      }
+    } else {
+      // Already holds a slot — refresh LRU recency.
+      webglPool.touch(pid);
+    }
+    return undefined;
+  }, [visible, pane.id, settings?.webglRenderer]);
+
+  // Live `webglPoolSize` — applies immediately (shrink evicts LRU, grow
+  // unblocks waiters via the pool's setSize implementation).
+  useEffect(() => {
+    if (!settings) return;
+    webglPool.setSize(settings.webglPoolSize ?? 6);
+  }, [settings?.webglPoolSize, settings]);
+
   // ─────────────────────────────────────────────────────────────────────────
   // CLEANUP au démontage. Ordre critique :
   //   1. Null `termRef.current` AVANT dispose() pour que les callbacks
