@@ -16,43 +16,101 @@ import {
   isHostRequest, isHostControl, type HostEvent, type HostReply
 } from '@shared/pty-host-protocol';
 
-const mgr = createPtyManager();
 const port = process.parentPort;
 
-function post(msg: HostEvent | HostReply): void {
-  port.postMessage(msg);
+/** Best-effort: try to post a message; swallow any throw so a dead/closed
+ *  parentPort cannot kill the host via a rethrown EventEmitter error. */
+function safePost(msg: HostEvent | HostReply): void {
+  try {
+    port.postMessage(msg);
+  } catch {
+    /* parentPort dead — host is exiting anyway */
+  }
 }
 
+function post(msg: HostEvent | HostReply): void {
+  safePost(msg);
+}
+
+// Last-resort safety net: surface ANY uncaught exception or unhandled rejection
+// to main via parentPort BEFORE the host dies. Pre-v0.13.4 a silent throw here
+// killed the host on every session launch, looking from the outside like an
+// empty terminal. Installed FIRST so it covers module-load errors of every
+// import below.
+process.on('uncaughtException', (err: Error) => {
+  safePost({
+    kind: 'hostError',
+    where: 'uncaughtException',
+    message: `${err.message}\n${err.stack ?? '(no stack)'}`
+  });
+});
+process.on('unhandledRejection', (reason: unknown) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+  safePost({
+    kind: 'hostError',
+    where: 'unhandledRejection',
+    message: `${err.message}\n${err.stack ?? '(no stack)'}`
+  });
+});
+
+const mgr = createPtyManager();
+
 // ---- Manager event mirroring -----------------------------------------------
+//
+// Each callback wraps its body in try { ... } catch — a throw inside a Node
+// EventEmitter listener re-throws synchronously, which would kill the host
+// when uncaughtException didn't catch in time (or could create a feedback
+// loop if the catcher itself emits). Defense in depth.
+
+function safeOn<A extends unknown[]>(
+  emitter: typeof mgr,
+  event: string,
+  fn: (...a: A) => void
+): void {
+  // Cast the listener through a generic EventEmitter shape so the strongly
+  // typed `mgr.on(K extends keyof Events, ...)` doesn't reject our event-name
+  // string at compile time. The runtime contract is identical (Node calls the
+  // listener with the same args either way).
+  const e = emitter as unknown as { on: (ev: string, l: (...a: unknown[]) => void) => void };
+  e.on(event, (...args: unknown[]) => {
+    try { fn(...(args as A)); } catch (err) {
+      safePost({
+        kind: 'hostError', where: `listener:${event}`,
+        message: err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err)
+      });
+    }
+  });
+}
 
 let firstPaneDataLogged = false;
-mgr.on('paneData', (paneId, data) => {
+safeOn<[string, Uint8Array]>(mgr, 'paneData', (paneId, data) => {
   if (!firstPaneDataLogged) {
     firstPaneDataLogged = true;
     // One-shot diagnostic: confirms pty.onData fires inside the utilityProcess
     // at all. If this log is absent in main.log after a session launch, the
     // bug is in PTY spawn / shell startup, not in transport.
-    try {
-      port.postMessage({
-        kind: 'hostError',
-        where: 'paneData:first',
-        message: `received ${data.byteLength}B for ${paneId}`
-      } as HostEvent);
-    } catch { /* parentPort dead */ }
+    safePost({
+      kind: 'hostError',
+      where: 'paneData:first',
+      message: `received ${data.byteLength}B for ${paneId}`
+    });
   }
   post({ kind: 'paneData', paneId, data });
 });
 
-// Meta events stay on parentPort (low frequency, structured-clone is fine).
-mgr.on('paneStatus', (sessionId, paneId, pane) =>
-  post({ kind: 'paneStatus', sessionId, paneId, pane }));
-mgr.on('sessionUpdate', (session) => post({ kind: 'sessionUpdate', session }));
-mgr.on('urlsDetected', (paneId, urls) => post({ kind: 'urlsDetected', paneId, urls }));
-mgr.on('eventDetected', (event) => post({ kind: 'eventDetected', event }));
-mgr.on('paneAttention', (paneId, level) =>
-  post({ kind: 'paneAttention', paneId, level }));
-mgr.on('paneAgentState', (paneId, state) =>
-  post({ kind: 'paneAgentState', paneId, state }));
+// Meta events go through parentPort too.
+safeOn(mgr, 'paneStatus', (sessionId, paneId, pane) =>
+  post({ kind: 'paneStatus', sessionId: sessionId as string, paneId: paneId as string, pane: pane as never }));
+safeOn(mgr, 'sessionUpdate', (session) =>
+  post({ kind: 'sessionUpdate', session: session as never }));
+safeOn(mgr, 'urlsDetected', (paneId, urls) =>
+  post({ kind: 'urlsDetected', paneId: paneId as string, urls: urls as string[] }));
+safeOn(mgr, 'eventDetected', (event) =>
+  post({ kind: 'eventDetected', event: event as never }));
+safeOn(mgr, 'paneAttention', (paneId, level) =>
+  post({ kind: 'paneAttention', paneId: paneId as string, level: level as never }));
+safeOn(mgr, 'paneAgentState', (paneId, state) =>
+  post({ kind: 'paneAgentState', paneId: paneId as string, state: state as never }));
 
 // ---- Inbound from main: control + RPC --------------------------------------
 
