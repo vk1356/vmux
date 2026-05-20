@@ -22,6 +22,7 @@ export function SettingsTerminal({ settings, apply }: Props): JSX.Element {
   const copySelId = useId();
   const pasteRcId = useId();
   const webglId = useId();
+  const webglPoolId = useId();
 
   const scrollbackFormatted = useMemo(
     () => new Intl.NumberFormat(locale).format(settings.scrollback),
@@ -90,6 +91,25 @@ export function SettingsTerminal({ settings, apply }: Props): JSX.Element {
         {t('fieldWebgl')}
         <span className="hint" style={{ marginLeft: 8 }}>
           {t('fieldWebglHint')}
+        </span>
+      </label>
+      <label className="row" htmlFor={webglPoolId}>
+        <span>{t('fieldWebglPoolSize')}</span>
+        <input
+          id={webglPoolId}
+          type="number"
+          min={1}
+          max={16}
+          step={1}
+          disabled={!settings.webglRenderer}
+          value={settings.webglPoolSize ?? 6}
+          onChange={(e) => {
+            const n = Math.max(1, Math.min(16, Number(e.target.value) || 6));
+            void apply({ webglPoolSize: n });
+          }}
+        />
+        <span className="hint" style={{ marginLeft: 8 }}>
+          {t('fieldWebglPoolSizeHint')}
         </span>
       </label>
     </>

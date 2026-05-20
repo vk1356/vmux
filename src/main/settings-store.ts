@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   copyOnSelection: true,
   pasteOnRightClick: true,
   webglRenderer: true,
+  webglPoolSize: 6,
   sidebarWidth: 22,
   previewToastEnabled: true,
   previewAutoOpen: true,

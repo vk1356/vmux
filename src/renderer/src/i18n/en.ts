@@ -68,6 +68,8 @@ export const EN = {
   fieldPasteRightClick: 'Paste on right-click',
   fieldWebgl: 'WebGL renderer (perf++)',
   fieldWebglHint: 'restart the app to apply',
+  fieldWebglPoolSize: 'WebGL context pool size',
+  fieldWebglPoolSizeHint: 'max GPU contexts (1–16, default 6) — extra panes fall back to DOM',
 
   // Settings → Notifications
   fieldNotifs: 'Windows system notifications',

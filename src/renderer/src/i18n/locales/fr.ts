@@ -62,6 +62,8 @@ const FR = {
   fieldPasteRightClick: 'Coller au clic-droit',
   fieldWebgl: 'Renderer WebGL (perf++)',
   fieldWebglHint: "redémarre l'app pour appliquer",
+  fieldWebglPoolSize: 'Taille du pool de contextes WebGL',
+  fieldWebglPoolSizeHint: 'max contextes GPU (1–16, défaut 6) — les panes en plus passent en DOM',
   fieldNotifs: 'Notifications système Windows',
   fieldNotifsHint:
     "Reçois une notif push (avec icône vMux) quand un agent demande une action ou qu'un événement (build, server, tests) est détecté en arrière-plan.",

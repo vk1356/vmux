@@ -210,6 +210,12 @@ export interface AppSettings {
    *  sous spew d'agent au prix d'un rendu légèrement moins fidèle.
    *  Default: false (qualité visuelle privilégiée). */
   performanceMode?: boolean;
+  /** Taille max du pool de contextes WebGL — perf phase 4. Chromium plafonne
+   *  à ~16 contextes par document avant cascade de loss ; on borne le pool
+   *  pour qu'au-delà de cette limite, les panes excédentaires basculent
+   *  proprement sur le renderer DOM au lieu de subir la perte de contexte.
+   *  Default: 6. Borne pratique [1, 16]. Ignoré si webglRenderer:false. */
+  webglPoolSize?: number;
 }
 
 // ============================================================
