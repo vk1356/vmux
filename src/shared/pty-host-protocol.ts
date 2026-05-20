@@ -62,3 +62,18 @@ export function isHostReply(v: unknown): v is HostReply {
     typeof (v as HostReply).id === 'number'
   );
 }
+
+/** Control messages carrying transferable resources (e.g. MessagePortMain) that
+ *  can't travel inside a HostRequest/Reply structured-clone payload. The port
+ *  itself goes via the `transfer` array of `postMessage(msg, [port])`; this
+ *  envelope just declares "the next port you receive is the pane-data channel".
+ *  Phase 2: only `attachDataPort` exists. */
+export type HostControl =
+  | { readonly kind: 'attachDataPort' };
+
+export function isHostControl(v: unknown): v is HostControl {
+  return (
+    typeof v === 'object' && v !== null && 'kind' in v &&
+    (v as { kind: string }).kind === 'attachDataPort'
+  );
+}

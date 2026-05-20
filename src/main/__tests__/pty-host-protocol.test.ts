@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { isHostEvent, isHostRequest, isHostReply } from '@shared/pty-host-protocol';
+import {
+  isHostEvent, isHostRequest, isHostReply, isHostControl
+} from '@shared/pty-host-protocol';
 
 describe('pty-host-protocol guards', () => {
   it('accepts a well-formed event', () => {
@@ -14,6 +16,17 @@ describe('pty-host-protocol guards', () => {
   });
   it('rejects a non-request', () => {
     expect(isHostRequest({ id: 1 })).toBe(false);
+  });
+
+  describe('isHostControl', () => {
+    it('accepts attachDataPort envelope', () => {
+      expect(isHostControl({ kind: 'attachDataPort' })).toBe(true);
+    });
+    it('rejects unknown control kinds', () => {
+      expect(isHostControl({ kind: 'detach' })).toBe(false);
+      expect(isHostControl(null)).toBe(false);
+      expect(isHostControl({})).toBe(false);
+    });
   });
 
   describe('isHostReply', () => {

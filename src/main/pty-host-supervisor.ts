@@ -20,6 +20,16 @@ export class PtyHostSupervisor {
   private readyResolve: (() => void) | null = null;
   private readyPromise: Promise<void> | null = null;
   private respawning = false;
+  /** Subscribers fired AFTER every (re)spawn ready handshake completes. Used by
+   *  PtyHostClient to (re-)arm its `ready` promise so RPC queued before the new
+   *  child handshaked resolves once it's actually responsive. */
+  private onReadyCbs: Array<() => void> = [];
+  /** Subscribers fired AFTER a crash respawn ready handshake (NOT on initial
+   *  start). Used by pane-data-channel.rebuildAll() to re-issue
+   *  MessageChannelMain ports to the new child whose old entangled ports are
+   *  dead with the previous process. */
+  private onRespawnCbs: Array<() => void> = [];
+  private firstReady = true;
 
   /** Absolute path to the bundled host entry (electron-vite emits it next to
    *  index.js — __dirname is out/main at runtime). */
@@ -69,6 +79,19 @@ export class PtyHostSupervisor {
       if (isHostReply(msg) && msg.id === 0 && msg.result === 'ready') {
         this.readyResolve?.();
         this.readyResolve = null;
+        // Fire ready subscribers (initial + every respawn). Crash isolation:
+        // each callback wrapped so a thrower can't kill subsequent ones.
+        for (const cb of this.onReadyCbs) {
+          try { cb(); } catch (err) { log.error('[pty-host] onReady cb threw', err); }
+        }
+        if (!this.firstReady) {
+          // Respawn-only — channels owned by the previous child are entangled
+          // with a dead process and need rebuilding.
+          for (const cb of this.onRespawnCbs) {
+            try { cb(); } catch (err) { log.error('[pty-host] onRespawn cb threw', err); }
+          }
+        }
+        this.firstReady = false;
         return;
       }
       this.onMessageCb?.(msg);
@@ -95,8 +118,32 @@ export class PtyHostSupervisor {
     this.child?.postMessage(msg);
   }
 
+  /** Post a message together with transferables (e.g. a MessagePortMain). The
+   *  port is moved to the child process; once transferred it's no longer
+   *  usable here. Used by pane-data-channel to hand the host one port half of
+   *  each per-window MessageChannelMain. */
+  sendWithPorts(msg: unknown, ports: readonly Electron.MessagePortMain[]): void {
+    // Electron's UtilityProcess.postMessage accepts an optional transfer array
+    // as the second arg. Spread cast to satisfy the variadic shape.
+    (this.child as unknown as {
+      postMessage: (m: unknown, t?: readonly Electron.MessagePortMain[]) => void;
+    } | null)?.postMessage(msg, ports);
+  }
+
   onMessage(cb: IncomingHandler): void {
     this.onMessageCb = cb;
+  }
+
+  /** Subscribe to every (re)spawn ready handshake. Use for state that must be
+   *  re-armed on each new host instance (e.g. PtyHostClient.ready). */
+  onReady(cb: () => void): void {
+    this.onReadyCbs.push(cb);
+  }
+
+  /** Subscribe to crash respawn handshakes (excludes initial start). Use for
+   *  resources entangled with the previous child process (e.g. data ports). */
+  onRespawn(cb: () => void): void {
+    this.onRespawnCbs.push(cb);
   }
 
   async stop(): Promise<void> {

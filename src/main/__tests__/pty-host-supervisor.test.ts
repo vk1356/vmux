@@ -84,3 +84,87 @@ describe('PtyHostSupervisor.start() bounded timeout', () => {
     expect(lastChild.kill).not.toHaveBeenCalled();
   });
 });
+
+describe('PtyHostSupervisor port transfer + (re)spawn hooks', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('sendWithPorts forwards both message and transfer list to the child', async () => {
+    const sup = new PtyHostSupervisor();
+    const p = sup.start();
+    lastChild._handlers.message?.({ id: 0, result: 'ready' });
+    await p;
+
+    const fakePort = { __port: true } as unknown as Electron.MessagePortMain;
+    sup.sendWithPorts({ kind: 'attachDataPort' }, [fakePort]);
+
+    // postMessage called with (msg, [port]) — the variadic 2nd arg is the
+    // transfer list expected by Electron's UtilityProcess.postMessage.
+    expect(lastChild.postMessage).toHaveBeenCalledWith(
+      { kind: 'attachDataPort' },
+      [fakePort]
+    );
+  });
+
+  it('onReady fires on initial start AND on respawn', async () => {
+    const sup = new PtyHostSupervisor();
+    const cb = vi.fn();
+    sup.onReady(cb);
+
+    const p = sup.start();
+    lastChild._handlers.message?.({ id: 0, result: 'ready' });
+    await p;
+    expect(cb).toHaveBeenCalledTimes(1);
+
+    // Simulate crash → supervisor respawns; another ready handshake fires.
+    lastChild._handlers.exit?.(1);
+    // The exit handler synchronously kicks respawn → fork → new lastChild.
+    lastChild._handlers.message?.({ id: 0, result: 'ready' });
+    // Drain microtasks (readyPromise.then in respawn).
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledTimes(2);
+  });
+
+  it('onRespawn fires ONLY on respawn (not on initial start)', async () => {
+    const sup = new PtyHostSupervisor();
+    const cb = vi.fn();
+    sup.onRespawn(cb);
+
+    const p = sup.start();
+    lastChild._handlers.message?.({ id: 0, result: 'ready' });
+    await p;
+    expect(cb).not.toHaveBeenCalled();
+
+    // Crash → respawn → second ready: callback fires.
+    lastChild._handlers.exit?.(1);
+    lastChild._handlers.message?.({ id: 0, result: 'ready' });
+    await Promise.resolve();
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('a throwing onReady callback does not break subsequent callbacks', async () => {
+    const sup = new PtyHostSupervisor();
+    const bad = vi.fn(() => {
+      throw new Error('boom');
+    });
+    const good = vi.fn();
+    sup.onReady(bad);
+    sup.onReady(good);
+
+    const p = sup.start();
+    lastChild._handlers.message?.({ id: 0, result: 'ready' });
+    await p;
+
+    expect(bad).toHaveBeenCalled();
+    expect(good).toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      '[pty-host] onReady cb threw',
+      expect.any(Error)
+    );
+  });
+});
