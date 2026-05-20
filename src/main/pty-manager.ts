@@ -734,9 +734,12 @@ export class PtyManager extends EventEmitter {
         rows,
         cwd: pane.cwd,
         env,
-        // utf8 est le défaut de node-pty 1.1 mais on l'explicite — forward-compat
-        // si un futur major change le défaut, et clarifie l'intention.
-        encoding: 'utf8',
+        // Byte-mode (perf phase 2) : node-pty livre des Buffer bruts au lieu
+        // de strings utf-8 décodées. On évite ainsi le coût UTF-16↔UTF-8 sur
+        // chaque chunk (onData appelée à plusieurs centaines de Hz en spew).
+        // Les bytes filent direct vers PaneDataBuffer → MessagePort transfer.
+        // node-pty types `data` comme string dans .d.ts ; cast côté runtime.
+        encoding: null as unknown as 'utf8',
         ...winOpts
       });
     } catch (err) {
@@ -788,10 +791,12 @@ export class PtyManager extends EventEmitter {
 
     mp.dataSub = child.onData((data) => {
       if (this.isShuttingDown) return;
-      // Batch côté main : agrège les chunks pour réduire l'overhead IPC.
-      // Transient encode string→bytes — Task 2.4 switches node-pty to Buffer
-      // mode (encoding:null) and `data` arrives as a Buffer directly.
-      this.dataBuffer.push(paneId, this.encoder.encode(data));
+      // node-pty est en encoding:null → `data` est en fait un Buffer au runtime
+      // bien que typé string dans .d.ts. Cast safe pour le hot path byte-mode.
+      const bytes = data as unknown as Buffer;
+      // Batch côté main : agrège les bytes pour réduire l'overhead IPC.
+      // Zéro transcode — le buffer livrera ces mêmes octets sur le flush.
+      this.dataBuffer.push(paneId, bytes);
 
       const cur = this.sessions.get(sessionId);
       if (!cur) return;
@@ -800,26 +805,33 @@ export class PtyManager extends EventEmitter {
       // que de leak dans le nouveau pane.
       if (!curMp || curMp.process !== child) return;
 
+      // Décode UTF-8 pour les détecteurs/agent-state qui travaillent en string.
+      // Phase-2 transient : décodage non-streaming (Task 2.8 introduira un
+      // TextDecoder {stream:true} par pane pour gérer les multi-byte coupés
+      // aux frontières de chunks). Les bytes pour xterm sont déjà partis dans
+      // le buffer — l'analyse n'est PAS sur le chemin renderer.
+      const text = new TextDecoder('utf-8').decode(bytes);
+
       // Strip ANSI une seule fois et router le résultat aux consommateurs.
       // Avant : stripAnsi() appelé 3x par chunk (updateAgentState +
       // emitAttention + detectEvents) sur le même input. Sur des streams
       // d'agent (Claude Code peut sortir des centaines de chunks/s), ça
       // dominait le coût CPU du hot path.
-      const stripped = stripAnsi(data);
+      const stripped = stripAnsi(text);
 
       try {
         // Real-time : heartbeat, attention (badge), agent state (spinner UI),
         // OSC notifications (action utilisateur explicite). Ne peuvent pas
         // être throttlés sans dégrader la UX.
         this.updateHeartbeat(curMp, paneId);
-        this.emitAttention(paneId, data, stripped);
+        this.emitAttention(paneId, text, stripped);
         this.updateAgentState(paneId, curMp, stripped);
-        for (const ev of detectOscEvents(paneId, data)) this.emit('eventDetected', ev);
+        for (const ev of detectOscEvents(paneId, text)) this.emit('eventDetected', ev);
         this.maybeWriteInitialInput(curMp);
         // Throttled (4Hz max) : URL detection + event detection (build/test).
         // Ces deux ne sont pas latence-sensibles (< 250ms imperceptible) et
         // dominent le coût regex sur un spew agent intense.
-        this.scheduleThrottledDetectors(cur, curMp, paneId, data, stripped);
+        this.scheduleThrottledDetectors(cur, curMp, paneId, text, stripped);
       } catch (err) {
         // Une exception dans un helper ne doit jamais tuer le main process —
         // on log et on continue pour ne pas perdre le PTY.
