@@ -25,7 +25,8 @@ export interface HostReply {
 }
 
 /** Push events — names + payload tuples mirror PtyManager's `Events` type
- *  exactly so the client can re-`emit` them unchanged. */
+ *  exactly so the client can re-`emit` them unchanged. `hostError` is host-internal
+ *  diagnostics surfaced to main's electron-log (not a PtyManager event). */
 export type HostEvent =
   | { kind: 'paneData'; paneId: PaneId; data: Uint8Array }
   | { kind: 'paneStatus'; sessionId: string; paneId: PaneId; pane: TerminalPane }
@@ -33,11 +34,12 @@ export type HostEvent =
   | { kind: 'urlsDetected'; paneId: PaneId; urls: string[] }
   | { kind: 'eventDetected'; event: DetectedEvent }
   | { kind: 'paneAttention'; paneId: PaneId; level: PaneAttentionLevel }
-  | { kind: 'paneAgentState'; paneId: PaneId; state: AgentRunState };
+  | { kind: 'paneAgentState'; paneId: PaneId; state: AgentRunState }
+  | { kind: 'hostError'; where: string; message: string };
 
 const EVENT_KINDS = new Set<HostEvent['kind']>([
   'paneData', 'paneStatus', 'sessionUpdate', 'urlsDetected',
-  'eventDetected', 'paneAttention', 'paneAgentState'
+  'eventDetected', 'paneAttention', 'paneAgentState', 'hostError'
 ]);
 
 export function isHostEvent(v: unknown): v is HostEvent {

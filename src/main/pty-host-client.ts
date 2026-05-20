@@ -74,7 +74,7 @@ export class PtyHostClient extends EventEmitter {
    *  host emit that might predate the cross-process transport. */
   private dispatch(e: HostEvent): void {
     switch (e.kind) {
-      case 'paneData': /* zero-copy via MessagePort — no main hop */ break;
+      case 'paneData': /* via MessagePort — no main hop */ break;
       case 'paneStatus': this.emit('paneStatus', e.sessionId, e.paneId, e.pane); break;
       case 'sessionUpdate':
         this.emit('sessionUpdate', e.session); break;
@@ -82,6 +82,7 @@ export class PtyHostClient extends EventEmitter {
       case 'eventDetected': this.emit('eventDetected', e.event); break;
       case 'paneAttention': this.emit('paneAttention', e.paneId, e.level); break;
       case 'paneAgentState': this.emit('paneAgentState', e.paneId, e.state); break;
+      case 'hostError': log.error(`[pty-host:${e.where}] ${e.message}`); break;
     }
   }
 

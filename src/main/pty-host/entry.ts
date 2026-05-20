@@ -2,11 +2,14 @@
 // (node-pty + PaneDataBuffer + all analysis). Bridges parentPort <-> manager:
 //   inbound  HostRequest                              -> manager method call -> HostReply
 //   inbound  HostControl(attachDataPort) + ports[0]   -> store renderer port
-//   manager  paneData event                           -> dataPort.postMessage(frame, [frame])
+//   manager  paneData event                           -> dataPort.postMessage(frame)
 //   manager  other meta events                        -> parentPort post (low-freq, structured-clone)
 //
-// The PTY byte path bypasses `main` entirely via transferred MessagePortMain —
-// frame.buffer is moved to the renderer, never deserialized on the main thread.
+// The PTY byte path bypasses `main` entirely via a transferred MessagePortMain.
+// The frame ArrayBuffer travels by structured-clone (Electron's MessagePortMain
+// transfer list only accepts MessagePortMain[], not ArrayBuffer) — still a big
+// win vs the legacy path: no main thread, no v8 context crossing, no IPC string
+// serialization. See the comment on flushPreQueueTo below.
 import { createPtyManager } from '../pty-manager';
 import {
   isHostRequest, isHostControl, type HostEvent, type HostReply
@@ -39,27 +42,25 @@ function enqueuePre(frame: ArrayBuffer): void {
   }
 }
 
-/** Electron's MessagePortMain.postMessage TS types only declare MessagePortMain[]
- *  as transferable, but the underlying Chromium MessagePort accepts ArrayBuffer
- *  transferables too (the entire point of this transport). Narrow cast so the
- *  hot path can pass a frame's ArrayBuffer for true zero-copy detach. */
-type AnyTransferable = ArrayBuffer | Electron.MessagePortMain;
-type AnyTransferablePort = {
-  postMessage: (msg: unknown, transfer?: readonly AnyTransferable[]) => void;
-  start: () => void;
-  on: Electron.MessagePortMain['on'];
-};
-const asAnyPort = (p: Electron.MessagePortMain): AnyTransferablePort =>
-  p as unknown as AnyTransferablePort;
+/** Electron's `MessagePortMain.postMessage(msg, transfer?)` types AND runtime
+ *  only accept `MessagePortMain[]` in the transfer list — `ArrayBuffer` in the
+ *  transfer list throws synchronously and the host loses the frame silently.
+ *  We pass the frame as the message (structured-clone of the ArrayBuffer ≈ one
+ *  memcpy of ≤ ~50 KB per flush). The win vs the pre-Phase-2 IPC path is still
+ *  large: zero hop through `main`, no string serialization, no v8 contextcrossing.
+ *  True zero-copy via transfer would require Chromium's MessagePort directly
+ *  (renderer ↔ renderer) — not available host-side. */
 
 function flushPreQueueTo(p: Electron.MessagePortMain): void {
   if (preQueue.length === 0) return;
-  const ap = asAnyPort(p);
   for (const f of preQueue) {
     try {
-      ap.postMessage(f, [f]);
-    } catch {
-      /* port closed mid-drain — caller will prune */
+      p.postMessage(f);
+    } catch (err) {
+      // Port closed mid-drain — caller will prune via 'close' handler. Logged
+      // because a hot path swallowing errors silently is exactly what caused
+      // the v0.13.0 empty-terminal incident.
+      logHostError('flushPreQueueTo', err);
     }
   }
   preQueue.length = 0;
@@ -67,15 +68,16 @@ function flushPreQueueTo(p: Electron.MessagePortMain): void {
 }
 
 function postFrame(paneId: string, payload: Uint8Array): void {
-  // Single-window fast path: one encode, one transfer, true zero-copy.
+  // Single-window fast path: one encode, one post.
   if (dataPorts.length === 1) {
     const frame = encodeFrame(paneId, payload);
     try {
-      asAnyPort(dataPorts[0]).postMessage(frame, [frame]);
-    } catch {
-      // Port closed unexpectedly; the 'close' handler will prune. We don't
-      // re-queue: the buffer's coalescing absorbs the gap, and a respawn
-      // restart will replay state via sessionUpdate.
+      dataPorts[0].postMessage(frame);
+    } catch (err) {
+      // Port closed unexpectedly; 'close' handler will prune. We don't re-queue:
+      // the buffer's coalescing absorbs the gap, and a respawn restart will
+      // replay state via sessionUpdate.
+      logHostError('postFrame[1]', err);
     }
     return;
   }
@@ -83,15 +85,26 @@ function postFrame(paneId: string, payload: Uint8Array): void {
     enqueuePre(encodeFrame(paneId, payload));
     return;
   }
-  // Multi-window fan-out: one frame per port (each transferable independently).
-  // Allocation cost paid only when a detached window exists.
+  // Multi-window fan-out: one frame per port (structured-clone per receiver).
   for (const p of dataPorts) {
     const frame = encodeFrame(paneId, payload);
     try {
-      asAnyPort(p).postMessage(frame, [frame]);
-    } catch {
-      /* prune via close handler */
+      p.postMessage(frame);
+    } catch (err) {
+      logHostError('postFrame[N]', err);
     }
+  }
+}
+
+/** Surface host-side hot-path errors to main via parentPort so they end up in
+ *  the existing electron-log file instead of disappearing in the utility
+ *  process's stderr. Stringified once — never structured-cloned across. */
+function logHostError(where: string, err: unknown): void {
+  try {
+    const msg = err instanceof Error ? err.message : String(err);
+    port.postMessage({ kind: 'hostError', where, message: msg } as HostEvent);
+  } catch {
+    /* parentPort itself dead — process is exiting anyway */
   }
 }
 
