@@ -5,7 +5,9 @@ import { app } from 'electron';
 import log from 'electron-log/main';
 import { DEFAULT_AGENTS } from '@shared/agents';
 import { checkAgents } from './agent-check';
-import { ptyManager } from './pty-manager';
+// Live host-client proxy — NOT './pty-manager' (that singleton runs in the main
+// process and is always empty; real sessions live in the PTY-host utilityProcess).
+import { ptyManager } from './pty-host-client-singleton';
 import { getSettings } from './settings-store';
 
 interface SafeDiagnosticSettings {

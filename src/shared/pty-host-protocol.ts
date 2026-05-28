@@ -35,11 +35,14 @@ export type HostEvent =
   | { kind: 'eventDetected'; event: DetectedEvent }
   | { kind: 'paneAttention'; paneId: PaneId; level: PaneAttentionLevel }
   | { kind: 'paneAgentState'; paneId: PaneId; state: AgentRunState }
-  | { kind: 'hostError'; where: string; message: string };
+  | { kind: 'hostError'; where: string; message: string }
+  // Host-internal info-level diagnostic (boot/attach traces). Separate from
+  // hostError so normal operation doesn't write ERROR lines to main.log.
+  | { kind: 'hostInfo'; where: string; message: string };
 
 const EVENT_KINDS = new Set<HostEvent['kind']>([
   'paneData', 'paneStatus', 'sessionUpdate', 'urlsDetected',
-  'eventDetected', 'paneAttention', 'paneAgentState', 'hostError'
+  'eventDetected', 'paneAttention', 'paneAgentState', 'hostError', 'hostInfo'
 ]);
 
 export function isHostEvent(v: unknown): v is HostEvent {

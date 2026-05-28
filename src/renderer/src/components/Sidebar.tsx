@@ -147,6 +147,7 @@ function SidebarImpl({ onNewSession, onOpenSettings }: Props): JSX.Element {
         // Échec IPC : ne PAS purger le store côté renderer — l'user voit la
         // session disparaître puis revenir au prochain sessionUpdate. Surfacer
         // l'erreur dans la console pour debug.
+        // eslint-disable-next-line no-console -- diagnostic d'échec (remove session)
         console.error('[sidebar] session remove failed', err);
       }
     },

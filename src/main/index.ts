@@ -2,7 +2,16 @@ import { app, BrowserWindow, session, shell } from 'electron';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import log from 'electron-log/main';
 import { registerIpc } from './ipc';
-import { ptyManager } from './pty-host-client-singleton';
+// Static imports: this module has NO load-time side effects (it only declares a
+// proxy + lazy singletons), so importing it eagerly never forks the utilityProcess
+// — and mixing static + dynamic imports of the same side-effect-free module just
+// produced an INEFFECTIVE_DYNAMIC_IMPORT build warning for zero benefit.
+import {
+  ptyManager,
+  initPtyHost,
+  getPaneDataChannelManager,
+  stopPtyHost
+} from './pty-host-client-singleton';
 import { IPC } from '@shared/types';
 import {
   getGracefulShutdown,
@@ -36,8 +45,9 @@ const APP_USER_MODEL_ID = 'com.vmux.app';
 // Chrome DevTools Protocol bridge — must be applied BEFORE the first BrowserWindow
 // is created (otherwise the switch is ignored). Allows `chrome-devtools-mcp`
 // (Claude Code, Codex CLI, etc.) to drive embedded <webview>s in vMux — click,
-// type, a11y snapshots, JS eval. Synchronous setting read via electron-conf;
-// defaults to ON on port 9222.
+// type, a11y snapshots, JS eval. Synchronous setting read via electron-conf.
+// OFF by default (security: an open debug port lets any local process attach
+// and run arbitrary JS in the renderer); opt-in via Settings → Advanced.
 try {
   const { cdpEnabled, cdpPort } = getSettings();
   if (cdpEnabled && Number.isInteger(cdpPort) && cdpPort > 0 && cdpPort < 65536) {
@@ -184,12 +194,27 @@ function installWebContentsHardening(): void {
     //    compromised renderer trying to navigate the main BrowserWindow to a
     //    foreign origin would otherwise inherit the preload script.
     contents.on('will-navigate', (event, url) => {
-      const ok =
-        url.startsWith('file://') ||
-        url.startsWith('http://localhost') ||
-        url.startsWith('http://127.0.0.1') ||
-        (process.env.ELECTRON_RENDERER_URL !== undefined &&
-          url.startsWith(process.env.ELECTRON_RENDERER_URL));
+      // Parse the origin instead of prefix-matching: `url.startsWith('http://localhost')`
+      // also matched `http://localhost.attacker.com`. Mirror isTrustedSender (ipc.ts).
+      let ok = false;
+      try {
+        const u = new URL(url);
+        if (u.protocol === 'file:') {
+          ok = true;
+        } else if (u.protocol === 'http:' || u.protocol === 'https:') {
+          ok = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1';
+        }
+        // Dev server: exact-origin match (covers a non-loopback ELECTRON_RENDERER_URL).
+        if (!ok && process.env.ELECTRON_RENDERER_URL) {
+          try {
+            ok = u.origin === new URL(process.env.ELECTRON_RENDERER_URL).origin;
+          } catch {
+            /* malformed env URL — leave ok=false */
+          }
+        }
+      } catch {
+        ok = false; // malformed URL → block
+      }
       if (!ok) {
         log.warn(`[security] blocked will-navigate to ${url}`);
         event.preventDefault();
@@ -258,7 +283,6 @@ app.whenReady().then(async () => {
   //     registerIpc. registerIpc attaches `ptyManager.on('paneData', ...)` etc.
   //     synchronously, and the `ptyManager` Proxy throws if the client instance
   //     is not yet created — so this must complete first.
-  const { initPtyHost } = await import('./pty-host-client-singleton');
   await initPtyHost();
 
   // 4) Register IPC before the window loads — the renderer wires up listeners
@@ -272,7 +296,6 @@ app.whenReady().then(async () => {
   // 5b) Wire the per-window zero-copy data channel (PTY Host → renderer via
   //     transferred MessagePortMain). One channel per window, deferred port
   //     post until did-finish-load (handled inside attachWindow).
-  const { getPaneDataChannelManager } = await import('./pty-host-client-singleton');
   getPaneDataChannelManager()?.attachWindow(mainWindow);
 
   // 6) Fire-and-forget initialization — fully parallel, each item logs its
@@ -361,7 +384,6 @@ app.on('before-quit', (event) => {
       // After panes have been SIGTERM'd, tear down the PTY Host
       // utilityProcess itself. Best-effort: never block the exit tail on it.
       try {
-        const { stopPtyHost } = await import('./pty-host-client-singleton');
         await stopPtyHost();
       } catch (err) {
         log.error('[main] stopPtyHost failed', err);

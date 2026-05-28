@@ -231,6 +231,10 @@ export function App(): JSX.Element {
   useEffect(() => {
     const suffix = active ? ` — ${active.name}${active.branch ? ` · ${active.branch}` : ''}` : '';
     document.title = `vMux${suffix}`;
+    // On dépend des champs scalaires, PAS de la ref `active` : le store rend un
+    // nouvel objet Session à chaque bump paneStatus (sortie d'agent), donc
+    // dépendre de `active` réécrirait le titre à chaque chunk d'output.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id, active?.name, active?.branch]);
 
   // Style inline du grid sidebar — memo pour éviter une nouvelle ref à chaque

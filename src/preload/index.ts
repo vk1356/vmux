@@ -286,5 +286,6 @@ export type CmuxApi = typeof api;
 try {
   contextBridge.exposeInMainWorld('cmux', api);
 } catch (err) {
+  // eslint-disable-next-line no-console -- échec critique d'init du bridge preload
   console.error('[preload] expose failed', err);
 }

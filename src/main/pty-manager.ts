@@ -1076,6 +1076,12 @@ export class PtyManager extends EventEmitter {
   private persistTimer: NodeJS.Timeout | null = null;
   private static readonly PERSIST_DEBOUNCE_MS = 250;
   private persist(): void {
+    // Ne jamais ré-armer le debounce après le début du shutdown : closePane sur
+    // le dernier pane → removeSession fait `await removeWorktree` (plusieurs
+    // secondes) puis persist() ; si shutdown() a flushé entre-temps, ce timer
+    // ré-armé ferait un saveSessions post-teardown sur une map à moitié démolie.
+    // flushPersist() (le write du shutdown) ne passe pas par persist(), donc OK.
+    if (this.isShuttingDown) return;
     if (this.persistTimer) return;
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;

@@ -13,6 +13,7 @@ import type {
 } from '@shared/types';
 import type { TreePath } from '@shared/tree';
 import type { LayoutPreset } from '@shared/layouts';
+import { DEFAULT_AGENTS } from '@shared/agents';
 
 // ============================================================
 // Validation helpers (IPC boundary = security perimeter)
@@ -129,12 +130,66 @@ export const ALLOWED_SETTINGS_KEYS = new Set<keyof AppSettings>([
   'performanceMode', 'webglPoolSize', 'experimentalZeroCopyIpc'
 ]);
 
+/** Ids d'agents connus — sert à valider les clés d'`agentOverrides` (et à
+ *  bloquer __proto__/constructor/prototype puisqu'ils ne sont pas des AgentId). */
+const KNOWN_AGENT_IDS = new Set<string>(DEFAULT_AGENTS.map((a) => a.id));
+
+/** Valide la map `agentOverrides` venue du renderer AVANT qu'elle ne devienne
+ *  command / args / env d'un spawn PTY (resolveAgent → spawnPane). Sans ça,
+ *  `sanitizeSettingsPatch` la recopiait verbatim. Points durs :
+ *   - clé doit être un AgentId connu (rejette aussi la prototype-pollution),
+ *   - `args` doit être un array : resolveAgent fait `o.args ?? preset.args`, donc
+ *     un non-array *truthy* passerait et ferait throw `buildAgentBootLine` au
+ *     `.map()` à chaque spawn,
+ *   - `env` : objet plat, clés/longueurs bornées, pas de clés de pollution. */
+export function isValidAgentOverridesMap(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const map = v as Record<string, unknown>;
+  for (const agentId of Object.keys(map)) {
+    if (!KNOWN_AGENT_IDS.has(agentId)) return false;
+    const o = map[agentId];
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+    const ov = o as Record<string, unknown>;
+    // Seuls command/args/env sont honorés par resolveAgent — rejette le reste.
+    for (const k of Object.keys(ov)) {
+      if (k !== 'command' && k !== 'args' && k !== 'env') return false;
+    }
+    if (ov.command !== undefined) {
+      if (typeof ov.command !== 'string' || ov.command.length === 0 || ov.command.length > 2048) return false;
+      if (ov.command.indexOf('\0') !== -1) return false;
+    }
+    if (ov.args !== undefined) {
+      if (!Array.isArray(ov.args) || ov.args.length > 64) return false;
+      for (const a of ov.args) {
+        if (typeof a !== 'string' || a.length > MAX_STRING_LEN || a.indexOf('\0') !== -1) return false;
+      }
+    }
+    if (ov.env !== undefined) {
+      if (!ov.env || typeof ov.env !== 'object' || Array.isArray(ov.env)) return false;
+      const env = ov.env as Record<string, unknown>;
+      const keys = Object.keys(env);
+      if (keys.length > 64) return false;
+      for (const k of keys) {
+        if (k === '__proto__' || k === 'constructor' || k === 'prototype') return false;
+        if (k.length === 0 || k.length > 128 || k.indexOf('\0') !== -1) return false;
+        const val = env[k];
+        if (typeof val !== 'string' || val.length > MAX_STRING_LEN || val.indexOf('\0') !== -1) return false;
+      }
+    }
+  }
+  return true;
+}
+
 export function sanitizeSettingsPatch(patch: unknown): Partial<AppSettings> {
   if (!patch || typeof patch !== 'object') return {};
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(patch)) {
     if (!ALLOWED_SETTINGS_KEYS.has(k as keyof AppSettings)) continue;
-    out[k] = (patch as Record<string, unknown>)[k];
+    const value = (patch as Record<string, unknown>)[k];
+    // agentOverrides devient command/args/env de spawn — on valide sa valeur et
+    // on droppe la clé entière si elle est malformée (defense en profondeur).
+    if (k === 'agentOverrides' && !isValidAgentOverridesMap(value)) continue;
+    out[k] = value;
   }
   return out as Partial<AppSettings>;
 }

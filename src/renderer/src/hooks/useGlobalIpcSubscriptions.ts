@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../store/sessions';
 import { translate } from '../i18n';
-import { eventTitleFor } from '../components/Toast';
+import { eventTitleFor } from '../i18n/eventTitle';
+import { whenIdle } from '@shared/utils';
 import type { PaneAttention } from '@shared/types';
 
 /**
@@ -45,13 +46,13 @@ export function useGlobalIpcSubscriptions(): void {
       if (!signal.aborted) setAgents(r);
     });
     // agents.check spawn un process where.exe par agent — déféré à l'idle.
-    void import('@shared/utils').then(({ whenIdle }) => {
+    // (whenIdle est importé statiquement : utils.ts est déjà dans le bundle
+    // principal via App.tsx & co, donc l'ancien import() dynamique était
+    // inefficace — build warning INEFFECTIVE_DYNAMIC_IMPORT — sans rien différer.)
+    whenIdle(() => {
       if (signal.aborted) return;
-      whenIdle(() => {
-        if (signal.aborted) return;
-        void window.cmux.agents.check().then((r) => {
-          if (!signal.aborted) setAgentAvailability(r);
-        });
+      void window.cmux.agents.check().then((r) => {
+        if (!signal.aborted) setAgentAvailability(r);
       });
     });
     // Boot : settings et sessions sont indépendants côté main — on les fetch

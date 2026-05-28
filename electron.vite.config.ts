@@ -3,7 +3,9 @@ import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { visualizer } from 'rollup-plugin-visualizer';
 
-const ANALYZE = process.env.ANALYZE === '1';
+// `?.trim()` : tolère un `set "ANALYZE=1"` cmd.exe qui peut laisser traîner un
+// espace, et reste correct pour les shells POSIX (ANALYZE=1).
+const ANALYZE = process.env.ANALYZE?.trim() === '1';
 
 // electron-vite v5 : `build.externalizeDeps` activé par défaut → plus besoin
 // d'`externalizeDepsPlugin`. Les natifs (node-pty, pidusage) restent externalisés
@@ -48,6 +50,12 @@ export default defineConfig({
     },
     plugins: [
       react(),
+      // NOTE React Compiler (différé) : l'intégration officielle Vite 8/rolldown
+      // (`@rolldown/plugin-babel` + `reactCompilerPreset()`) casse le `deepClone`
+      // de config d'electron-vite 6-beta ("Cannot deep clone non-plain object").
+      // L'option `react({ babel })` est, elle, un no-op silencieux sur rolldown
+      // (oxc). À ré-tenter quand electron-vite 6 passe stable (le fix deepClone y
+      // est attendu), avec un smoke-test runtime obligatoire.
       ...(ANALYZE
         ? [
             visualizer({

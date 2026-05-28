@@ -276,6 +276,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     try {
       term.loadAddon(new ClipboardAddon());
     } catch (err) {
+      // eslint-disable-next-line no-console -- diagnostic de fallback (addon optionnel)
       console.warn('[term] ClipboardAddon load failed', err);
     }
     term.open(hostRef.current);
@@ -312,6 +313,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
             term.loadAddon(lig);
             ligaturesRef.current = lig;
           } catch (err) {
+            // eslint-disable-next-line no-console -- diagnostic de fallback (ligatures)
             console.warn('[term] LigaturesAddon load failed', err);
           }
         }
@@ -337,9 +339,9 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
     collected.push(
       term.onData((data) => {
         if (isSyncRef.current) {
-          const sess = useSessionStore
-            .getState()
-            .sessions.find((s) => s.id === sessionIdRef.current);
+          // O(1) via l'index sessionsById plutôt qu'un find O(N) sur chaque
+          // keystroke (ce handler fire à chaque touche en mode sync).
+          const sess = useSessionStore.getState().sessionsById[sessionIdRef.current];
           if (sess) {
             for (const id of allPaneIds(sess.tree)) {
               const p = sess.panes[id];
@@ -374,6 +376,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
               term.paste(r.text);
             }
           } catch (err) {
+            // eslint-disable-next-line no-console -- diagnostic de fallback (paste)
             console.warn('[term] rich paste failed', err);
           }
         })();
@@ -571,6 +574,7 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
           term.loadAddon(lig);
           ligaturesRef.current = lig;
         } catch (err) {
+          // eslint-disable-next-line no-console -- diagnostic de fallback (ligatures)
           console.warn('[term] LigaturesAddon load failed', err);
         }
       }
@@ -589,7 +593,10 @@ function TerminalPaneImpl({ sessionId, pane, active, visible }: Props): JSX.Elem
       webglSlotRef.current = null;
       webglRef.current = null;
     }
-  }, [settings?.webglRenderer, settings]);
+    // pane.id est remount-stable (arePropsEqual + key par paneId dans PaneTreeView),
+    // mais on le liste pour satisfaire exhaustive-deps honnêtement et rester
+    // cohérent avec les effets frères (lignes 651, 416).
+  }, [settings?.webglRenderer, settings, pane.id]);
 
   // Perf phase 4 — hidden-pane WebGL slot release.
   //   Visible → hidden: drop the GPU context immediately (frees pool capacity

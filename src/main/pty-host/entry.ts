@@ -100,7 +100,7 @@ safeOn<[string, Uint8Array]>(mgr, 'paneData', (paneId, data) => {
     // at all. If this log is absent in main.log after a session launch, the
     // bug is in PTY spawn / shell startup, not in transport.
     safePost({
-      kind: 'hostError',
+      kind: 'hostInfo',
       where: 'paneData:first',
       message: `received ${data.byteLength}B for ${paneId} (directPorts=${directPorts.length})`
     });
@@ -110,13 +110,18 @@ safeOn<[string, Uint8Array]>(mgr, 'paneData', (paneId, data) => {
   // doesn't expose ArrayBuffer transfer in its TypeScript surface (Electron
   // 42), so we send via structured-clone — bytes are copied once host→renderer
   // instead of twice (host→main + main→renderer). One v8 hop saved per flush
-  // is still a real win for spew workloads. If true zero-copy becomes
-  // available in a future Electron, swap to `postMessage(frame, [frame])`.
+  // is still a real win for spew workloads.
   if (directPorts.length > 0) {
+    // Encode ONCE, not once-per-port: the frame bytes are identical for every
+    // window, and structured-clone copies on each postMessage anyway, so a
+    // single source buffer is safe to reuse. With K detached windows this drops
+    // (K-1) paneId encodes + (K-1) full payload copies per 60Hz flush.
+    // NOTE: if true zero-copy ever lands (`postMessage(frame, [frame])`), build
+    // the frame per-port again — the first transfer would neuter a shared buffer.
+    const frame = encodeFrame(paneId, data);
     let posted = 0;
     for (const p of directPorts) {
       try {
-        const frame = encodeFrame(paneId, data);
         p.postMessage(frame);
         posted++;
       } catch {
@@ -169,7 +174,7 @@ port.on('message', (e) => {
       try { p.on('close', off); } catch { /* ignore */ }
       try { p.start(); } catch { /* already started */ }
       safePost({
-        kind: 'hostError',
+        kind: 'hostInfo',
         where: 'attachDataPort',
         message: `direct port attached (total=${directPorts.length})`
       });

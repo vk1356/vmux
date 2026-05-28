@@ -23,6 +23,20 @@ export class PtyHostClient extends EventEmitter {
   constructor(private sup: PtyHostSupervisor) {
     super();
     this.sup.onMessage((msg) => this.handle(msg));
+    // When the host (re)spawns, the new child starts reply ids fresh and has no
+    // knowledge of RPCs that were in flight against the dead child. Without this,
+    // an awaited createSession/restartPane/etc. would hang forever (button stuck
+    // on "starting", dialog never closes). Reject every pending call so ipc.ts
+    // surfaces a clean error to the renderer. We do NOT replay requests —
+    // createSession/splitPane are not idempotent and a replay could duplicate
+    // sessions/panes. The initial handshake also fires onReady, but `pending` is
+    // empty then (init() awaits start() before any RPC), so the guard no-ops.
+    this.sup.onReady(() => {
+      if (this.pending.size === 0) return;
+      const err = new Error('pty host restarted');
+      for (const p of this.pending.values()) p.reject(err);
+      this.pending.clear();
+    });
   }
 
   /** Boot the host process; resolves once it has handshaked ready. */
@@ -45,24 +59,38 @@ export class PtyHostClient extends EventEmitter {
     }
   }
 
-  /** Refresh the synchronously-readable snapshot + reverse pane index. */
+  /** Refresh the synchronously-readable snapshot + reverse pane index.
+   *  Index maintenu de façon INCRÉMENTALE : seule la session touchée bouge, donc
+   *  on retire ses anciens paneIds puis on ajoute les courants — O(panes de S) au
+   *  lieu d'un rebuild O(N×P) de tout l'index à chaque sessionUpdate. */
   private cacheSession(session: Session): void {
     const i = this.snapshot.findIndex((s) => s.id === session.id);
+    const old = i >= 0 ? this.snapshot[i] : undefined;
     if (i >= 0) this.snapshot[i] = session;
     else this.snapshot.push(session);
-    this.paneIndex.clear();
-    for (const s of this.snapshot)
-      for (const pid of Object.keys(s.panes)) this.paneIndex.set(pid, s.id);
+    // Retire les paneIds de l'ancienne version de cette session (panes fermés
+    // intra-session) — uniquement ceux encore attribués à S (garde-fou si un
+    // paneId a migré, cas théorique).
+    if (old) {
+      for (const pid of Object.keys(old.panes)) {
+        if (this.paneIndex.get(pid) === session.id) this.paneIndex.delete(pid);
+      }
+    }
+    for (const pid of Object.keys(session.panes)) this.paneIndex.set(pid, session.id);
   }
 
   /** Drop a removed session locally. No removal event is pushed by the host
    *  (PtyManager.removeSession / closePane-of-last-pane emit nothing), so the
-   *  client prunes off the RPC it already proxies. */
+   *  client prunes off the RPC it already proxies. Incrémental aussi : on ne
+   *  retire que les paneIds de la session supprimée. */
   private prune(sessionId: string): void {
+    const removed = this.snapshot.find((s) => s.id === sessionId);
     this.snapshot = this.snapshot.filter((s) => s.id !== sessionId);
-    this.paneIndex.clear();
-    for (const s of this.snapshot)
-      for (const pid of Object.keys(s.panes)) this.paneIndex.set(pid, s.id);
+    if (removed) {
+      for (const pid of Object.keys(removed.panes)) {
+        if (this.paneIndex.get(pid) === sessionId) this.paneIndex.delete(pid);
+      }
+    }
   }
 
   /** Translate a HostEvent into the legacy EventEmitter signature so ipc.ts's
@@ -86,6 +114,7 @@ export class PtyHostClient extends EventEmitter {
       case 'paneAttention': this.emit('paneAttention', e.paneId, e.level); break;
       case 'paneAgentState': this.emit('paneAgentState', e.paneId, e.state); break;
       case 'hostError': log.error(`[pty-host:${e.where}] ${e.message}`); break;
+      case 'hostInfo': log.info(`[pty-host:${e.where}] ${e.message}`); break;
     }
   }
 

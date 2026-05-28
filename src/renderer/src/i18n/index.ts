@@ -216,10 +216,13 @@ export function useT(): TFunction {
       subscribers.delete(sub);
     };
   }, [lang]);
-  return useMemo<TFunction>(
-    () => (key, vars) => translate(lang, key, vars),
-    [lang, v]
-  );
+  // `v` est INTENTIONNEL et load-bearing : c'est le compteur de version du
+  // catalogue, bumpé par notify() quand un chunk de locale lazy finit de charger
+  // (lang est alors inchangé). C'est la SEULE chose qui redonne une identité
+  // fraîche à `t`, pour que les useMemo/useCallback en aval (items CommandPalette…)
+  // recalculent. Ne PAS retirer `v` pour satisfaire le linter → retraductions figées.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo<TFunction>(() => (key, vars) => translate(lang, key, vars), [lang, v]);
 }
 
 /** Renvoie la lang BCP47 courante — utilisée pour `Intl.NumberFormat`,

@@ -46,7 +46,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   onboardingCompleted: false,
   autoRestoreOnBoot: true,
   lastActiveSessionId: null,
-  cdpEnabled: true,
+  // CDP (remote-debugging-port) OFF par défaut : un port de debug ouvert laisse
+  // n'importe quel process local s'attacher au renderer et exécuter du JS
+  // arbitraire / exfiltrer. Reste activable dans Settings → Avancé pour piloter
+  // les <webview> via chrome-devtools-mcp (Claude Code, Codex…).
+  cdpEnabled: false,
   cdpPort: 9222,
   claudeCommandsEnabled: true,
   experimentalZeroCopyIpc: false

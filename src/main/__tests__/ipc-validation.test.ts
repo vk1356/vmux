@@ -7,6 +7,7 @@ import {
   safePath,
   isUnsafePath,
   isValidPtySize,
+  isValidAgentOverridesMap,
   sanitizeSettingsPatch
 } from '../ipc-validation';
 
@@ -91,6 +92,47 @@ describe('ipc-validation guards (characterization)', () => {
     // non-object → empty
     expect(sanitizeSettingsPatch(null)).toEqual({});
     expect(sanitizeSettingsPatch(42 as unknown)).toEqual({});
+  });
+
+  it('isValidAgentOverridesMap: shape + security guards', () => {
+    // valid partial overrides
+    expect(isValidAgentOverridesMap({})).toBe(true);
+    expect(isValidAgentOverridesMap({ 'claude-code': { command: 'claude-dev' } })).toBe(true);
+    expect(isValidAgentOverridesMap({ codex: { args: ['--flag', 'x'] } })).toBe(true);
+    expect(isValidAgentOverridesMap({ aider: { env: { FOO: 'bar' } } })).toBe(true);
+    // non-array args MUST be rejected (resolveAgent does `o.args ?? preset.args`,
+    // so a truthy non-array would slip through and crash buildAgentBootLine.map())
+    expect(isValidAgentOverridesMap({ codex: { args: 'rm -rf /' } })).toBe(false);
+    // unknown agentId rejected (also covers prototype-pollution keys)
+    expect(isValidAgentOverridesMap({ 'not-an-agent': { command: 'x' } })).toBe(false);
+    expect(isValidAgentOverridesMap({ ['__proto__']: { command: 'x' } })).toBe(false);
+    // unknown override sub-key rejected (only command/args/env honored)
+    expect(isValidAgentOverridesMap({ gemini: { shell: true } })).toBe(false);
+    // env prototype-pollution key rejected
+    expect(isValidAgentOverridesMap({ gemini: { env: { ['__proto__']: 'x' } } })).toBe(false);
+    // env non-string value rejected
+    expect(isValidAgentOverridesMap({ gemini: { env: { A: 1 } } })).toBe(false);
+    // NUL byte in command rejected
+    expect(isValidAgentOverridesMap({ codex: { command: 'a\0b' } })).toBe(false);
+    // non-object / array inputs rejected
+    expect(isValidAgentOverridesMap(null)).toBe(false);
+    expect(isValidAgentOverridesMap([])).toBe(false);
+    expect(isValidAgentOverridesMap({ aider: null })).toBe(false);
+  });
+
+  it('sanitizeSettingsPatch: drops malformed agentOverrides, keeps valid ones', () => {
+    // malformed agentOverrides → whole key dropped, sibling keys survive
+    const bad = sanitizeSettingsPatch({
+      theme: 'dark',
+      agentOverrides: { codex: { args: 'not-an-array' } }
+    } as unknown);
+    expect(bad.theme).toBe('dark');
+    expect('agentOverrides' in bad).toBe(false);
+    // valid agentOverrides → kept verbatim
+    const good = sanitizeSettingsPatch({
+      agentOverrides: { 'claude-code': { command: 'claude', args: ['--x'] } }
+    } as unknown);
+    expect(good.agentOverrides).toEqual({ 'claude-code': { command: 'claude', args: ['--x'] } });
   });
 
   it('isUnsafePath: primitive-level characterization (NUL/length/non-string unsafe; traversal NOT)', () => {

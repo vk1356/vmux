@@ -1,19 +1,23 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PtyHostClient } from '../pty-host-client';
 
-// Fake supervisor: captures sent requests, lets the test push events/replies.
+// Fake supervisor: captures sent requests, lets the test push events/replies
+// and fire the (re)spawn ready handshake.
 function makeFakeSupervisor() {
   let onMsg: ((m: unknown) => void) | null = null;
+  let onReady: (() => void) | null = null;
   const sent: unknown[] = [];
   return {
     sup: {
       start: vi.fn().mockResolvedValue(undefined),
       send: (m: unknown) => sent.push(m),
       onMessage: (cb: (m: unknown) => void) => { onMsg = cb; },
+      onReady: (cb: () => void) => { onReady = cb; },
       stop: vi.fn().mockResolvedValue(undefined)
     },
     sent,
-    push: (m: unknown) => onMsg?.(m)
+    push: (m: unknown) => onMsg?.(m),
+    ready: () => onReady?.()
   };
 }
 
@@ -53,6 +57,26 @@ describe('PtyHostClient', () => {
     const client = new PtyHostClient(sup as never);
     push({ kind: 'sessionUpdate', session: { id: 's1', name: 'x', panes: { p1: { id: 'p1', kind: 'terminal', agentId: 'shell', status: 'running', cwd: '/', createdAt: 0 } }, tree: { kind: 'leaf', paneId: 'p1' }, cwd: '/', createdAt: 0, activePaneId: 'p1' } });
     expect(client.sessionForPane('p1')).toBe('s1');
+  });
+
+  it('cacheSession drops panes removed intra-session from the pane index (incremental)', () => {
+    const { sup, push } = makeFakeSupervisor();
+    const client = new PtyHostClient(sup as never);
+    const twoPanes = {
+      id: 's1', name: 'x',
+      panes: {
+        p1: { id: 'p1', kind: 'terminal', agentId: 'shell', status: 'running', cwd: '/', createdAt: 0 },
+        p2: { id: 'p2', kind: 'terminal', agentId: 'shell', status: 'running', cwd: '/', createdAt: 0 }
+      },
+      tree: { kind: 'leaf', paneId: 'p1' }, cwd: '/', createdAt: 0, activePaneId: 'p1'
+    };
+    push({ kind: 'sessionUpdate', session: twoPanes });
+    expect(client.sessionForPane('p1')).toBe('s1');
+    expect(client.sessionForPane('p2')).toBe('s1');
+    // p2 closed intra-session → next sessionUpdate omits it; index must drop it.
+    push({ kind: 'sessionUpdate', session: { ...twoPanes, panes: { p1: twoPanes.panes.p1 } } });
+    expect(client.sessionForPane('p1')).toBe('s1');
+    expect(client.sessionForPane('p2')).toBeUndefined();
   });
 
   it('removeSession prunes the snapshot + pane index after the reply resolves', async () => {
@@ -108,5 +132,23 @@ describe('PtyHostClient', () => {
     const reqId = (sent[0] as { id: number }).id;
     push({ id: reqId, error: '' });
     await expect(p).rejects.toThrow();
+  });
+
+  it('rejects in-flight RPCs when the host (re)spawns instead of hanging forever', async () => {
+    const { sup, ready } = makeFakeSupervisor();
+    const client = new PtyHostClient(sup as never);
+    // A call awaiting a reply that will never come (the old child died).
+    const p = client.createSession({ name: 'x', agentId: 'shell', cwd: '/' });
+    const assertion = expect(p).rejects.toThrow('pty host restarted');
+    // New host handshakes → onReady fires → pending must reject.
+    ready();
+    await assertion;
+  });
+
+  it('respawn ready handshake is a no-op when no RPC is in flight', () => {
+    const { sup, ready } = makeFakeSupervisor();
+    new PtyHostClient(sup as never);
+    // Should not throw / nothing pending to reject.
+    expect(() => ready()).not.toThrow();
   });
 });

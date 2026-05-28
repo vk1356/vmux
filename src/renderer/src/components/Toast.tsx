@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
 import { Globe, Rocket, CheckCircle2, XCircle, FlaskConical, Sparkles, Bell, X } from 'lucide-react';
-import type { DetectedEventKind } from '@shared/types';
 import { useSessionStore, type ToastItem } from '../store/sessions';
-import { translate, useT } from '../i18n';
-import type { Lang } from '@shared/types';
+import { useT } from '../i18n';
 
 const TOAST_TIMEOUT = 6000;
 
@@ -118,24 +116,5 @@ function iconFor(t: ToastItem): JSX.Element {
       return <Bell size={16} color="#f97316" />;
     default:
       return <Sparkles size={16} />;
-  }
-}
-
-/** Renvoie le titre traduit d'un event détecté. Appelé depuis App.tsx au moment
- *  où on push un toast — la lang est lue dans le store via translate(). */
-export function eventTitleFor(kind: DetectedEventKind, lang: Lang = 'en'): string {
-  switch (kind) {
-    case 'server-ready':
-      return `🚀 ${translate(lang, 'notifKindServerReady')}`;
-    case 'build-success':
-      return `✓ ${translate(lang, 'notifKindBuildSuccess')}`;
-    case 'build-error':
-      return `✗ ${translate(lang, 'notifKindBuildError')}`;
-    case 'test-results':
-      return `🧪 ${translate(lang, 'notifKindTests')}`;
-    case 'agent-done':
-      return `✓ ${translate(lang, 'notifKindAgentDone')}`;
-    case 'notify':
-      return `🔔 ${translate(lang, 'notifKindNotify')}`;
   }
 }

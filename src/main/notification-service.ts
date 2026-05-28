@@ -6,7 +6,13 @@ import { IPC, type DetectedEvent, type Lang, type PaneId } from '@shared/types';
 import { DEFAULT_AGENTS } from '@shared/agents';
 import { attentionBody, notifBundle } from '@shared/notif-i18n';
 import { getSettings } from './settings-store';
-import { ptyManager } from './pty-manager';
+// IMPORTANT: import the live host-client proxy, NOT './pty-manager'. The latter's
+// module-level `ptyManager` singleton runs in the MAIN process and is always
+// empty — the real PTYs/sessions live in the PTY-host utilityProcess, reachable
+// only through this proxy. Importing './pty-manager' here forked a second, empty
+// PtyManager (so lookupPaneContext saw zero sessions → generic notif titles +
+// broken click-to-focus) and registered a duplicate unhandledRejection handler.
+import { ptyManager } from './pty-host-client-singleton';
 
 /** Lookup contextuel pour les notifs : trouve la session/pane/agent depuis un paneId.
  *  `sessionId` est inclus pour que le click handler de la notif puisse demander
