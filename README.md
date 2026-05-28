@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/screenshots/multi-panes.png" alt="vMux — six Claude Code agents running in parallel, each in its own pane with live CPU/RAM" width="100%"/>
+<img src="build/icon.png" alt="vMux logo" width="132" height="132"/>
 
 # vMux
 
@@ -25,6 +25,10 @@ Spin up Claude Code, Codex, Aider, Cursor Agent and Gemini **side by side** — 
 [Under the hood](#under-the-hood) ·
 [Quick start](#installation) ·
 [Architecture](#architecture)
+
+<br/>
+
+<img src="docs/screenshots/multi-panes.png" alt="vMux — six Claude Code agents running in parallel, each in its own pane with live CPU/RAM" width="100%"/>
 
 </div>
 
